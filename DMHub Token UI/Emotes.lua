@@ -7,9 +7,12 @@ function creature:RemoveLoopingEmotes()
 	end
 
 
-	token:BeginChanges()
-	self.loopemotes = {}
-	token:CompleteChanges('emote')
+	token:ModifyProperties{
+		description = 'emote',
+		execute = function()
+			self.loopemotes = {}
+		end,
+	}
 end
 
 --calculates looping emotes currently playing on this creature. Returns a { (string id) -> {timestamp = number } }
@@ -83,65 +86,66 @@ function creature:Emote(effect, options)
 		return
 	end
 
-	token:BeginChanges()
+	token:ModifyProperties{
+		description = 'emote',
+		execute = function()
+			if effectInfo[1].looping then
+				local loopemotes = self:get_or_add("loopemotes", {})
 
-	if effectInfo[1].looping then
-		local loopemotes = self:get_or_add("loopemotes", {})
+				--take the opportunity to wipe out any expired looping emotes.
+				local deletes = {}
+				for k,emote in pairs(loopemotes) do
+					if (emote.ttl ~= nil and TimestampAgeInSeconds(emote.timestamp) > emote.ttl) or
+					   (options.deleteOthers and k ~= effect) then
+						deletes[#deletes+1] = k
+					end
+				end
 
-		--take the opportunity to wipe out any expired looping emotes.
-		local deletes = {}
-		for k,emote in pairs(loopemotes) do
-			if (emote.ttl ~= nil and TimestampAgeInSeconds(emote.timestamp) > emote.ttl) or
-			   (options.deleteOthers and k ~= effect) then
-				deletes[#deletes+1] = k
-			end
-		end
+				for _,k in ipairs(deletes) do
+					loopemotes[k] = nil
+				end
 
-		for _,k in ipairs(deletes) do
-			loopemotes[k] = nil
-		end
+				local start = options.start
+				if start == nil then
+					if loopemotes[effect] then
+						start = false
+					else
+						start = true
+					end
+				end
 
-		local start = options.start
-		if start == nil then
-			if loopemotes[effect] then
-				start = false
+				if not start then
+					loopemotes[effect] = nil
+				else
+					loopemotes[effect] = {
+						timestamp = ServerTimestamp(),
+						ttl = options.ttl,
+					}
+				end
 			else
-				start = true
+
+				local emotes = self:get_or_add("emotes", {})
+
+				local removes = {}
+				for k,emote in pairs(emotes) do
+					if TimestampAgeInSeconds(emote.timestamp) > 180 then
+						removes[#removes+1] = k
+					end
+				end
+
+				for i,k in ipairs(removes) do
+					emotes[k] = nil
+				end
+
+				local guid = dmhub.GenerateGuid()
+
+				emotes[guid] = {
+					timestamp = ServerTimestamp(),
+					effect = effect,
+				}
 			end
-		end
-
-		if not start then
-			loopemotes[effect] = nil
-		else
-			loopemotes[effect] = {
-				timestamp = ServerTimestamp(),
-				ttl = options.ttl,
-			}
-		end
-	else
-
-		local emotes = self:get_or_add("emotes", {})
-
-		local removes = {}
-		for k,emote in pairs(emotes) do
-			if TimestampAgeInSeconds(emote.timestamp) > 180 then
-				removes[#removes+1] = k
-			end
-		end
-
-		for i,k in ipairs(removes) do
-			emotes[k] = nil
-		end
-
-		local guid = dmhub.GenerateGuid()
-
-		emotes[guid] = {
-			timestamp = ServerTimestamp(),
-			effect = effect,
-		}
-	end
-
-	token:CompleteChanges('emote')
+		end,
+	}
 
 	if token.sheet ~= nil then
 		token.sheet:FireEventTree('refresh')

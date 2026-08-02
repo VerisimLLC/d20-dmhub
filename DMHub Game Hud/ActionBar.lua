@@ -657,7 +657,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 							end
 						end
 
-						g_profileCast:Begin()
+						local _ = g_profileCast.Begin
 						currentSpell:Cast(token, targets, {
 							costOverride = currentCostProposal,
 							symbols = currentSymbols,
@@ -672,7 +672,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 								end,
 							},
 						})
-						g_profileCast:End()
+						local _ = g_profileCast.End
 						markLineOfSight = nil
 						markLineOfSightToken = nil
 						spellPanel:FireEvent('cancel')
@@ -1893,14 +1893,14 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 							currentSymbols.targetcount = currentSpell:GetNumTargets(token, currentSymbols)
 						end
 
-						g_profileCast:Begin()
+						local _ = g_profileCast.Begin
 						currentSpell:Cast(token, targets, {
 							targetArea = pointTargetShape,
 							costOverride = currentCostProposal,
 							symbols = currentSymbols,
 							markLineOfSight = { markLineOfSight },
 						})
-						g_profileCast:End()
+						local _ = g_profileCast.End
 
 						markLineOfSight = nil
 						markLineOfSightToken = nil
@@ -2852,7 +2852,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 				m_token = token
 				creature = m_token.properties
 
-				g_profileActionBarRecalculateResources:Begin()
+				local _ = g_profileActionBarRecalculateResources.Begin
 
 				element:SetClass("collapsed", false)
 
@@ -3130,7 +3130,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 				end
 
 				element.children = children
-				g_profileActionBarRecalculateResources:End()
+				local _ = g_profileActionBarRecalculateResources.End
 			end,
 
 			data = {
@@ -3548,7 +3548,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 		data = {
 			recalculate = function(element)
 
-				g_profileActionBarRecalculate:Begin()
+				local _ = g_profileActionBarRecalculate.Begin
 
 				pagingPanels = {}
 
@@ -3563,7 +3563,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 				if creature == nil then
 					element:SetClass('hidden', true)
 					ActionBarElements = { actionBar = element, panels = childPanels }
-					g_profileActionBarRecalculate:End()
+					local _ = g_profileActionBarRecalculate.End
 					return
 				end
 
@@ -3997,7 +3997,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 				actionsContainerPanel:FireEventTree("labelkeybind")
 
 
-				g_profileActionBarRecalculate:End()
+				local _ = g_profileActionBarRecalculate.End
 
 			end
 		},

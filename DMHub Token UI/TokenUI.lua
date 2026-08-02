@@ -488,7 +488,7 @@ TokenHud.RegisterPanel{
 				italics = false,
 				events = {
 					refresh = function(element)
-						g_profileName:Begin()
+						local _ = g_profileName.Begin
 						if token.properties ~= nil and (token.canControl or not token.namePrivate) then
 							element.selfStyle.color = token.playerColor
 							element.selfStyle.italics = token.namePrivate
@@ -497,7 +497,7 @@ TokenHud.RegisterPanel{
 						else
 							element.text = ''
 						end
-						g_profileName:End()
+						local _ = g_profileName.End
 					end,
 				},
 			},
@@ -535,7 +535,7 @@ TokenHud.RegisterPanel{
 				end,
 
 				refresh = function(element)
-					g_profileStatus:Begin()
+					local _ = g_profileStatus.Begin
 					local children = {}
 
 					local statusBars = CalculateStatusBars(token)
@@ -1247,7 +1247,7 @@ TokenHud.RegisterPanel{
 
 					element.children = children
 					statusIcons = newStatusIcons
-					g_profileStatus:End()
+					local _ = g_profileStatus.End
 				end,
 			},
 		}
@@ -1999,7 +1999,7 @@ function CreateTokenHud(token)
 			end,
 
 			refresh = function(element)
-				g_profileMain:Begin()
+				local _ = g_profileMain.Begin
 
 				if token.properties ~= nil and current_damage_entry.id ~= token.properties.damage_entry.id then
 					current_damage_entry = dmhub.DeepCopy(token.properties.damage_entry)
@@ -2094,7 +2094,7 @@ function CreateTokenHud(token)
 						element.thinkTime = 12
 					end
 				end
-				g_profileMain:End()
+				local _ = g_profileMain.End
 			end,
 
 			focus = function(element)

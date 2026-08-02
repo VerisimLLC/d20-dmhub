@@ -633,3 +633,114 @@ function CreateSettingsEditorsForSection(section)
 	end
 	return result
 end
+
+--Settings the 0.7xx engine reads unconditionally but which are registered by
+--newer companion modules this game system does not include. Defaults match
+--the values those modules use.
+setting{
+	id = "canopy:defaultradius",
+	description = "Default Canopy Cutaway Radius",
+	help = "Fallback cutaway radius (in tiles) used when a canopy-flagged object has no canopy layer above it. Set negative to disable the fallback cutaway.",
+	storage = "game",
+	section = "Map",
+	editor = "slider",
+	format = "F0",
+	default = 3,
+	min = -1,
+	max = 40,
+}
+
+setting{
+	id = "canopy:defaultfade",
+	description = "Default Canopy Cutaway Fade",
+	help = "Fallback cutaway fade width (in tiles) used when a canopy-flagged object has no canopy layer above it.",
+	storage = "game",
+	section = "Map",
+	editor = "slider",
+	format = "F1",
+	default = 1,
+	min = 0,
+	max = 2,
+}
+
+setting{
+	id = "canopy:defaultminopacity",
+	description = "Default Canopy Minimum Opacity",
+	help = "Fallback minimum opacity used when a canopy-flagged object has no canopy layer above it. 0 means fully transparent at the token.",
+	storage = "game",
+	section = "Map",
+	editor = "slider",
+	format = "F2",
+	default = 0,
+	min = 0,
+	max = 1,
+}
+
+setting{
+	id = "tileheight:overlay",
+	description = "Show Tile Height Overlay",
+	help = "Draws contour lines and integer labels showing the game-rules height of each tile on the current floor.",
+	storage = "preference",
+	section = "Map",
+	editor = "check",
+	default = false,
+}
+
+setting{
+	id = "playervisionoverlay",
+	description = "Player Vision Overlay",
+	classes = {"dmonly"},
+	section = "General",
+	default = false,
+	editor = "check",
+	storage = "preference",
+}
+
+setting{
+	id = "strict:movement",
+	description = "Strictly Enforce Forced Movement Rules",
+	help = "When enabled, players (and a GM viewing as a player) can only place forced movement (push, pull, slide, knockback) on legally reachable tiles.",
+	storage = "game",
+	editor = "check",
+	default = false,
+	section = "Game",
+}
+
+setting{
+	id = "walls:indestructible",
+	description = "Indestructible Walls",
+	help = "When enabled, forced movement cannot break through walls, regardless of their solidity.",
+	classes = {"dmonly"},
+	section = "Game",
+	default = false,
+	storage = "game",
+	editor = "check",
+}
+
+--Brush radii read by the engine's brushRadius property while map editing
+--tools are active. Registered without editors; the editing UI adjusts them.
+setting{
+	id = "terrainbrushsize",
+	default = 1,
+	storage = "preference",
+}
+
+setting{
+	id = "buildingbrushsize",
+	default = 1,
+	storage = "preference",
+}
+
+setting{
+	id = "effectsbrushsize",
+	default = 1,
+	storage = "preference",
+}
+
+--Read by the roll dialog's DM preroll checkbox; was never registered anywhere,
+--so old engines silently returned nil. Registered here so the value persists.
+setting{
+	id = "preroll",
+	default = false,
+	storage = "preference",
+}

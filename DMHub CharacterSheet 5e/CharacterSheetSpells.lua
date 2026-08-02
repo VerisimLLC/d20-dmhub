@@ -493,9 +493,12 @@ function GameHud.CreateSpellsDialog(self, options)
 
 			dmhub.Debug('ADD SPELL: ' .. spell.id)
 
-			token:BeginChanges()
-			token.properties:AddPreparedSpell(spell.id)
-			token:CompleteChanges("Prepared spell")
+			token:ModifyProperties{
+				description = "Prepared spell",
+				execute = function()
+					token.properties:AddPreparedSpell(spell.id)
+				end,
+			}
 			resultPanel:FireEvent("refreshGame")
 		end,
 
@@ -532,9 +535,12 @@ function GameHud.CreateSpellsDialog(self, options)
 					return
 				end
 
-				token:BeginChanges()
-				token.properties:SwitchPreparedSpellOrder(spell.id, otherspell.id)
-				token:CompleteChanges("Reorder prepared spells")
+				token:ModifyProperties{
+					description = "Reorder prepared spells",
+					execute = function()
+						token.properties:SwitchPreparedSpellOrder(spell.id, otherspell.id)
+					end,
+				}
 				resultPanel:FireEvent("refreshGame")
 			end,
 			deleteSpell = function(element, spell)
@@ -542,9 +548,12 @@ function GameHud.CreateSpellsDialog(self, options)
 					return
 				end
 
-				token:BeginChanges()
-				token.properties:RemovePreparedSpell(spell.id)
-				token:CompleteChanges("Remove prepared spell")
+				token:ModifyProperties{
+					description = "Remove prepared spell",
+					execute = function()
+						token.properties:RemovePreparedSpell(spell.id)
+					end,
+				}
 				resultPanel:FireEvent("refreshGame")
 			end,
 		})

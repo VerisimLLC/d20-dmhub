@@ -625,9 +625,9 @@ local CreateInventorySlot = function(dmhud, options)
 						dmhud.tradeInventoryDialog.data.close()
 						dmhud.basicInventoryDialog.data.toggleOpen()
 					end
-				elseif accessParty and token ~= nil and token.partyid ~= nil then
+				elseif accessParty and token ~= nil and token.partyId ~= nil then
 					dmhub.Debug("OPEN::TRY")
-					local partyInfo = dmhub.GetPartyInfo(token.partyid)
+					local partyInfo = dmhub.GetPartyInfo(token.partyId)
 					dmhud.basicInventoryDialog.data.close()
 					dmhud.tradeInventoryDialog.data.toggleOpen(partyInfo, { isobject = true, partyinventory = true, title = 'Party Inventory', tradewith = token })
 				elseif item ~= nil then
@@ -744,9 +744,12 @@ local CreateInventorySlot = function(dmhud, options)
 											element.popup = nil
 
 											if item.id ~= nil then
-												token:BeginChanges()
-												token.properties:RearrangeInventory(item.id, slotPanel.data.inventoryIndex, slot.slot)
-												token:CompleteChanges("Rearrange inventory")
+												token:ModifyProperties{
+													description = "Rearrange inventory",
+													execute = function()
+														token.properties:RearrangeInventory(item.id, slotPanel.data.inventoryIndex, slot.slot)
+													end,
+												}
 												parentDialog:FireEventTree('refreshInventory')
 											end
 										end,
@@ -757,9 +760,9 @@ local CreateInventorySlot = function(dmhud, options)
 
 						local items = {}
 
-						if token.partyid ~= nil and token.type ~= 'party' then
+						if token.partyId ~= nil and token.type ~= 'party' then
 							items[#items+1] = {
-								token = dmhub.GetPartyInfo(token.partyid),
+								token = dmhub.GetPartyInfo(token.partyId),
 								name = "Party Stash",
 							}
 						end
@@ -786,9 +789,12 @@ local CreateInventorySlot = function(dmhud, options)
 											otherToken.properties:GiveItem(item.id, quantity)
 											otherToken:CompleteChanges('Receive item')
 
-											token:BeginChanges()
-											token.properties:GiveItem(item.id, -quantity, slotPanel.data.inventoryDialog.data.GetDefaultSlotForItem(item.id))
-											token:CompleteChanges('Give item')
+											token:ModifyProperties{
+												description = 'Give item',
+												execute = function()
+													token.properties:GiveItem(item.id, -quantity, slotPanel.data.inventoryDialog.data.GetDefaultSlotForItem(item.id))
+												end,
+											}
 
 											slotPanel.data.inventoryDialog:FireEventTree('refreshInventory')
 										end
@@ -1248,34 +1254,35 @@ end
 
 function GameHud.LootAll(token, tokenTradingWith, inventoryDialog)
 	token:BeginChanges()
-	tokenTradingWith:BeginChanges()
+	tokenTradingWith:ModifyProperties{
+		description = 'Loot Item',
+		execute = function()
+			local itemKeys = {}
 
-	local itemKeys = {}
+			local gearTable = dmhub.GetTable('tbl_Gear')
+			for k,item in pairs(token.properties:try_get("inventory", {})) do
+				if gearTable[k] ~= nil then
+					tokenTradingWith.properties:GiveItem(k, item.quantity)
+					itemKeys[#itemKeys+1] = k
 
-	local gearTable = dmhub.GetTable('tbl_Gear')
-	for k,item in pairs(token.properties:try_get("inventory", {})) do
-		if gearTable[k] ~= nil then
-			tokenTradingWith.properties:GiveItem(k, item.quantity)
-			itemKeys[#itemKeys+1] = k
-
-			if inventoryDialog ~= nil then
-				inventoryDialog.data.SetItemNew(k)
+					if inventoryDialog ~= nil then
+						inventoryDialog.data.SetItemNew(k)
+					end
+				end
 			end
-		end
-	end
 
-	for i,k in ipairs(itemKeys) do
-		token.properties:SetItemQuantity(k, 0)
-	end
+			for i,k in ipairs(itemKeys) do
+				token.properties:SetItemQuantity(k, 0)
+			end
 
-	--currency.
-	for currencyid,_ in pairs(token.properties:try_get("currency", {})) do
-		tokenTradingWith.properties:SetCurrency(currencyid, tokenTradingWith.properties:GetCurrency(currencyid) + token.properties:GetCurrency(currencyid))
-		token.properties:SetCurrency(currencyid, 0)
-	end
-
+			--currency.
+			for currencyid,_ in pairs(token.properties:try_get("currency", {})) do
+				tokenTradingWith.properties:SetCurrency(currencyid, tokenTradingWith.properties:GetCurrency(currencyid) + token.properties:GetCurrency(currencyid))
+				token.properties:SetCurrency(currencyid, 0)
+			end
+		end,
+	}
 	token:CompleteChanges('Loot Item')
-	tokenTradingWith:CompleteChanges('Loot Item')
 end
 
 function GameHud.CreateInventoryDialog(self, options)
@@ -1521,7 +1528,7 @@ function GameHud.CreateInventoryDialog(self, options)
 		end
 
 		if partyItemsSlot ~= nil then
-			if token == nil or token.partyid == nil then
+			if token == nil or token.partyId == nil then
 				partyItemsSlot:SetClass("collapsed", true)
 			else
 				partyItemsSlot:SetClass("collapsed", false)
@@ -1994,9 +2001,9 @@ function GameHud.CreateInventoryDialog(self, options)
 
 						local items = {}
 
-						if token.partyid ~= nil and token.type ~= 'party' then
+						if token.partyId ~= nil and token.type ~= 'party' then
 							items[#items+1] = {
-								token = dmhub.GetPartyInfo(token.partyid),
+								token = dmhub.GetPartyInfo(token.partyId),
 								name = "Party Stash",
 							}
 						end
@@ -3147,44 +3154,46 @@ local CreateEquipmentSlot = function(dmhud, options)
 			equipmentSlot = options.slot,
 
 			AddItem = function(item, quantity, options)
-				token:BeginChanges()
+				token:ModifyProperties{
+					description = 'Equipped gear',
+					execute = function()
+						local slotid = slotName
 
-				local slotid = slotName
+						token.properties:Unequip(slotid)
 
-				token.properties:Unequip(slotid)
+						local slotInfo = creature.EquipmentSlots[slotid]
 
-				local slotInfo = creature.EquipmentSlots[slotid]
+						if item:TwoHanded() and slotInfo.loadout ~= nil and slotInfo.otherhand ~= nil then
+							if not slotInfo.main then
+								slotid = slotInfo.otherhand
+								slotInfo = creature.EquipmentSlots[slotid]
+							end
 
-				if item:TwoHanded() and slotInfo.loadout ~= nil and slotInfo.otherhand ~= nil then
-					if not slotInfo.main then
-						slotid = slotInfo.otherhand
-						slotInfo = creature.EquipmentSlots[slotid]
-					end
+							token.properties:Unequip(slotInfo.otherhand)
 
-					token.properties:Unequip(slotInfo.otherhand)
+							token.properties:EquipmentMetaSlot(slotid).twohanded = true
+							token.properties:EquipmentMetaSlot(slotInfo.otherhand).twohanded = true
+						end
 
-					token.properties:EquipmentMetaSlot(slotid).twohanded = true
-					token.properties:EquipmentMetaSlot(slotInfo.otherhand).twohanded = true
-				end
+						--clear any share info. It may be set again in onadd.
+						token.properties:EquipmentMetaSlot(slotid).share = nil
 
-				--clear any share info. It may be set again in onadd.
-				token.properties:EquipmentMetaSlot(slotid).share = nil
+						if options.onadd ~= nil then
+							options.onadd(token.properties)
+						end
 
-				if options.onadd ~= nil then
-					options.onadd(token.properties)
-				end
+						local existingItem = token.properties:GetEquipmentInSlot(slotid)
+						if existingItem ~= nil then
+							--put the existing item back in their inventory.
+							token.properties:GiveItem(existingItem, 1)
+						end
 
-				local existingItem = token.properties:GetEquipmentInSlot(slotid)
-				if existingItem ~= nil then
-					--put the existing item back in their inventory.
-					token.properties:GiveItem(existingItem, 1)
-				end
-
-				if not options.noitem then
-					token.properties:SetItemQuantity(item.id, token.properties:GetItemQuantity(item.id) - 1, options.slot)
-				end
-				token.properties:Equipment()[slotid] = item.id
-				token:CompleteChanges('Equipped gear')
+						if not options.noitem then
+							token.properties:SetItemQuantity(item.id, token.properties:GetItemQuantity(item.id) - 1, options.slot)
+						end
+						token.properties:Equipment()[slotid] = item.id
+					end,
+				}
 
 				for _,dialog in ipairs(dmhud.openInventoryDialogs) do
 					dialog:FireEventTree('refreshInventory')
@@ -3220,9 +3229,12 @@ local CreateEquipmentSlot = function(dmhud, options)
 			return
 		end
 
-		token:BeginChanges()
-		token.properties:Unequip(slotName)
-		token:CompleteChanges('Unequip Gear')
+		token:ModifyProperties{
+			description = 'Unequip Gear',
+			execute = function()
+				token.properties:Unequip(slotName)
+			end,
+		}
 
 		for _,dialog in ipairs(dmhud.openInventoryDialogs) do
 			dialog:FireEventTree('refreshInventory')

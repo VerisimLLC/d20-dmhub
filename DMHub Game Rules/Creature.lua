@@ -1772,15 +1772,24 @@ end
 
 function creature:ConsumeResourcesForD20Roll(rollid, options)
 	local modifiersUsed = self:GetModifiersForD20Roll(rollid, options)
-	local resourceConsumed = false
-	for i,mod in ipairs(modifiersUsed) do
-		resourceConsumed = resourceConsumed or mod.modifier:ConsumeResource(self)
-	end
-	if resourceConsumed then
-		local ourToken = dmhub.LookupToken(self)
-		if ourToken ~= nil then
-			ourToken:Upload("used resource")
+	local consumeResources = function()
+		local resourceConsumed = false
+		for i,mod in ipairs(modifiersUsed) do
+			resourceConsumed = resourceConsumed or mod.modifier:ConsumeResource(self)
 		end
+		return resourceConsumed
+	end
+
+	local ourToken = dmhub.LookupToken(self)
+	if ourToken ~= nil then
+		ourToken:ModifyProperties{
+			description = "used resource",
+			execute = function()
+				consumeResources()
+			end,
+		}
+	else
+		consumeResources()
 	end
 end
 
@@ -2201,19 +2210,26 @@ function creature:RollDeathSavingThrow(args)
 			return
 		end
 
-		if matchingOutcome.outcome == 'Critical Fail' then
-			self:AddDeathSavingThrowFailure(2)
-		elseif matchingOutcome.outcome == 'Fail' then
-			self:AddDeathSavingThrowFailure()
-		elseif matchingOutcome.outcome == 'Success' then
-			self:AddDeathSavingThrowSuccess()
-		else
-			thisCreature:Heal(1, 'Critical success on death saving throw')
+		local applyOutcome = function()
+			if matchingOutcome.outcome == 'Critical Fail' then
+				self:AddDeathSavingThrowFailure(2)
+			elseif matchingOutcome.outcome == 'Fail' then
+				self:AddDeathSavingThrowFailure()
+			elseif matchingOutcome.outcome == 'Success' then
+				self:AddDeathSavingThrowSuccess()
+			else
+				thisCreature:Heal(1, 'Critical success on death saving throw')
+			end
 		end
 
 		local token = dmhub.LookupToken(thisCreature)
 		if token ~= nil then
-			token:Upload('Death saving throw result')
+			token:ModifyProperties{
+				description = 'Death saving throw result',
+				execute = applyOutcome,
+			}
+		else
+			applyOutcome()
 		end
 
 		if args ~= nil and args.completefn ~= nil then
@@ -4389,24 +4405,24 @@ local g_profileCalculateActiveModifiersFilters = dmhub.ProfileMarker("CalculateA
 local g_profileCalculateActiveModifiersCondition = dmhub.ProfileMarker("CalculateActiveModifiers.Condition")
 
 function creature:CalculateActiveModifiers(calculatingModifiers)
-    g_profileCalculateActiveModifiers:Begin()
+    local _ = g_profileCalculateActiveModifiers.Begin
 	local result = calculatingModifiers or {}
-    g_profileCalculateActiveModifiersBase:Begin()
+    local _ = g_profileCalculateActiveModifiersBase.Begin
 	self:FillBaseActiveModifiers(result)
-    g_profileCalculateActiveModifiersBase:End()
-    g_profileCalculateActiveModifiersTemporal:Begin()
+    local _ = g_profileCalculateActiveModifiersBase.End
+    local _ = g_profileCalculateActiveModifiersTemporal.Begin
 	self:FillTemporalActiveModifiers(result)
-    g_profileCalculateActiveModifiersTemporal:End()
-    g_profileCalculateActiveModifiersModifiers:Begin()
+    local _ = g_profileCalculateActiveModifiersTemporal.End
+    local _ = g_profileCalculateActiveModifiersModifiers.Begin
 	self:FillModifiersFromModifiers(result)
-    g_profileCalculateActiveModifiersModifiers:End()
-    g_profileCalculateActiveModifiersFilters:Begin()
+    local _ = g_profileCalculateActiveModifiersModifiers.End
+    local _ = g_profileCalculateActiveModifiersFilters.Begin
 	result = self:FilterModifiers(result)
-    g_profileCalculateActiveModifiersFilters:End()
-    g_profileCalculateActiveModifiersCondition:Begin()
+    local _ = g_profileCalculateActiveModifiersFilters.End
+    local _ = g_profileCalculateActiveModifiersCondition.Begin
 	self:CalculateConditionModifiers(result)
-    g_profileCalculateActiveModifiersCondition:End()
-    g_profileCalculateActiveModifiers:End()
+    local _ = g_profileCalculateActiveModifiersCondition.End
+    local _ = g_profileCalculateActiveModifiers.End
 	return result
 end
 
@@ -8269,11 +8285,12 @@ function creature:Repair(localOnly)
 		if tok ~= nil then
 			charid = tok.charid
 			printf("Creature validation: repairing creature %s", tok.charid)
-			tok:BeginChanges()
 		else
 			printf("Creature validation: cannot find token for creature.")
 		end
 	end
+
+	local executeRepair = function()
 
 	--remove any character features that are invalid.
 	local deleteList = {}
@@ -8357,9 +8374,15 @@ function creature:Repair(localOnly)
 		self.resources[key] = nil
 	end
 
+	end --executeRepair
 
 	if tok ~= nil then
-		tok:CompleteChanges("Repair character")
+		tok:ModifyProperties{
+			description = "Repair character",
+			execute = executeRepair,
+		}
+	else
+		executeRepair()
 	end
 end
 

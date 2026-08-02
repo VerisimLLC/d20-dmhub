@@ -172,7 +172,7 @@ local CreateMapNode = function(map)
 							return
 						end
 
-						local partyid = tok.partyid
+						local partyid = tok.partyId
 						local party = GetParty(partyid)
 						if party ~= nil then
 						dmhub.Debug(string.format("LINGER:: TOOLTIP: %s", charid))

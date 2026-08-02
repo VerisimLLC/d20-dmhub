@@ -141,7 +141,7 @@ function ActivatedAbilityTableRollBehavior:Cast(ability, casterToken, targets, o
                                             text = string.format("Summoned by %s", target.token.description),
                                         }
 
-                                        token.partyid = target.token.partyid
+                                        token.partyId = target.token.partyId
 
                                         token:UploadToken("Summon Monster")
                                         game.UpdateCharacterTokens()

@@ -1629,32 +1629,45 @@ function GameHud.CreateRollDialog(self)
 					end,
 					complete = function(rollInfo)
 						local resourceConsumed = false
-						for i,modifier in ipairs(modifiersUsed) do
-							local consume = modifier:ConsumeResource(creatureUsed)
-							resourceConsumed = consume or resourceConsumed
-						end
-
 						local ongoingEffects = {}
-						for i,modifier in ipairs(modifiersUsed) do
-							local newOngoingEffects = modifier:ApplyOngoingEffectsToSelfOnRoll(creature)
-							if newOngoingEffects ~= nil then
-								for j,c in ipairs(newOngoingEffects) do
-									ongoingEffects[#ongoingEffects+1] = c
+						local consumeResources = function()
+							for i,modifier in ipairs(modifiersUsed) do
+								local consume = modifier:ConsumeResource(creatureUsed)
+								resourceConsumed = consume or resourceConsumed
+							end
+
+							for i,modifier in ipairs(modifiersUsed) do
+								local newOngoingEffects = modifier:ApplyOngoingEffectsToSelfOnRoll(creature)
+								if newOngoingEffects ~= nil then
+									for j,c in ipairs(newOngoingEffects) do
+										ongoingEffects[#ongoingEffects+1] = c
+									end
 								end
 							end
 						end
 
-						if resourceConsumed or #ongoingEffects > 0 or inspirationUsed then
-							local creatureToken = dmhub.LookupToken(creatureUsed)
-							if creatureToken ~= nil then
-								creatureUsed:SetInspiration(false)
-								for i,cond in ipairs(ongoingEffects) do
-									creatureUsed:ApplyOngoingEffect(cond.ongoingEffect, cond.duration, nil, {
-										untilEndOfTurn = cond.durationUntilEndOfTurn,
-									})
-								end
-								creatureToken:Upload('Used resource')
-							end
+						local creatureToken = nil
+						if creatureUsed ~= nil then
+							creatureToken = dmhub.LookupToken(creatureUsed)
+						end
+
+						if creatureToken ~= nil then
+							creatureToken:ModifyProperties{
+								description = 'Used resource',
+								execute = function()
+									consumeResources()
+									if resourceConsumed or #ongoingEffects > 0 or inspirationUsed then
+										creatureUsed:SetInspiration(false)
+										for i,cond in ipairs(ongoingEffects) do
+											creatureUsed:ApplyOngoingEffect(cond.ongoingEffect, cond.duration, nil, {
+												untilEndOfTurn = cond.durationUntilEndOfTurn,
+											})
+										end
+									end
+								end,
+							}
+						else
+							consumeResources()
 						end
 
 						if completeRollFn ~= nil then

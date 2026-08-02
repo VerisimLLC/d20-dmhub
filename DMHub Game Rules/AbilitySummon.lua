@@ -329,7 +329,7 @@ function ActivatedAbilitySummonBehavior:Cast(ability, casterToken, targets, args
 			token.portraitFrameHueShift = casterToken.portraitFrameHueShift
 
 			--if the caster controls the summoned tokens then they inherit the caster's party.
-			token.partyid = casterToken.partyid
+			token.partyId = casterToken.partyId
 		end
 
 		token:UploadToken("Summon Creature")

@@ -730,7 +730,7 @@ local g_profileCalculateActiveModifiers = dmhub.ProfileMarker("CalculateActiveMo
 
 --gets a list of CharacterModifier objects which are currently active on this creature.
 function character:CalculateActiveModifiers(calculatingModifiers)
-    g_profileCalculateActiveModifiers:Begin()
+    local _ = g_profileCalculateActiveModifiers.Begin
 	local result = calculatingModifiers or {}
 
 	self:FillBaseActiveModifiers(result)
@@ -749,7 +749,7 @@ function character:CalculateActiveModifiers(calculatingModifiers)
 
 	result = self:FilterModifiers(result)
 	self:CalculateConditionModifiers(result)
-    g_profileCalculateActiveModifiers:End()
+    local _ = g_profileCalculateActiveModifiers.End
 	return result
 end
 

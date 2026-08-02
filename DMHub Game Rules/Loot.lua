@@ -580,9 +580,9 @@ function loot.SanitizeInventory(self)
 
 	local inventoryValid = loot.ValidateInventory(self)
 	if not inventoryValid then
-		self:BeginInventorySanitize()
-		loot.ValidateInventory(self, true)
-		self:CompleteInventorySanitize()
+		self:InventorySanitizeChanges(function()
+			loot.ValidateInventory(self, true)
+		end)
 	end
 
 	local gearTable = dmhub.GetTable('tbl_Gear')
@@ -607,40 +607,36 @@ function loot.SanitizeInventory(self)
 		return false
 	end
 
-	self:BeginInventorySanitize()
-	for i=#deletes,1,-1 do
-		local k = deletes[i]
-		if type(k) == "string" then
-			inventory[k] = nil
-		else
-			local slots = inventory[k.key].slots
-			table.remove(slots, k.slotIndex)
+	self:InventorySanitizeChanges(function()
+		for i=#deletes,1,-1 do
+			local k = deletes[i]
+			if type(k) == "string" then
+				inventory[k] = nil
+			else
+				local slots = inventory[k.key].slots
+				table.remove(slots, k.slotIndex)
+			end
 		end
-	end
-	self:CompleteInventorySanitize()
+	end)
 
 	return true
 end
 
 creature.SanitizeInventory = loot.SanitizeInventory
 
-function loot:BeginInventorySanitize()
+function loot:InventorySanitizeChanges(execute)
+	execute()
 end
 
-function loot:CompleteInventorySanitize()
-end
-
-function creature:BeginInventorySanitize()
+function creature:InventorySanitizeChanges(execute)
 	local tok = dmhub.LookupToken(self)
 	if tok ~= nil then
-		tok:BeginChanges()
-	end
-end
-
-function creature:CompleteInventorySanitize()
-	local tok = dmhub.LookupToken(self)
-	if tok ~= nil then
-		tok:CompleteChanges("Sanitize inventory")
+		tok:ModifyProperties{
+			description = "Sanitize inventory",
+			execute = execute,
+		}
+	else
+		execute()
 	end
 end
 

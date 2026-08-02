@@ -401,8 +401,12 @@ function CharacterPanel.ShowHitpoints()
 			events = {
 				change = function(element)
 					if element.data.token.properties ~= nil then
-						element.data.token.properties:SetTemporaryHitpoints(element.text)
-						element.data.token:Upload('Change Temporary Hitpoints')
+						element.data.token:ModifyProperties{
+							description = 'Change Temporary Hitpoints',
+							execute = function()
+								element.data.token.properties:SetTemporaryHitpoints(element.text)
+							end,
+						}
 					end
 				end,
 
@@ -836,7 +840,7 @@ CharacterPanel.CreateConditionsPanel = function(token)
 					return
 				end
 
-				g_profileConditions:Begin()
+				local _ = g_profileConditions.Begin
 				activeOngoingEffects = creature:ActiveOngoingEffects()
 
 				element.selfStyle.maxWidth = (#activeOngoingEffects + 1)*40
@@ -1062,7 +1066,7 @@ CharacterPanel.CreateConditionsPanel = function(token)
 				end
 
 
-				g_profileConditions:End()
+				local _ = g_profileConditions.End
 			end,
 		},
 	}
@@ -1078,7 +1082,7 @@ end
 
 function CharacterPanel.SingleCharacterDisplaySidePanel(token)
 
-	g_profileCreateSingleCharacterDisplay:Begin()
+	local _ = g_profileCreateSingleCharacterDisplay.Begin
 
 	local characterDisplaySidebar
 
@@ -1255,9 +1259,9 @@ function CharacterPanel.SingleCharacterDisplaySidePanel(token)
 
 		events = {
 			refresh = function(element)
-				g_profileRefreshCharacterDetails:Begin()
+				local _ = g_profileRefreshCharacterDetails.Begin
 				if token == nil or not token.valid then
-					g_profileRefreshCharacterDetails:End()
+					local _ = g_profileRefreshCharacterDetails.End
 					return
 				end
 
@@ -1266,7 +1270,7 @@ function CharacterPanel.SingleCharacterDisplaySidePanel(token)
 
 				characterDisplaySidebar:FireEventTree('refreshCharacter', token)
 
-				g_profileRefreshCharacterDetails:End()
+				local _ = g_profileRefreshCharacterDetails.End
 			end,
 
 			setToken = function(element, tok)
@@ -1284,7 +1288,7 @@ function CharacterPanel.SingleCharacterDisplaySidePanel(token)
 		summaryPanel,
 	}
 
-	g_profileCreateSingleCharacterDisplay:End()
+	local _ = g_profileCreateSingleCharacterDisplay.End
 
 	return characterDisplaySidebar
 end
@@ -1333,7 +1337,7 @@ local function CharacterDisplaySidePanel()
 			end
 		end,
 		refresh = function(element)
-			g_profileRefreshCharSidePanel:Begin()
+			local _ = g_profileRefreshCharSidePanel.Begin
 			local hasVisible = false
 			local newTokenPanels = {}
 			local newChildren = {}
@@ -1362,9 +1366,9 @@ local function CharacterDisplaySidePanel()
 
 				singleTokenDetailsPanel:SetClass("collapsed", false)
 				if tokens[1] ~= nil and tokens[1].properties ~= nil then
-					g_profileCharacterRefresh:Begin()
+					local _ = g_profileCharacterRefresh.Begin
 					singleTokenDetailsPanel:FireEvent("dirtyToken", tokens[1])
-					g_profileCharacterRefresh:End()
+					local _ = g_profileCharacterRefresh.End
 				end
 
 			elseif singleTokenDetailsPanel ~= nil then
@@ -1385,7 +1389,7 @@ local function CharacterDisplaySidePanel()
 			end
 
 			tokenPanels = newTokenPanels
-			g_profileRefreshCharSidePanel:End()
+			local _ = g_profileRefreshCharSidePanel.End
 		end,
 
 		bestiaryPanel,
@@ -2470,7 +2474,7 @@ CharacterPanel.CreateCharacterEntry = function(charid)
 				halign = "left",
 				text = creature.GetTokenDescription(token),
 				refresh = function(element)
-					g_profileMonsterDescriptionRefresh:Begin()
+					local _ = g_profileMonsterDescriptionRefresh.Begin
 					local desc = creature.GetTokenDescription(token)
 					local playerName = token.playerNameOrNil
 					if playerName ~= nil then
@@ -2479,7 +2483,7 @@ CharacterPanel.CreateCharacterEntry = function(charid)
 					end
 					element.text = desc
 					element:SetClass("invisible", token.invisibleToPlayers)
-					g_profileMonsterDescriptionRefresh:End()
+					local _ = g_profileMonsterDescriptionRefresh.End
 				end,
 			})
 		}
@@ -2493,7 +2497,7 @@ local g_profileRefreshParty = dmhub.ProfileMarker("refreshParty")
 
 CharacterPanel.PopulatePartyMembers = function(element, party, partyMembers, memberPanes)
 
-	g_profileRefreshPartyEntry:Begin()
+	local _ = g_profileRefreshPartyEntry.Begin
 
 	local children = {}
 	local newMemberPanes = {}
@@ -2530,7 +2534,7 @@ CharacterPanel.PopulatePartyMembers = function(element, party, partyMembers, mem
 
 	element.children = children
 
-	g_profileRefreshPartyEntry:End()
+	local _ = g_profileRefreshPartyEntry.End
 	return newMemberPanes
 end
 
@@ -2548,7 +2552,7 @@ CharacterPanel.CreatePartyCharacters = function(partyid)
 
 	local RefreshParty = function()
 	
-		g_profileRefreshParty:Begin()
+		local _ = g_profileRefreshParty.Begin
 		if partyid == nil then
 			party = nil
 			local tokens = dmhub.GetTokens{
@@ -2565,7 +2569,7 @@ CharacterPanel.CreatePartyCharacters = function(partyid)
 			partyMembers = dmhub.GetCharacterIdsInParty(partyid)
 			partyName = party.name
 		end
-		g_profileRefreshParty:End()
+		local _ = g_profileRefreshParty.End
 	end
 
 	RefreshParty()
@@ -3210,7 +3214,7 @@ CreateCharacterPanel = function()
 			end
 		end,
 		refresh = function(element)
-			g_profileCharacterPanelRefresh:Begin()
+			local _ = g_profileCharacterPanelRefresh.Begin
 			local hasVisible = false
 			local newChildren = {}
 			local createdNew = false
@@ -3260,9 +3264,9 @@ CreateCharacterPanel = function()
 
 				singleTokenDetailsPanel:SetClass("collapsed", false)
 				if tokens[1] ~= nil and tokens[1].properties ~= nil then
-					g_profileCharacterRefreshRolls:Begin()
+					local _ = g_profileCharacterRefreshRolls.Begin
 					singleTokenDetailsPanel:FireEvent("dirtyToken", tokens[1])
-					g_profileCharacterRefreshRolls:End()
+					local _ = g_profileCharacterRefreshRolls.End
 				end
 
 				panelTitle = creature.GetTokenDescription(tokens[1])
@@ -3286,7 +3290,7 @@ CreateCharacterPanel = function()
 				element.children = newChildren
 			--end
 
-			g_profileCharacterPanelRefresh:End()
+			local _ = g_profileCharacterPanelRefresh.End
 		end,
 
 		bestiaryPanel,
