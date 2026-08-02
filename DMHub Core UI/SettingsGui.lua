@@ -745,6 +745,17 @@ setting{
 	storage = "preference",
 }
 
+--Privacy toggle read by analytics helpers before sending any usage data.
+setting{
+	id = "telemetry_enabled",
+	description = "Send Anonymous Usage Data",
+	help = "Help improve DMHub by sending anonymous usage statistics. No personal information is collected.",
+	storage = "preference",
+	section = "General",
+	editor = "check",
+	default = true,
+}
+
 --------------------------------------------------------------------------------
 -- Theme & Color Scheme picker dialog, ported from the Draw Steel codex.
 -- Lets the player pick a theme and color scheme, preview them, and create
