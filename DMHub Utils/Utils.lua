@@ -155,3 +155,95 @@ function SearchTableForText(t, search)
 
     return results
 end
+
+-- =============================================================================
+-- Macro registration infrastructure (ported from the Draw Steel Codex).
+-- The Commands table is created by the engine's core Lua (commands.txt) before
+-- mods load; create it defensively in case the load order ever changes.
+-- =============================================================================
+
+if rawget(_G, "Commands") == nil then
+    Commands = {}
+end
+
+Commands._macros = Commands._macros or {}
+
+function Commands.RegisterMacro(args)
+    local name = args.name
+    local fn = args.command
+    local doc = args.doc
+    local summary = args.summary
+
+    if doc ~= nil then
+        Commands[name] = function(str)
+            if str == "help" then
+                dmhub.Log(doc)
+                return
+            end
+            return fn(str)
+        end
+    else
+        Commands[name] = fn
+    end
+
+    Commands._macros[name] = {
+        doc = doc,
+        summary = summary,
+        completions = args.completions,
+    }
+end
+
+-- =============================================================================
+-- EventUtils (ported from the Draw Steel Codex). The legacy DMHub_Core_UI mod's
+-- Utils.lua also defines an identical EventUtils; redefining it here would
+-- reset the handler registry and strand any handlers registered against the
+-- earlier table, so only define it when it is absent.
+-- =============================================================================
+
+if rawget(_G, "EventUtils") == nil then
+
+    local g_globalEventHandlers = {}
+
+    EventUtils = {
+        FireGlobalEvent = function(eventName, ...)
+            local eventList = g_globalEventHandlers[eventName]
+            if eventList ~= nil then
+                for _,entry in ipairs(eventList) do
+                    entry.handlerfn(...)
+                end
+            end
+        end,
+
+        RegisterGlobalEventHandler = function(mod, eventName, handlerfn)
+            local guid = dmhub.GenerateGuid()
+            g_globalEventHandlers[eventName] = g_globalEventHandlers[eventName] or {}
+            local eventList = g_globalEventHandlers[eventName]
+            local entry = {
+                guid = guid,
+                handlerfn = handlerfn,
+            }
+
+            eventList[#eventList+1] = entry
+
+            local unloadfn = function()
+                local eventList = g_globalEventHandlers[eventName]
+                if eventList == nil then
+                    return
+                end
+                local newEventList = {}
+                for _,entry in ipairs(eventList) do
+                    if entry.guid ~= guid then
+                        newEventList[#newEventList+1] = entry
+                    end
+                end
+
+                g_globalEventHandlers[eventName] = newEventList
+            end
+
+            mod.unloadHandlers[#mod.unloadHandlers+1] = unloadfn
+            entry.Deregister = unloadfn
+            return entry
+        end,
+    }
+
+end

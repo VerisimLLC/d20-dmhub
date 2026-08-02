@@ -292,7 +292,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 						}
 					}
 					slots[#slots+1] = gui.Panel{
-						bgimage = "panels/square.png",
+						bgimage = "panels/hud/button_09_frame_custom.png",
 						classes = {"slot"},
 						width = 24,
 						height = 24,
@@ -489,7 +489,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 
 	local GetEmptyPanel = function(index)
 		local emptyPanel = emptyPanels[index] or gui.Panel{
-			bgimage = 'panels/square.png',
+			bgimage = 'panels/hud/button_09_frame_custom.png',
 			classes = {'slot', 'empty'},
 		}
 		emptyPanels[index] = emptyPanel
@@ -1019,7 +1019,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 			
 			spellPanel = gui.Panel{
 				idprefix = "spellPanel",
-				bgimage = 'panels/square.png',
+				bgimage = 'panels/hud/button_09_frame_custom.png',
 				classes = {'slot'},
 				escapePriority = EscapePriority.CANCEL_ACTION_BAR,
 
@@ -2392,7 +2392,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 				local itemInfo = gearTable[k]
 				if itemInfo:try_get("equipmentCategory") == ammoType then
 					local ammoPanel = gui.Panel{
-						bgimage = 'panels/square.png',
+						bgimage = 'panels/hud/button_09_frame_custom.png',
 						classes = {'slot', cond(consumeAmmo[k], "focus")},
 
 						data = {
@@ -3584,7 +3584,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 				local isStable = creature:IsStable()
 				if isDying then
 					local deathSavingThrowPanel = gui.Panel{
-						bgimage = 'panels/square.png',
+						bgimage = 'panels/hud/button_09_frame_custom.png',
 						classes = {'slot'},
 
 						data = {
@@ -3655,7 +3655,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 					local focusPanel = CreateFocusPanel()
 
 					gatherProjectilesPanel = gui.Panel{
-						bgimage = 'panels/square.png',
+						bgimage = 'panels/hud/button_09_frame_custom.png',
 						classes = {'slot'},
 
 						data = {
@@ -3779,7 +3779,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 						
 						gui.Panel{
 
-							bgimage = 'panels/square.png',
+							bgimage = 'panels/hud/button_09_frame_custom.png',
 							classes = {'slot'},
 							width = 32,
 							height = 32,
@@ -3810,7 +3810,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 											if speed > 0 then
 												local info = creature.movementTypeById[moveType]
 												popoutPanels[#popoutPanels+1] = gui.Panel{
-													bgimage = 'panels/square.png',
+													bgimage = 'panels/hud/button_09_frame_custom.png',
 													classes = {'slot'},
 													width = 32,
 													height = 32,

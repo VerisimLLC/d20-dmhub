@@ -187,6 +187,8 @@ function Hud:ModalMessage(args)
 			classes = {"framedPanel"},
 
 			styles = {
+				--Theme rules first; the legacy rules after them win any conflicts.
+				ThemeEngine.GetStyles(),
 				Styles.Panel,
 				{
 					halign = 'center',
@@ -231,6 +233,8 @@ function Hud:ModalChoice(args)
 	dialog = gui.Panel{
 		classes = {"framedPanel"},
 		styles = {
+			--Theme rules first; the legacy rules after them win any conflicts.
+			ThemeEngine.GetStyles(),
 			Styles.Default,
 			Styles.Panel,
 			Styles.Table,
