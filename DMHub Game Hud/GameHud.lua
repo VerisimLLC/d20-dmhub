@@ -1126,6 +1126,14 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 
 	gamehud.parentPanel = parentPanel
 
+	--The engine sizes the docks for a 46px top bar (the Draw Steel layout).
+	--The 5e top bar is 82px tall, so shorten the docks to start below it.
+	for _,dock in ipairs({gamehud.leftDock, gamehud.rightDock}) do
+		if dock ~= nil and dock.valid then
+			dock.selfStyle.height = 1080 - 82
+		end
+	end
+
 	dialog.sheet = parentPanel
 
 	--if a modding merge has occurred, display info about it here.
