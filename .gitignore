@@ -39,3 +39,9 @@ luac.out
 *.x86_64
 *.hex
 
+
+# DMHub mod checkout state (machine-local, engine-managed)
+status.json
+
+# Engine-generated stub version marker
+Definitions/version.txt
