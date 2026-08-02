@@ -56,7 +56,7 @@ function Race:FillClassFeatures(characterLevel, choices, result)
 		printf("ERROR:: %s", traceback())
 	end
 	self:EnsureDomain()
-	for i,feature in ipairs(self:GetClassLevel().features) do
+	for i,feature in pairs(self:GetClassLevel().features) do
 		if feature.typeName == 'CharacterFeature' then
 			result[#result+1] = feature
 		else
@@ -64,16 +64,18 @@ function Race:FillClassFeatures(characterLevel, choices, result)
 		end
 	end
 
-	for levelNum,level in ipairs(self:try_get("levels") or {}) do
-		if characterLevel ~= nil and levelNum > characterLevel then
-			break
+	for levelNum,level in pairs(self:try_get("levels") or {}) do
+		local levelKey = tonumber(levelNum)
+		if levelKey == nil then
+			levelKey = tonumber(levelNum:match("level%-(%d+)"))
 		end
-		
-		for i,feature in ipairs(level.features) do
-			if feature.typeName == 'CharacterFeature' then
-				result[#result+1] = feature
-			else
-				feature:FillChoice(choices, result)
+		if characterLevel ~= nil and levelKey <= characterLevel then
+			for i,feature in ipairs(level.features) do
+				if feature.typeName == 'CharacterFeature' then
+					result[#result+1] = feature
+				else
+					feature:FillChoice(choices, result)
+				end
 			end
 		end
 	end
@@ -95,20 +97,23 @@ function Race:FillFeatureDetails(characterLevel, choices, result)
 		end
 	end
 	
-	for levelNum,level in ipairs(self:try_get("levels") or {}) do
-		if characterLevel ~= nil and levelNum > characterLevel then
-			break
+	for levelNum,level in pairs(self:try_get("levels") or {}) do
+		local levelKey = tonumber(levelNum)
+		if levelKey == nil then
+			levelKey = tonumber(levelNum:match("level%-(%d+)"))
 		end
+		if characterLevel ~= nil and levelKey <= characterLevel then
 
-		for i,feature in ipairs(level.features) do
-			local resultFeatures = {}
-			feature:FillFeaturesRecursive(choices, resultFeatures)
+			for i,feature in pairs(level.features) do
+				local resultFeatures = {}
+				feature:FillFeaturesRecursive(choices, resultFeatures)
 
-			for i,resultFeature in ipairs(resultFeatures) do
-				result[#result+1] = {
-					race = self,
-					feature = resultFeature,
-				}
+				for i,resultFeature in ipairs(resultFeatures) do
+					result[#result+1] = {
+						race = self,
+						feature = resultFeature,
+					}
+				end
 			end
 		end
 	end
