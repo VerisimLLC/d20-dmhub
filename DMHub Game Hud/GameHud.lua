@@ -851,7 +851,39 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 		tokenInfo = tokenInfo,
 		openInventoryDialogs = {},
 		interactionQueue = {},
+
+		--The 5e top bar is 82px tall; the engine's docks read this so they
+		--start below it instead of assuming the default 46px top bar.
+		dockTopReserve = 82,
 	}
+
+	--A black panel filling one top corner of the screen, shown only while
+	--that side's dock is visible. See the note at the children list below.
+	local CreateDockCapPanel = function(side)
+		return gui.Panel{
+			interactable = false,
+			width = DockablePanel.DockWidth,
+			height = 82,
+			halign = side,
+			valign = "top",
+			bgimage = "panels/square.png",
+			bgcolor = "black",
+			thinkTime = 0.3,
+			think = function(element)
+				local dock = nil
+				if side == "left" then
+					dock = gamehud.leftDock
+				else
+					dock = gamehud.rightDock
+				end
+				local show = dock ~= nil and dock.valid and (not dock:HasClass("offscreen")) and #dock.data.GetChildren() > 0
+				element:SetClass("hidden", not show)
+			end,
+			create = function(element)
+				element:FireEvent("think")
+			end,
+		}
+	end
 
 	GameHud.instance = gamehud
 
@@ -1099,6 +1131,13 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 		},
 
 		children = {
+			--Black backdrops for the screen's top corners, drawn under all
+			--other hud elements. The docks start below the 82px top bar, and
+			--the map's reserved side strip appears and disappears globally;
+			--these keep a steady backdrop above whichever docks are visible.
+			CreateDockCapPanel("left"),
+			CreateDockCapPanel("right"),
+
 			gamehud:CreateShapesLayer(),
 
 			gamehud:RequireRollListenerPanel(),
@@ -1125,14 +1164,6 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 	})
 
 	gamehud.parentPanel = parentPanel
-
-	--The engine sizes the docks for a 46px top bar (the Draw Steel layout).
-	--The 5e top bar is 82px tall, so shorten the docks to start below it.
-	for _,dock in ipairs({gamehud.leftDock, gamehud.rightDock}) do
-		if dock ~= nil and dock.valid then
-			dock.selfStyle.height = 1080 - 82
-		end
-	end
 
 	dialog.sheet = parentPanel
 
