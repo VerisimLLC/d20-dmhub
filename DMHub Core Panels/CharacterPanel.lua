@@ -1701,6 +1701,11 @@ local CreateMonsterEntry = function(nodeid)
 				bgimageStreamed = monster.portrait,
 				bgimageTokenMask = monster.portraitFrame,
 
+				--White means "show the artwork untinted". Set directly on the
+				--panel, not in the style table below, because a style table
+				--loses to any class rule that sets a color.
+				bgcolor = 'white',
+
 				selfStyle = {
 					imageRect = monster.portraitRect,
 				},

@@ -228,9 +228,16 @@ ThemeEngine.RegisterTheme{
         -- framedPanel, tokenImagePortrait, and similar.
 
         --[[ Panel ]]
+        --
+        -- No blanket bgcolor here on purpose. On a panel whose background is
+        -- artwork, bgcolor acts as a tint, so coloring every panel turns
+        -- portraits and icons almost black. This game system's panels are
+        -- written to set their own background color, the same as the older
+        -- stylesheet did, so only the scroll handle is set here. Panels that
+        -- want a themed surface use a class rule below (framedPanel,
+        -- surfaceLinear, row, and so on).
         {
             selectors = {"panel"},
-            bgcolor = "@bg",
             scrollHandleColor = "@fgMuted",
         },
         {

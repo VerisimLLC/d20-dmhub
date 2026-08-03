@@ -289,7 +289,8 @@ function gui.AddButton(options)
 	local args = {
 		classes = {'plus-button', "addButton"},
 		bgimage = 'ui-icons/Plus.png',
-		bgcolor = "#d4caba",
+		--Resolved when the button is built, so it follows the color scheme.
+		bgcolor = ThemeEngine.ResolveTokens("@fgStrong"),
 	}
 
 	if options.tooltip ~= nil then
@@ -3513,6 +3514,10 @@ function gui.IconEditor(args)
 			local m_imageid = nil
 			local iconImage = gui.Panel{
 				classes = {"icon-image"},
+				--White means "show the artwork untinted". Set directly on the
+				--panel, not in the style table, because a style table loses
+				--to any class rule that sets a color.
+				bgcolor = "white",
 				style = iconImageStyle,
 			}
 
@@ -4448,6 +4453,11 @@ function gui.CreateMonsterImage(monster, options)
 	local result = {
 		bgimageStreamed = monster.portrait,
 		bgimageTokenMask = monster.portraitFrame,
+
+		--White means "show the artwork untinted". Set directly on the panel,
+		--not in the style table below, because a style table loses to any
+		--class rule that sets a color.
+		bgcolor = 'white',
 
 		selfStyle = {
 			imageRect = monster.portraitRect,

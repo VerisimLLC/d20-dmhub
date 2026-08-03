@@ -857,6 +857,10 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 		dockTopReserve = 82,
 	}
 
+	--Defined further down, once the docks exist; declared here so the
+	--backdrop's think below can call it.
+	local StyleDockChrome
+
 	--A full-height backdrop behind one side's dock, shown only while that
 	--dock is visible. The dock frame art is transparent inside, so without
 	--this the app's plain black shows through instead of the theme color.
@@ -875,6 +879,7 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 			themeUpdate = function(element)
 				element.selfStyle.bgcolor = ThemeEngine.ResolveTokens("@bg")
 			end,
+			data = {},
 			thinkTime = 0.3,
 			think = function(element)
 				local dock = nil
@@ -885,6 +890,16 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 				end
 				local show = dock ~= nil and dock.valid and (not dock:HasClass("offscreen")) and #dock.data.GetChildren() > 0
 				element:SetClass("hidden", not show)
+
+				--Recolor any dock chrome the engine has just built. Cheap
+				--because it only runs when the panel count changes.
+				if dock ~= nil and dock.valid and StyleDockChrome ~= nil then
+					local count = #dock.data.GetChildren()
+					if element.data.chromeCount ~= count then
+						element.data.chromeCount = count
+						StyleDockChrome(dock)
+					end
+				end
 			end,
 			create = function(element)
 				element:FireEvent("think")
@@ -957,8 +972,39 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 
     local m_recordedPopup = nil
 
+	--Theme overrides for the hud's own chrome. The legacy stylesheet baked
+	--its gold in when it loaded, so these rules re-state the same properties
+	--in scheme colors and are listed after it to win.
+	local function HudThemeRules()
+		return ThemeEngine.MergeTokens{
+			{
+				classes = {"hudIconButton"},
+				bgcolor = "@bg",
+				borderColor = "@border",
+			},
+			{
+				classes = {"hudIconButton", "selected", "tab"},
+				bgcolor = "@bg",
+			},
+			{
+				classes = {"hudIconButtonIcon"},
+				bgcolor = "@fg",
+			},
+			--The docks are built by the engine, which bakes in the same
+			--gold. These reach them because the docks live under this panel.
+			{
+				classes = {"panelTitle"},
+				color = "@fg",
+			},
+			{
+				classes = {"verticalDragDivider"},
+				bgcolor = "@border",
+			},
+		}
+	end
+
 	local parentPanel = gui.Panel({
-		styles = Styles.Default,
+		styles = { Styles.Default, HudThemeRules() },
 		selfStyle = {
 			width = dialog.width,
 			height = dialog.height,
@@ -1172,32 +1218,47 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 
 	gamehud.parentPanel = parentPanel
 
-	--The engine's dock frame is a picture with an opaque dark middle, so the
-	--only way to color a dock's interior is to cover it with our own panel.
+	--The engine's dock frame is a gold picture, and everything in the dock is
+	--drawn inside it. Tinting or draining the picture's color would hit the
+	--contents too (character portraits went grey that way), so instead the
+	--picture is swapped for a plain square we can color: the fill becomes the
+	--dock background and the border becomes the dock outline.
 	--The frame is built a moment after the hud, hence the retry.
+	local function StyleDockFrame(element)
+		element.selfStyle.bgimage = "panels/square.png"
+		element.selfStyle.bgcolor = ThemeEngine.ResolveTokens("@bg")
+		element.selfStyle.borderColor = ThemeEngine.ResolveTokens("@border")
+		element.selfStyle.borderWidth = 2
+		element.selfStyle.cornerRadius = 8
+	end
+
+	--The dock's title text and divider lines are painted by the engine's own
+	--registered theme, which outranks anything we set from here, so they are
+	--colored one panel at a time. New panels get picked up by the sweep in
+	--the corner backdrop's think below.
+	StyleDockChrome = function(element)
+		if element == nil or not element.valid then
+			return
+		end
+		if element:HasClass("verticalDragDivider") then
+			element.selfStyle.bgcolor = ThemeEngine.ResolveTokens("@border")
+		elseif element:HasClass("panelTitle") then
+			element.selfStyle.color = ThemeEngine.ResolveTokens("@fg")
+		end
+		for _,child in ipairs(element.children) do
+			StyleDockChrome(child)
+		end
+	end
+
 	local function PaintDockInterior(dockName, attemptsLeft)
 		local dock = gamehud[dockName]
 		if dock ~= nil and dock.valid then
 			for _,child in ipairs(dock.children) do
 				if child:HasClass("dockFrame") then
-					child:AddChild(gui.Panel{
-						interactable = false,
-						bgimage = "panels/square.png",
-						bgcolor = ThemeEngine.ResolveTokens("@bg"),
-						themeUpdate = function(element)
-							element.selfStyle.bgcolor = ThemeEngine.ResolveTokens("@bg")
-						end,
-						--The frame drains color from what it contains, so
-						--these put this panel back to normal; without them the
-						--scheme color comes out grey.
-						saturation = 1,
-						brightness = 1,
-						width = "100%-16",
-						height = "100%-16",
-						halign = "center",
-						valign = "center",
-						cornerRadius = 6,
-					})
+					StyleDockFrame(child)
+					child.events = child.events or {}
+					child.events.themeUpdate = StyleDockFrame
+					StyleDockChrome(dock)
 					return
 				end
 			end
@@ -1215,9 +1276,10 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 	PaintDockInterior("leftDock", 25)
 	PaintDockInterior("rightDock", 25)
 
-	--One listener re-tints the dock backdrops when the scheme changes.
+	--One listener re-colors the hud chrome when the scheme changes.
 	ThemeEngine.OnThemeChanged(mod, function()
 		if parentPanel ~= nil and parentPanel.valid then
+			parentPanel.styles = { Styles.Default, HudThemeRules() }
 			parentPanel:FireEventTree("themeUpdate")
 		end
 	end)
