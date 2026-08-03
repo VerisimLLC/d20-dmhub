@@ -1,58 +1,58 @@
 local mod = dmhub.GetModLoading()
 
 local RollsStyles = {
-	gui.Style{
+	{
 		selectors = {"rollsPanel"},
 		width = "100%",
 		height = "auto",
 	},
-	gui.Style{
+	{
 		selectors = {"rollsSection"},
 		flow = "vertical",
 		width = "auto",
 		height = "auto",
 		vmargin = 12,
 	},
-	gui.Style{
+	{
 		selectors = {"rollsDoubleCollection"},
 		flow = "horizontal",
 		width = "100%",
 		height = "auto",
 	},
-	gui.Style{
+	{
 		selectors = {"rollsCollection"},
 		flow = "vertical",
 		halign = "center",
 		width = "auto",
 		height = "auto",
 	},
-	gui.Style{
+	{
 		selectors = {"singleRollPanel"},
 		flow = "horizontal",
 		bgcolor = "clear",
 		width = 144,
 		height = 18,
 	},
-	gui.Style{
+	{
 		selectors = {"rollTitle"},
 		uppercase = true,
 		bold = true,
 		fontSize = 16,
-		color = "#d4d1ba",
+		color = "@fgStrong",
 		halign = "center",
 		width = "auto",
 		height = "auto",
 	},
-	gui.Style{
+	{
 		selectors = {"rollLabel"},
 		fontSize = 14,
 		bold = true,
 		halign = "left",
 		width = "auto",
 		height = "auto",
-		color = "#d4d1ba",
+		color = "@fgStrong",
 	},
-	gui.Style{
+	{
 		selectors = {"rollValue"},
 		fontSize = 14,
 		width = "auto",
@@ -61,33 +61,33 @@ local RollsStyles = {
 		halign = "right",
 		color = "#c0eddf",
 	},
-	gui.Style{
+	{
 		selectors = {"rollValue", "disadvantage"},
 		color = "red",
 	},
-	gui.Style{
+	{
 		selectors = {"rollValue", "advantage"},
 		color = "green",
 	},
-	gui.Style{
+	{
 		selectors = {"rollLabel", "parent:hover"},
-		color = "white",
+		color = "@fgStrong",
 	},
-	gui.Style{
+	{
 		selectors = {"rollLabel", "parent:press"},
-		color = "grey",
+		color = "@fgMuted",
 	},
-	gui.Style{
+	{
 		selectors = {"rollValue", "parent:hover"},
-		color = "white",
+		color = "@fgStrong",
 	},
-	gui.Style{
+	{
 		selectors = {"rollValue", "parent:press"},
-		color = "grey",
+		color = "@fgMuted",
 	},
-	gui.Style{
+	{
 		selectors = {"notesLabel"},
-		color = "#d4d1ba",
+		color = "@fgStrong",
 		fontSize = 14,
 		width = "90%",
 		height = "auto",
@@ -412,7 +412,8 @@ CharacterPanel.CreateCharacterDetailsPanel = function(tokenArg)
 
 	resultPanel = gui.Panel{
 		classes = {"rollsPanel"},
-		styles = RollsStyles,
+		--Tokens resolve against the active scheme when the panel is built.
+		styles = ThemeEngine.MergeTokens(RollsStyles),
 		flow = "vertical",
 		refreshToken = function(element, tok)
 			--this updates the token member so that we update what clicking to roll does to use this token.

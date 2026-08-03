@@ -857,17 +857,24 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 		dockTopReserve = 82,
 	}
 
-	--A black panel filling one top corner of the screen, shown only while
-	--that side's dock is visible. See the note at the children list below.
+	--A full-height backdrop behind one side's dock, shown only while that
+	--dock is visible. The dock frame art is transparent inside, so without
+	--this the app's plain black shows through instead of the theme color.
+	--See the note at the children list below for why it is drawn first.
 	local CreateDockCapPanel = function(side)
 		return gui.Panel{
 			interactable = false,
 			width = DockablePanel.DockWidth,
-			height = 82,
+			height = "100%",
 			halign = side,
 			valign = "top",
 			bgimage = "panels/square.png",
-			bgcolor = "black",
+			--Set inline: a style rule with no selectors would only reach
+			--children, not this panel itself.
+			bgcolor = ThemeEngine.ResolveTokens("@bg"),
+			themeUpdate = function(element)
+				element.selfStyle.bgcolor = ThemeEngine.ResolveTokens("@bg")
+			end,
 			thinkTime = 0.3,
 			think = function(element)
 				local dock = nil
@@ -1131,14 +1138,14 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 		},
 
 		children = {
-			--Black backdrops for the screen's top corners, drawn under all
-			--other hud elements. The docks start below the 82px top bar, and
-			--the map's reserved side strip appears and disappears globally;
-			--these keep a steady backdrop above whichever docks are visible.
+			gamehud:CreateShapesLayer(),
+
+			--Backdrops for the two dock strips, in the active scheme's
+			--background color. They must come after the shapes layer, which
+			--paints over everything before it, and before the top bar so its
+			--buttons still draw on top of them.
 			CreateDockCapPanel("left"),
 			CreateDockCapPanel("right"),
-
-			gamehud:CreateShapesLayer(),
 
 			gamehud:RequireRollListenerPanel(),
 			gamehud:CreateTopBar(),
@@ -1164,6 +1171,56 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 	})
 
 	gamehud.parentPanel = parentPanel
+
+	--The engine's dock frame is a picture with an opaque dark middle, so the
+	--only way to color a dock's interior is to cover it with our own panel.
+	--The frame is built a moment after the hud, hence the retry.
+	local function PaintDockInterior(dockName, attemptsLeft)
+		local dock = gamehud[dockName]
+		if dock ~= nil and dock.valid then
+			for _,child in ipairs(dock.children) do
+				if child:HasClass("dockFrame") then
+					child:AddChild(gui.Panel{
+						interactable = false,
+						bgimage = "panels/square.png",
+						bgcolor = ThemeEngine.ResolveTokens("@bg"),
+						themeUpdate = function(element)
+							element.selfStyle.bgcolor = ThemeEngine.ResolveTokens("@bg")
+						end,
+						--The frame drains color from what it contains, so
+						--these put this panel back to normal; without them the
+						--scheme color comes out grey.
+						saturation = 1,
+						brightness = 1,
+						width = "100%-16",
+						height = "100%-16",
+						halign = "center",
+						valign = "center",
+						cornerRadius = 6,
+					})
+					return
+				end
+			end
+		end
+
+		if attemptsLeft > 0 then
+			dmhub.Schedule(0.2, function()
+				if not mod.unloaded then
+					PaintDockInterior(dockName, attemptsLeft - 1)
+				end
+			end)
+		end
+	end
+
+	PaintDockInterior("leftDock", 25)
+	PaintDockInterior("rightDock", 25)
+
+	--One listener re-tints the dock backdrops when the scheme changes.
+	ThemeEngine.OnThemeChanged(mod, function()
+		if parentPanel ~= nil and parentPanel.valid then
+			parentPanel:FireEventTree("themeUpdate")
+		end
+	end)
 
 	dialog.sheet = parentPanel
 

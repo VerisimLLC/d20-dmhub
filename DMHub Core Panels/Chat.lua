@@ -585,17 +585,12 @@ CreateChatPanel = function()
 	local children = {}
 	local messagePanels = {}
 
-	local chatPanel = gui.Panel{
-		id = 'chat-panel',
-		vscroll = true,
-		hideObjectsOutOfScroll = true,
-		hpad = 6,
-		height = "100% available",
-
-
-		styles = {
+	--Chrome colors come from the active color scheme. Dice-roll glyphs and
+	--their white/green/red result states are drawn over dice art and stay
+	--hardcoded.
+	local chatStyles = {
 			{
-				bgcolor = 'black',
+				bgcolor = '@bg',
 				halign = 'center',
 				valign = 'bottom',
 				width = "100%",
@@ -608,7 +603,7 @@ CreateChatPanel = function()
 				width = '96%',
 				height = 1,
 				vmargin = 4,
-				bgcolor = Styles.textColor,
+				bgcolor = '@fg',
 				gradient = Styles.horizontalGradient,
 			},
 			{
@@ -623,7 +618,7 @@ CreateChatPanel = function()
 				halign = 'left',
 				width = '100%',
 				height = 'auto',
-				color = 'white',
+				color = '@fgStrong',
 				fontSize = '40%',
 				vmargin = 2,
 			},
@@ -649,7 +644,7 @@ CreateChatPanel = function()
 			},
 			{
 				selectors = {'roll-message-outcome'},
-				color = 'white',
+				color = '@fgStrong',
 				fontSize = 18,
 				minFontSize = 10,
 				halign = 'center',
@@ -667,7 +662,7 @@ CreateChatPanel = function()
 			{
 				selectors = {'long-form-message-outcome'},
 				fontSize = 14,
-				color = "white",
+				color = "@fgStrong",
 				width = "100%",
 				height = "auto",
 			},
@@ -693,7 +688,7 @@ CreateChatPanel = function()
 				maxWidth = 64,
 				fontSize = 18,
 				minFontSize = 8,
-				color = 'white',
+				color = '@fgStrong',
 			},
 			{
 				selectors = {'roll-category-total'},
@@ -764,10 +759,36 @@ CreateChatPanel = function()
 				selectors = {'single-roll-panel','label','preview'},
 				opacity = 0.6,
 			},
-		},
+	}
+
+	local chatPanel = gui.Panel{
+		id = 'chat-panel',
+		vscroll = true,
+		hideObjectsOutOfScroll = true,
+		hpad = 6,
+		height = "100% available",
+
+		styles = ThemeEngine.MergeTokens(chatStyles),
+
+		data = {},
+
+		--Re-resolve the token colors when the user switches theme or scheme.
+		destroy = function(element)
+			if element.data.themeListener ~= nil then
+				element.data.themeListener:Deregister()
+				element.data.themeListener = nil
+			end
+		end,
 
 		events = {
-			create = 'refreshChat',
+			create = function(element)
+				element.data.themeListener = ThemeEngine.OnThemeChanged(mod, function()
+					if element.valid then
+						element.styles = ThemeEngine.MergeTokens(chatStyles)
+					end
+				end)
+				element:FireEvent('refreshChat')
+			end,
 			refreshChat = function(element)
 				local newMessagePanels = {}
 				local children = {}
