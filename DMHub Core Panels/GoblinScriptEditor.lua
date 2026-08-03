@@ -1025,7 +1025,9 @@ local FieldsPanel = function(fields, options)
 			local classesTable = dmhub.GetTable("classes")
 			local classInfo = classesTable[classid]
 			if classInfo ~= nil then
-				descriptionText = string.format("<color=#aaffaa><b>%s-specific field</b></color>\n%s", classInfo.name, descriptionText)
+				--Use the theme's success color for the class-specific note so it follows the active color scheme.
+				descriptionText = ThemeEngine.ResolveTokens(string.format("<color=@success><b>%s-specific field</b></color>\n%s", classInfo.name,
+					descriptionText))
 			end
 		end
 
@@ -1284,7 +1286,6 @@ function gui.GoblinScriptEditorDialog(options)
 
 	local mainFormPanel = gui.Panel{
 		style = {
-			bgcolor = 'white',
 			pad = 0,
 			margin = 0,
 			width = 1060,
@@ -1338,16 +1339,13 @@ function gui.GoblinScriptEditorDialog(options)
 
 	local args = {
 		style = {
-			bgcolor = 'white',
 			width = dialogWidth,
 			height = dialogHeight,
 			halign = 'center',
 			valign = 'center',
 		},
-		styles = {
-			Styles.Default,
-			Styles.Panel,
-		},
+		--Dialogs don't inherit styles from ancestors, so the root carries the full theme sheet.
+		styles = ThemeEngine.GetStyles(),
 
 		classes = {"framedPanel"},
 
@@ -1418,7 +1416,6 @@ function gui.GoblinScriptTypeInfoDialog(options)
 
 	local mainFormPanel = gui.Panel{
 		style = {
-			bgcolor = 'white',
 			pad = 0,
 			margin = 0,
 			width = 1060,
@@ -1471,16 +1468,13 @@ function gui.GoblinScriptTypeInfoDialog(options)
 
 	local args = {
 		style = {
-			bgcolor = 'white',
 			width = dialogWidth,
 			height = dialogHeight,
 			halign = 'center',
 			valign = 'center',
 		},
-		styles = {
-			Styles.Default,
-			Styles.Panel,
-		},
+		--Dialogs don't inherit styles from ancestors, so the root carries the full theme sheet.
+		styles = ThemeEngine.GetStyles(),
 
 		classes = {"framedPanel"},
 

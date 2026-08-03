@@ -6,21 +6,116 @@ CharacterPanel = {}
 local CreateCharacterPanel
 local CreateBestiaryPanel
 
+--Sidebar style tables. The "@" color names resolve against the active color
+--scheme when the tables are passed through ThemeEngine.MergeStyles at panel
+--construction, so the sidebars follow theme switches.
 local g_panelStyles = {
 	{
 		selectors = {"triangle","empty"},
 		priority = 5,
-		bgcolor = 'grey',
+		bgcolor = '@fgMuted',
 	},
 	{
 		selectors = {"triangle",'parent:hover'},
 		priority = 5,
 		transitionTime = 0.1,
-		bgcolor = "black",
+		bgcolor = "@fgInverse",
 	},
 	{
 		selectors = {"iconButton", "settingsButton", "parent:hover"},
 	}
+}
+
+--Appends the rules of each list into one flat array. MergeStyles cannot
+--resolve nested style lists, so tables must be combined this way.
+local function ConcatStyles(...)
+	local out = {}
+	for _,list in ipairs({...}) do
+		for _,rule in ipairs(list) do
+			out[#out+1] = rule
+		end
+	end
+	return out
+end
+
+--The Character dock panel's sidebar rules (gold labels).
+local g_characterPanelExtras = ConcatStyles(g_panelStyles, {
+	{
+		selectors = {"bestiaryLabel"},
+		color = "@fg",
+		fontFace = "dubai",
+		uppercase = true,
+		fontSize = 14,
+		bold = true,
+		height = 'auto',
+		width = 'auto',
+		minWidth = 200,
+		halign = 'left',
+		valign = 'center',
+	},
+	{
+		selectors = {"bestiaryLabel", "focus"},
+		color = "@fgInverse",
+	},
+	{
+		selectors = {"bestiaryLabel", "parent:hover"},
+		color = "@fgInverse",
+	},
+	{
+		selectors = {"bestiaryLabel", "invisible"},
+		color = "@fgInverse",
+		italics = true,
+	},
+})
+
+--The Bestiary dock panel's sidebar rules.
+local g_bestiaryPanelExtras = ConcatStyles(g_panelStyles, {
+	{
+		selectors = {"bestiaryLabel"},
+		color = "@fg",
+		fontFace = "dubai",
+		uppercase = true,
+		fontSize = 14,
+		bold = true,
+		height = 'auto',
+		width = 'auto',
+		minWidth = 200,
+		halign = 'left',
+		valign = 'center',
+	},
+	{
+		selectors = {"bestiaryLabel", "parent:hover"},
+		color = "@fgInverse",
+	},
+	{
+		selectors = {"bestiaryLabel", "invisible"},
+		color = "@fgStrong",
+		opacity = 0.8,
+		italics = true,
+	},
+})
+
+--The token-selection side panel's rules (lighter parchment labels).
+local g_charDisplayExtras = {
+	{
+		selectors = {"bestiaryLabel"},
+		color = "@fgStrong",
+		fontFace = "dubai",
+		uppercase = true,
+		fontSize = 14,
+		bold = true,
+		height = 'auto',
+		width = 'auto',
+		minWidth = 200,
+		halign = 'left',
+		valign = 'center',
+	},
+	{
+		selectors = {"bestiaryLabel", "invisible"},
+		color = "@fgStrong",
+		opacity = 0.8,
+		italics = true,
+	},
 }
 
 DockablePanel.Register{
@@ -1306,26 +1401,8 @@ local function CharacterDisplaySidePanel()
 		bestiaryPanel:FireEventTree("refresh")
 	end
 	local resultPanel = gui.Panel{
-		styles = {
-			{
-				selectors = {"bestiaryLabel"},
-				color = "#d4d1ba",
-				fontFace = "dubai",
-				uppercase = true,
-				fontSize = 14,
-				bold = true,
-				height = 'auto',
-				width = 'auto',
-				minWidth = 200,
-				halign = 'left',
-				valign = 'center',
-			},
-			{
-				selectors = {"bestiaryLabel", "invisible"},
-				color = "#d4d1bacc",
-				italics = true,
-			},
-		},
+		--This panel is a cascade root; colors come from the active scheme.
+		styles = ThemeEngine.MergeStyles(g_charDisplayExtras),
 
 		flow = "vertical",
 		width = "100%",
@@ -1394,7 +1471,14 @@ local function CharacterDisplaySidePanel()
 
 		bestiaryPanel,
 	}
-	
+
+	--Re-resolve the token colors when the user switches theme or scheme.
+	ThemeEngine.OnThemeChanged(mod, function()
+		if resultPanel ~= nil and resultPanel.valid then
+			resultPanel.styles = ThemeEngine.MergeStyles(g_charDisplayExtras)
+		end
+	end)
+
 	return resultPanel
 end
 
@@ -1418,7 +1502,9 @@ local CreateMonsterEntry = function(nodeid)
 		canDragOnto = function(element, target)
 			return target:HasClass('monster-drag-target') and not IsMonsterNodeSelfOrChildOf(element.data.nodeid, target.data.nodeid)
 		end,
-		styles = {
+		--Fill/text colors come from the active scheme; the focus ring stays
+		--light so it reads on top of the filled row.
+		styles = ThemeEngine.MergeTokens{
 			{
 				valign = 'top',
 				bgcolor = '#ffffff00',
@@ -1432,20 +1518,20 @@ local CreateMonsterEntry = function(nodeid)
 			{
 				selectors = {'focus'},
 				borderWidth = 2,
-				borderColor = 'white',
+				borderColor = '@fgStrong',
 			},
 
 			{
 				selectors = {'focus'},
 				inherit_selectors = true,
-				bgcolor = Styles.textColor,
+				bgcolor = '@bgInverse',
 				brightness = 1.2,
-				color = 'black',
+				color = '@fgInverse',
 			},
 
 			{
 				selectors = {"monsterEntry", 'hover'},
-				bgcolor = Styles.textColor,
+				bgcolor = '@bgInverse',
 			},
 
 		},
@@ -1772,10 +1858,11 @@ local CreateBestiaryFolder = function(nodeid)
 	triangle = gui.Panel({
 		bgimage = 'panels/triangle.png',
 		classes = {"triangle", cond(nodeid == "", "collapsed")},
-		styles =
+		--The arrow tint follows the active color scheme.
+		styles = ThemeEngine.MergeTokens
 		{
 			{
-				bgcolor = Styles.textColor,
+				bgcolor = '@fg',
 				width = 8,
 				height = 8,
 				halign = 'left',
@@ -1855,14 +1942,16 @@ local CreateBestiaryFolder = function(nodeid)
 			flow = 'horizontal',
 		},
 
-		styles = {
+		--The hover fill follows the scheme; the drag highlight is a bespoke
+		--yellow wash and stays hardcoded.
+		styles = ThemeEngine.MergeTokens{
 			{
 				borderWidth = 0,
 				bgcolor = '#ffffff00',
 			},
 			{
 				selectors = {'hover', 'headerPanel'},
-				bgcolor = Styles.textColor,
+				bgcolor = '@bgInverse',
 			},
 			{
 				selectors = {'drag-target'},
@@ -2210,9 +2299,11 @@ CharacterPanel.CreateCharacterEntry = function(charid)
 		canDragOnto = function(element, target)
 			return false --target:HasClass('monster-drag-target') and not IsMonsterNodeSelfOrChildOf(element.data.nodeid, target.data.nodeid)
 		end,
-		styles = {
+		--Fill/text colors come from the active scheme; the focus ring stays
+		--light so it reads on top of the filled row.
+		styles = ThemeEngine.MergeTokens{
 			{
-				color = '#ccccccff',
+				color = '@fgStrong',
 				valign = 'top',
 				bgcolor = '#ffffff00',
 				width = 300,
@@ -2225,26 +2316,26 @@ CharacterPanel.CreateCharacterEntry = function(charid)
 			{
 				selectors = {'selected'},
 				inherit_selectors = true,
-				bgcolor = Styles.textColor,
-				color = 'black',
+				bgcolor = '@bgInverse',
+				color = '@fgInverse',
 			},
 
 			{
 				selectors = {'focus'},
 				borderWidth = 2,
-				borderColor = 'white',
+				borderColor = '@fgStrong',
 			},
 
 			{
 				selectors = {'focus'},
 				inherit_selectors = true,
-				bgcolor = Styles.textColor,
-				color = 'black',
+				bgcolor = '@bgInverse',
+				color = '@fgInverse',
 			},
 
 			{
 				selectors = {'hover'},
-				bgcolor = Styles.textColor,
+				bgcolor = '@bgInverse',
 			},
 
 		},
@@ -2647,14 +2738,16 @@ CharacterPanel.CreatePartyCharacters = function(partyid)
 			flow = 'horizontal',
 		},
 
-		styles = {
+		--The hover/drag fills follow the scheme; the drag highlight wash is
+		--bespoke yellow and stays hardcoded.
+		styles = ThemeEngine.MergeTokens{
 			{
 				borderWidth = 0,
 				bgcolor = '#ffffff00',
 			},
 			{
 				selectors = {'hover', 'headerPanel'},
-				bgcolor = Styles.textColor,
+				bgcolor = '@bgInverse',
 			},
 			{
 				selectors = {'drag-target'},
@@ -2664,8 +2757,8 @@ CharacterPanel.CreatePartyCharacters = function(partyid)
 			{
 				selectors = {'drag-target-hover'},
 				borderWidth = 2,
-				borderColor = 'white',
-				bgcolor = Styles.textColor,
+				borderColor = '@fgStrong',
+				bgcolor = '@bgInverse',
 				brightness = 1.4,
 				transitionTime = 0.2,
 			},
@@ -3174,35 +3267,8 @@ CreateCharacterPanel = function()
 		bestiaryPanel:FireEventTree("refresh")
 	end
 	local resultPanel = gui.Panel{
-		styles = {
-			g_panelStyles,
-			{
-				selectors = {"bestiaryLabel"},
-				color = Styles.textColor,
-				fontFace = "dubai",
-				uppercase = true,
-				fontSize = 14,
-				bold = true,
-				height = 'auto',
-				width = 'auto',
-				minWidth = 200,
-				halign = 'left',
-				valign = 'center',
-			},
-			{
-				selectors = {"bestiaryLabel", "focus"},
-				color = "black",
-			},
-			{
-				selectors = {"bestiaryLabel", "parent:hover"},
-				color = "black",
-			},
-			{
-				selectors = {"bestiaryLabel", "invisible"},
-				color = "black",
-				italics = true,
-			},
-		},
+		--This panel is a cascade root; colors come from the active scheme.
+		styles = ThemeEngine.MergeStyles(g_characterPanelExtras),
 
 		flow = "vertical",
 		width = "100%",
@@ -3295,7 +3361,14 @@ CreateCharacterPanel = function()
 
 		bestiaryPanel,
 	}
-	
+
+	--Re-resolve the token colors when the user switches theme or scheme.
+	ThemeEngine.OnThemeChanged(mod, function()
+		if resultPanel ~= nil and resultPanel.valid then
+			resultPanel.styles = ThemeEngine.MergeStyles(g_characterPanelExtras)
+		end
+	end)
+
 	return resultPanel
 end
 
@@ -3307,31 +3380,8 @@ CreateBestiaryPanel = function()
 	bestiaryPanel:FireEventTree("refreshAssets")
 	bestiaryPanel:FireEventTree("refresh")
 	local resultPanel = gui.Panel{
-		styles = {
-			g_panelStyles,
-			{
-				selectors = {"bestiaryLabel"},
-				color = Styles.textColor,
-				fontFace = "dubai",
-				uppercase = true,
-				fontSize = 14,
-				bold = true,
-				height = 'auto',
-				width = 'auto',
-				minWidth = 200,
-				halign = 'left',
-				valign = 'center',
-			},
-			{
-				selectors = {"bestiaryLabel", "parent:hover"},
-				color = "black",
-			},
-			{
-				selectors = {"bestiaryLabel", "invisible"},
-				color = "#d4d1bacc",
-				italics = true,
-			},
-		},
+		--This panel is a cascade root; colors come from the active scheme.
+		styles = ThemeEngine.MergeStyles(g_bestiaryPanelExtras),
 
 		flow = "vertical",
 		width = "100%",
@@ -3348,6 +3398,13 @@ CreateBestiaryPanel = function()
 
 		bestiaryPanel,
 	}
-	
+
+	--Re-resolve the token colors when the user switches theme or scheme.
+	ThemeEngine.OnThemeChanged(mod, function()
+		if resultPanel ~= nil and resultPanel.valid then
+			resultPanel.styles = ThemeEngine.MergeStyles(g_bestiaryPanelExtras)
+		end
+	end)
+
 	return resultPanel
 end

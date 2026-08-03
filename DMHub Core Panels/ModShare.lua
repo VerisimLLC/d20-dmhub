@@ -2271,6 +2271,66 @@ local showShareModuleDialog = function(options)
 	mapFolderHierarchy = CreateMapFolderPanel(game.rootMapFolder, true, folderOptions)
 
 
+	--Colors come from the active color scheme; rows flip to the inverse
+	--colors on hover/drag. Layout stays here.
+	local assetsCustomStyles = {
+		{
+			classes = {"row"},
+			height = 24,
+			width = "100%",
+			halign = "left",
+			valign = "top",
+			flow = "horizontal",
+			bgcolor = "@bg",
+		},
+		{
+			classes = {"row", "map"},
+			height = "auto",
+			minHeight = 24,
+		},
+		{
+			classes = {"row", "hover"},
+			transitionTime = 0.1,
+			bgcolor = "@bgInverse",
+		},
+		{
+			classes = {"row", "dragging"},
+			bgcolor = "@bgInverse",
+		},
+		{
+			classes = {"label", "parent:row", "parent:hover"},
+			color = "@fgInverse",
+		},
+		{
+			classes = {"label", "parent:row", "parent:dragging"},
+			color = "@fgInverse",
+		},
+		{
+			classes = {"checkboxLabel", "parent:row", "parent:hover"},
+			color = "@fgInverse",
+		},
+		{
+			classes = {"checkboxLabel", "parent:row", "parent:dragging"},
+			color = "@fgInverse",
+		},
+		{
+			classes = {"label"},
+			halign = "left",
+			width = "auto",
+			height = "auto",
+			fontSize = 16,
+			margin = 4,
+			color = "@fg",
+		},
+		{
+			classes = {"checkbox-label"},
+			width = "auto",
+			maxWidth = 310,
+			textOverflow = "truncate",
+			textWrap = false,
+		},
+	}
+
 	assetsPanel = gui.Panel{
 		height = "auto",
 		width = 300,
@@ -2278,47 +2338,7 @@ local showShareModuleDialog = function(options)
 		flow = "vertical",
 		valign = "top",
 
-		styles = {
-			{
-				classes = {"row"},
-				height = 24,
-				width = "100%",
-				halign = "left",
-				valign = "top",
-				flow = "horizontal",
-				bgcolor = "#00000044",
-			},
-			{
-				classes = {"row", "map"},
-				height = "auto",
-				minHeight = 24,
-			},
-			{
-				classes = {"row", "hover"},
-				transitionTime = 0.1,
-				bgcolor = "#88000077",
-			},
-			{
-				classes = {"row", "dragging"},
-				bgcolor = "#88000077",
-			},
-			{
-				classes = {"label"},
-				halign = "left",
-				width = "auto",
-				height = "auto",
-				fontSize = 16,
-				margin = 4,
-				color = "#aaaaaa",
-			},
-			{
-				classes = {"checkbox-label"},
-				width = "auto",
-				maxWidth = 310,
-				textOverflow = "truncate",
-				textWrap = false,
-			},
-		},
+		styles = ThemeEngine.MergeTokens(assetsCustomStyles),
 
 
 
@@ -2385,19 +2405,9 @@ local showShareModuleDialog = function(options)
 
 
 
-	dialogPanel = gui.Panel{
-		id = 'ShareDialog',
-		classes = {"framedPanel"},
-		styles = {
-			Styles.Default,
-			Styles.Panel,
-
-			{
-				selectors = {"framedPanel"},
-				width = 1024,
-				height = 900,
-			},
-
+	--The framedPanel theme rule draws the dialog frame; these local rules are
+	--layout plus dialog-specific text sizing, with colors as scheme tokens.
+	local dialogCustomStyles = {
 			{
 				selectors = {'content-panel'},
 				width = '90%',
@@ -2430,14 +2440,14 @@ local showShareModuleDialog = function(options)
 				width = '40%',
 				height = 40,
 				fontSize = 14,
-				color = 'white',
+				color = '@fgStrong',
 			},
 			{
 				selectors = {'dropdown'},
 				width = 200,
 				height = 40,
 				fontSize = 18,
-				color = 'white',
+				color = '@fgStrong',
 			},
 			{
 				selectors = {'dropdown-option'},
@@ -2445,7 +2455,7 @@ local showShareModuleDialog = function(options)
 				width = 200,
 				height = 40,
 				fontSize = 18,
-				color = 'white',
+				color = '@fgStrong',
 			},
 			{
 				selectors = {'input'},
@@ -2476,7 +2486,7 @@ local showShareModuleDialog = function(options)
 				valign = 'center',
 				halign = 'center',
 				maxWidth = 400,
-				color = 'white',
+				color = '@fgStrong',
 			},
 			{
 				selectors = {'share-panel'},
@@ -2503,7 +2513,7 @@ local showShareModuleDialog = function(options)
 				width = 1,
 				height = 12,
 				bgimage = "panels/square.png",
-				bgcolor = "white",
+				bgcolor = "@border",
 				valign = "center",
 				hmargin = 4,
 			},
@@ -2514,7 +2524,14 @@ local showShareModuleDialog = function(options)
 				height = "auto",
 				halign = "center",
 			},
-		},
+	}
+
+	dialogPanel = gui.Panel{
+		id = 'ShareDialog',
+		classes = {"framedPanel"},
+		width = 1024,
+		height = 900,
+		styles = ThemeEngine.MergeStyles(dialogCustomStyles),
 
 		thinkTime = 0.1,
 
@@ -2618,6 +2635,17 @@ local showShareModuleDialog = function(options)
 	if not isNewModule then
 		dialogPanel:FireEventTree("includedAssets", includedAssets, m_dependencyAssets, true)
 	end
+
+	--Re-resolve the token colors if the user switches theme or color scheme
+	--while the dialog is open.
+	ThemeEngine.OnThemeChanged(mod, function()
+		if dialogPanel ~= nil and dialogPanel.valid then
+			dialogPanel.styles = ThemeEngine.MergeStyles(dialogCustomStyles)
+		end
+		if assetsPanel ~= nil and assetsPanel.valid then
+			assetsPanel.styles = ThemeEngine.MergeTokens(assetsCustomStyles)
+		end
+	end)
 end
 
 mod.shared.ShowShareDialog = function()
@@ -2790,20 +2818,67 @@ mod.shared.ShowShareDialog = function()
 		statusLabel,
 	}
 
+	--The old Styles.Form rules this dialog's body depends on, with colors as
+	--scheme tokens. The theme sheet's own form rules use a different
+	--authoring pattern, so these must ride along locally.
+	local dialogCustomStyles = {
+		{
+			selectors = {"formPanel"},
+			flow = "horizontal",
+			width = "100%",
+			height = "auto",
+			valign = "top",
+			vmargin = 4,
+		},
+		{
+			selectors = {"formLabel"},
+			fontSize = 16,
+			color = "@fgStrong",
+			width = "auto",
+			height = "auto",
+			minWidth = 140,
+			halign = "right",
+			valign = "center",
+			hmargin = 8,
+		},
+		{
+			selectors = {"formInput"},
+			fontSize = 16,
+			width = 180,
+			height = 26,
+			color = "@fg",
+			halign = "right",
+			valign = "center",
+			textAlignment = "left",
+		},
+		{
+			selectors = {"formInput", "multiline"},
+			textAlignment = "topleft",
+		},
+		{
+			selectors = {"formDropdown"},
+			halign = 'right',
+			vmargin = 4,
+			width = 240,
+			height = 30,
+		},
+		{
+			selectors = {"formValue"},
+			halign = 'right',
+			vmargin = 4,
+			width = 180,
+			height = 30,
+			fontSize = 14,
+		},
+	}
+
 	dialogPanel = gui.Panel{
 		id = 'ShareDialog',
 		classes = {"framedPanel"},
-		styles = {
-			Styles.Default,
-			Styles.Panel,
-			Styles.Form,
+		styles = ThemeEngine.MergeStyles(dialogCustomStyles),
 
-			{
-				selectors = {"framedPanel"},
-				width = 1024,
-				height = 900,
-			},
-		},
+		width = 1024,
+		height = 900,
 
 		flow = "vertical",
 
@@ -2843,6 +2918,13 @@ mod.shared.ShowShareDialog = function()
 	gui.ShowModal(dialogPanel, {nofade = true})
 	dialogPanel:FireEventTree("refreshModule", {nofade = true})
 
+	--Re-resolve if the user switches theme while the dialog is open.
+	ThemeEngine.OnThemeChanged(mod, function()
+		if dialogPanel ~= nil and dialogPanel.valid then
+			dialogPanel.styles = ThemeEngine.MergeStyles(dialogCustomStyles)
+		end
+	end)
+
 end
 
 
@@ -2868,8 +2950,9 @@ mod.shared.ShowDownloadShareDialog = function()
 	local CreateModuleDisplaySlot = function()
 		local resultPanel
 		local moduleHeading = gui.Label{
+			--Color comes from the {moduleHeading} rule; an inline color here
+			--would override the scheme.
 			classes = {"moduleHeading"},
-			color = Styles.textColor,
 		}
 
 		local newBadge = gui.Panel{
@@ -2907,12 +2990,8 @@ mod.shared.ShowDownloadShareDialog = function()
 			hmargin = 4,
 			headingAndInstall,
 			gui.Panel{
-				width = 240,
-				height = 1,
-				vmargin = 1,
-				bgcolor = Styles.textColor,
+				classes = {"moduleHeadingDivider"},
 				bgimage = "panels/square.png",
-				halign = "left",
 			}
 		}
 
@@ -3852,13 +3931,9 @@ mod.shared.ShowDownloadShareDialog = function()
 		pagingSection,
 	}
 
-	moduleDisplayPanel = gui.Panel{
-		classes = {"collapsed"},
-		width = "100%",
-		height ="100%",
-		flow = "vertical",
-
-		styles = {
+	--Text colors come from the active color scheme. White stays on icon
+	--tints (bgcolor "white" shows the image untinted, it isn't a color).
+	local moduleDisplayCustomStyles = {
 
 			{
 				selectors = {"moduleItem"},
@@ -3886,7 +3961,7 @@ mod.shared.ShowDownloadShareDialog = function()
 			},
 			{
 				selectors = {"moduleHeading"},
-				color = Styles.textColor,
+				color = "@fgStrong",
 				fontFace = "Inter",
 				fontSize = 18,
 				minFontSize = 14,
@@ -3898,6 +3973,14 @@ mod.shared.ShowDownloadShareDialog = function()
 				height = 24,
 				wrap = false,
 				textOverflow = "truncate",
+			},
+			{
+				selectors = {"moduleHeadingDivider"},
+				bgcolor = "@border",
+				width = 240,
+				height = 1,
+				vmargin = 1,
+				halign = "left",
 			},
 			{
 				selectors = {"installCheck"},
@@ -3915,7 +3998,7 @@ mod.shared.ShowDownloadShareDialog = function()
 			},
 			{
 				selectors = {"moduleAuthor"},
-				color = Styles.textColor,
+				color = "@fgMuted",
 				fontSize = 12,
 				width = "auto",
 				maxWidth = 160,
@@ -3939,7 +4022,7 @@ mod.shared.ShowDownloadShareDialog = function()
 			},
 			{
 				selectors = {"moduleDetails"},
-				color = Styles.textColor,
+				color = "@fg",
 				fontFace = "Inter",
 				fontSize = 12,
 				width = "auto",
@@ -3959,7 +4042,7 @@ mod.shared.ShowDownloadShareDialog = function()
 			{
 				selectors = {"publishedLabel", "published"},
 			--	hidden = 0,
-				color = "white",
+				color = "@fgStrong",
 				fontSize = 12,
 				halign = "right",
 				valign = "bottom",
@@ -3970,7 +4053,7 @@ mod.shared.ShowDownloadShareDialog = function()
 				selectors = {"installCountLabel"},
 				fontSize = 16,
 				minFontSize = 12,
-				color = Styles.textColor,
+				color = "@fg",
 				width = "auto",
 				height = "auto",
 				valign = "center",
@@ -4022,7 +4105,15 @@ mod.shared.ShowDownloadShareDialog = function()
 				brightness = 1.5,
 			},
 
-		},
+	}
+
+	moduleDisplayPanel = gui.Panel{
+		classes = {"collapsed"},
+		width = "100%",
+		height ="100%",
+		flow = "vertical",
+
+		styles = ThemeEngine.MergeTokens(moduleDisplayCustomStyles),
 
 		gui.Input{
 			valign = "top",
@@ -4142,47 +4233,48 @@ mod.shared.ShowDownloadShareDialog = function()
     local aspectRatio = dmhub.screenDimensions.x/dmhub.screenDimensions.y
 
 
+	--Layout stays local; the theme provides the dialog frame and colors.
+	local dialogCustomStyles = {
+		{
+			selectors = {'framedPanel'},
+			width = 1080*aspectRatio,
+			height = 1080,
+			flow = 'none',
+		},
+		{
+			selectors = {'center-panel'},
+			width = 1804,
+			height = 990,
+			halign = 'center',
+			valign = 'center',
+			flow = 'vertical',
+		},
+		{
+			selectors = {'input'},
+			priority = 10,
+			width = 400,
+			height = 'auto',
+			fontSize = 18,
+			valign = 'center',
+		},
+		{
+			selectors = {'status-label'},
+			fontSize = 22,
+			maxWidth = 600,
+			minHeight = 80,
+			textWrap = true,
+			color = '@fgStrong',
+			width = 'auto',
+			height = 'auto',
+			halign = 'center',
+			valign = 'center',
+		},
+	}
+
 	local dialogPanel = gui.Panel{
 		id = 'DownloadShareDialog',
 		classes = {'framedPanel'},
-		styles = {
-			Styles.Default,
-			Styles.Panel,
-			{
-				selectors = {'framedPanel'},
-				width = 1080*aspectRatio,
-				height = 1080,
-				flow = 'none',
-			},
-			{
-				selectors = {'center-panel'},
-				width = 1804,
-				height = 990,
-				halign = 'center',
-				valign = 'center',
-				flow = 'vertical',
-			},
-			{
-				selectors = {'input'},
-				priority = 10,
-				width = 400,
-				height = 'auto',
-				fontSize = 18,
-				valign = 'center',
-			},
-			{
-				selectors = {'status-label'},
-				fontSize = 22,
-				maxWidth = 600,
-				minHeight = 80,
-				textWrap = true,
-				color = 'white',
-				width = 'auto',
-				height = 'auto',
-				halign = 'center',
-				valign = 'center',
-			},
-		},
+		styles = ThemeEngine.MergeStyles(dialogCustomStyles),
 
 		gui.Panel{
 			classes = {"center-panel"},
@@ -4208,6 +4300,17 @@ mod.shared.ShowDownloadShareDialog = function()
 	}
 
 	gui.ShowModal(dialogPanel)
+
+	--Re-resolve the token colors if the user switches theme or color scheme
+	--while the dialog is open.
+	ThemeEngine.OnThemeChanged(mod, function()
+		if dialogPanel ~= nil and dialogPanel.valid then
+			dialogPanel.styles = ThemeEngine.MergeStyles(dialogCustomStyles)
+		end
+		if moduleDisplayPanel ~= nil and moduleDisplayPanel.valid then
+			moduleDisplayPanel.styles = ThemeEngine.MergeTokens(moduleDisplayCustomStyles)
+		end
+	end)
 
 	module.PrepareModuleStats(QueryModuleIndex)
 end
@@ -4687,12 +4790,9 @@ mod.shared.ShowExportDialog = function()
 
 	}
 
-	local dialogPanel = gui.Panel{
-		id = 'ShareDialog',
-		classes = {'framedPanel'},
-		styles = {
-			Styles.Default,
-			Styles.Panel,
+	--Layout stays local; colors come from the scheme. The modal-button-panel
+	--rule used to come from Styles.Panel, so it rides along here now.
+	local dialogCustomStyles = {
 			{
 				selectors = {'framedPanel'},
 				width = 1000,
@@ -4722,14 +4822,14 @@ mod.shared.ShowExportDialog = function()
 				width = '40%',
 				height = 40,
 				fontSize = 18,
-				color = 'white',
+				color = '@fgStrong',
 			},
 			{
 				selectors = {'dropdown'},
 				width = 200,
 				height = 40,
 				fontSize = 18,
-				color = 'white',
+				color = '@fgStrong',
 			},
 			{
 				selectors = {'dropdown-option'},
@@ -4737,7 +4837,7 @@ mod.shared.ShowExportDialog = function()
 				width = 200,
 				height = 40,
 				fontSize = 18,
-				color = 'white',
+				color = '@fgStrong',
 			},
 			{
 				selectors = {'input'},
@@ -4768,7 +4868,7 @@ mod.shared.ShowExportDialog = function()
 				valign = 'center',
 				halign = 'center',
 				maxWidth = 400,
-				color = 'white',
+				color = '@fgStrong',
 			},
 			{
 				selectors = {'share-panel'},
@@ -4776,7 +4876,21 @@ mod.shared.ShowExportDialog = function()
 				height = 'auto',
 				width = '100%',
 			},
-		},
+			{
+				selectors = {'modal-button-panel'},
+				priority = 10,
+				width = '100%-50',
+				height = 100,
+				valign = 'bottom',
+				halign = 'center',
+				flow = 'horizontal',
+			},
+	}
+
+	local dialogPanel = gui.Panel{
+		id = 'ShareDialog',
+		classes = {'framedPanel'},
+		styles = ThemeEngine.MergeStyles(dialogCustomStyles),
 
 		gui.Panel{
 			classes = {'content-panel'},
@@ -4808,6 +4922,13 @@ mod.shared.ShowExportDialog = function()
 	}
 
 	gui.ShowModal(dialogPanel)
+
+	--Re-resolve the token colors if the user switches theme while open.
+	ThemeEngine.OnThemeChanged(mod, function()
+		if dialogPanel ~= nil and dialogPanel.valid then
+			dialogPanel.styles = ThemeEngine.MergeStyles(dialogCustomStyles)
+		end
+	end)
 end
 
 

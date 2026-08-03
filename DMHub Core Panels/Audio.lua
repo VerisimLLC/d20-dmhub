@@ -39,6 +39,7 @@ local FormatTime = function(value, maxValue)
 	end
 end
 
+--Colors come from the active color scheme; layout stays here.
 local ColorStyles = {
 	{
 		selectors = {"audioItemColor"},
@@ -48,16 +49,250 @@ local ColorStyles = {
 		height = 12,
 		saturation = 1.5,
 		border = 0.5,
-		borderColor = "white",
+		borderColor = "white", --neutral outline around the swatch, not a scheme color.
 		cornerRadius = 2,
 		bgimage = "panels/square.png",
-		bgcolor = Styles.textColor,
+		--Base fill for the swatch; each of the 8 audio colors is a hueshift of this.
+		bgcolor = "@bgInverse",
 	},
 	{
 		selectors = {"audioItemColor", "hover"},
 		brightness = 1.5,
 	},
 }
+
+--Sheet for the color-picker popup. The theme's Merge helpers don't flatten
+--nested lists, so the shared swatch rules are copied in one by one, with the
+--popup's margin override appended last so it wins.
+local colorPopupStyles = {}
+for _,style in ipairs(ColorStyles) do
+	colorPopupStyles[#colorPopupStyles+1] = style
+end
+colorPopupStyles[#colorPopupStyles+1] = {
+	selectors = {"audioItemColor"},
+	hmargin = 4,
+	vmargin = 4,
+}
+
+--Sheet for the soundboard page picker: the mini tiles mirror the gold audio
+--tiles, so they use the same scheme color; hueshift per sound is applied at
+--runtime on top.
+local gridMenuStyles = {
+	{
+		selectors = {"tinyPanel"},
+		bgimage = "panels/square.png",
+		bgcolor = "@bgInverse",
+		width = 16,
+		height = 11,
+		hmargin = 2,
+		vmargin = 2,
+	},
+	{
+		selectors = {"tinyPanel", "empty"},
+		saturation = 0.4,
+	},
+	{
+		selectors = {"tinyPanel", "~odd"},
+		brightness = 0.3,
+	},
+	{
+		selectors = {"tinyPanel", "parent:hover"},
+		brightness = 2,
+	},
+	{
+		selectors = {"tinyPanel", "parent:selected"},
+		brightness = 2,
+	},
+	{
+		selectors = {"soundboardPreview"},
+		bgimage = "panels/square.png",
+		bgcolor = "clear",
+		flow = "horizontal",
+		halign = "left",
+		x = -3,
+		hmargin = 4,
+		width = 64.6,
+		height = "auto",
+	},
+}
+
+--Local copy of the legacy Styles.FolderLibrary sheet with colors tokenized.
+--The theme sheet has no folder-library rules, so dropping the legacy table
+--outright would break the folder list.
+local folderLibraryStyles = {
+	{
+		width = '100%',
+		height = 500,
+		valign = 'center',
+		halign = 'right',
+		flow = 'vertical',
+	},
+	{
+		selectors = {"folderContainer"},
+		flow = "vertical",
+		width = "100%",
+		height = "auto",
+		valign = "top",
+	},
+	{
+		--Folder headers are gold bars with dark contents, like the tile bodies.
+		selectors = {"folderHeader"},
+		width = "100%",
+		flow = "horizontal",
+		height = 24,
+		bgimage = "panels/square.png",
+		bgcolor = "@bgInverse",
+	},
+	{
+		selectors = {"folderHeader", "hover"},
+		brightness = 1.5,
+	},
+	{
+		selectors = {"triangle"},
+		bgimage = "panels/triangle.png",
+		bgcolor = "@fgInverse",
+		width = 16,
+		height = 12,
+		hmargin = 4,
+		valign = "center",
+		halign = "left",
+	},
+	{
+		selectors = {"triangle", "parent:expanded"},
+		scale = {x = 1, y = -1},
+		transitionTime = 0.1,
+	},
+	{
+		selectors = {"folderLabel"},
+		color = "@fgInverse",
+		fontSize = 18,
+		width = "80%",
+		height = "100%",
+		halign = "left",
+		textAlignment = "left",
+	},
+	{
+		selectors = {"folderHeader", "parent:drag-target"},
+		brightness = 1.5,
+	},
+	{
+		selectors = {"folderHeader", "parent:drag-target-hover"},
+		brightness = 3,
+	},
+}
+
+--Main panel sheet. Layout is unchanged from the legacy version; colors are
+--scheme tokens so the panel follows the active theme.
+local audioPanelStyles = {
+	{
+		halign = 'left',
+		valign = 'top',
+		width = "100%",
+		height = "auto",
+		flow = "vertical",
+	},
+	{
+		selectors = {"audioItemPanel"},
+		width = 113,
+		height = 64,
+		flow = "vertical",
+		halign = "center",
+		valign = "center",
+	},
+	{
+		selectors = {"audioItemTitleContainer"},
+		width = "95%",
+		height = "30%",
+		flow = "vertical",
+
+	},
+	{
+		selectors = {"audioItemTitle"},
+		fontSize = 14,
+		hmargin = 4,
+		color = "@fg",
+		halign = "left",
+		width = "auto",
+		textAlignment = "center",
+		height = "100%",
+	},
+	{
+		--Slot frames were hardcoded gold-on-black; now they follow the scheme.
+		selectors = {"playerSlot"},
+		borderColor = "@border",
+		bgcolor = "@bg",
+	},
+	--The theme sheet has no clickableIcon rule, so the legacy one is copied
+	--here with its color tokenized.
+	{
+		selectors = {"clickableIcon"},
+		bgcolor = "@fg",
+		width = 16,
+		height = 16,
+	},
+	{
+		selectors = {"clickableIcon", "hover"},
+		brightness = 1.5,
+	},
+	{
+		selectors = {"playButton"},
+		bgimage = "panels/triangle.png",
+		bgcolor = "@fgInverse", --dark-on-gold, like the other marks on the tile body.
+		width = 45*0.5,
+		height = 40*0.5,
+		y = 2,
+	},
+	{
+		selectors = {"playButton", "playing"},
+		bgimage = "panels/square.png",
+		scale = 0.9,
+		y = 2,
+	},
+
+	{
+		selectors = {"loopIcon"},
+		bgimage = "game-icons/infinity.png",
+		bgcolor = "@fgInverse",
+		width = 16,
+		height = 16,
+		hmargin = 4,
+	},
+
+	{
+		selectors = {"loopIcon", "disabled"},
+		opacity = 0.7,
+	},
+
+	{
+		--The tile body is the scheme's inverse (gold) surface; hueshift per
+		--sound is applied at runtime on top of it.
+		selectors = {"audioItemBody"},
+		width = "100%",
+		height = "70%",
+		halign = "center",
+		valign = "bottom",
+		bgimage = "panels/square.png",
+		bgcolor = "@bgInverse",
+		cornerRadius = 4,
+
+	},
+	{
+		selectors = {"audioItemBody", "hover"},
+		brightness = 1.8,
+	},
+	{
+		selectors = {"durationLabel"},
+		fontSize = 12,
+		bold = true,
+		color = "@fgInverse",
+		width = "auto",
+		height = "auto",
+
+	},
+}
+for _,style in ipairs(ColorStyles) do
+	audioPanelStyles[#audioPanelStyles+1] = style
+end
 
 
 
@@ -73,19 +308,19 @@ local CreatePlayerSlot = function(params)
 	end
 	params.classes = nil
 
+	--Border and fill colors come from the playerSlot rule in the main sheet
+	--so they follow the active color scheme.
 	local args = {
 		classes = classes,
 		width = 113,
 		height = 64,
 		border = 2,
-		borderColor = Styles.textColor,
 		flow = "none",
 		vmargin = 2,
 		cornerRadius = 4,
 		halign = "center",
 		valign = "center",
 		bgimage = "panels/square.png",
-		bgcolor = "black",
 	}
 
 	for k,v in pairs(params or {}) do
@@ -291,45 +526,17 @@ local CreateGridMenu = function(playerGrid)
 		height = "auto",
 		vmargin = 4,
 		children = children,
-		styles = {
-			gui.Style{
-				selectors = {"tinyPanel"},
-				bgimage = "panels/square.png",
-				bgcolor = Styles.textColor,
-				width = 16,
-				height = 11,
-				hmargin = 2,
-				vmargin = 2,
-			},
-			gui.Style{
-				selectors = {"tinyPanel", "empty"},
-				saturation = 0.4,
-			},
-			gui.Style{
-				selectors = {"tinyPanel", "~odd"},
-				brightness = 0.3,
-			},
-			gui.Style{
-				selectors = {"tinyPanel", "parent:hover"},
-				brightness = 2,
-			},
-			gui.Style{
-				selectors = {"tinyPanel", "parent:selected"},
-				brightness = 2,
-			},
-			gui.Style{
-				selectors = {"soundboardPreview"},
-				bgimage = "panels/square.png",
-				bgcolor = "clear",
-				flow = "horizontal",
-				halign = "left",
-				x = -3,
-				hmargin = 4,
-				width = 64.6,
-				height = "auto",
-			},
-		}
+		--Resolve the scheme tokens at build time; the sheet itself is shared.
+		styles = ThemeEngine.MergeTokens(gridMenuStyles),
 	}
+
+	--Re-resolve the token colors if the user switches theme or color scheme
+	--while the panel is open.
+	ThemeEngine.OnThemeChanged(mod, function()
+		if resultPanel ~= nil and resultPanel.valid then
+			resultPanel.styles = ThemeEngine.MergeTokens(gridMenuStyles)
+		end
+	end)
 
 	return resultPanel
 
@@ -370,6 +577,7 @@ createAudioPanel = function(audioAsset, options)
 	sliderFill = gui.Panel{
 		bgimage = 'panels/square.png',
 		selfStyle = {
+			--Bespoke playback-progress red; deliberately not a scheme color.
 			bgcolor = '#cc0000',
 			width = '0%',
 			height = '100%',
@@ -483,15 +691,11 @@ createAudioPanel = function(audioAsset, options)
 			local parentElement = element
 
 			element.popup = gui.Panel{
-				styles = {
-					Styles.Panel,
-					ColorStyles,
-					{
-						selectors = {"audioItemColor"},
-						hmargin = 4,
-						vmargin = 4,
-					},
-				},
+				--Popups don't inherit styles, so the root carries the full theme
+				--sheet; the framedPanel look comes from the theme now instead of
+				--the legacy Styles.Panel table. The popup is rebuilt on every
+				--open, so it re-resolves then and needs no theme-change rebind.
+				styles = ThemeEngine.MergeStyles(colorPopupStyles),
 				classes = {"framedPanel"},
 				width = 80,
 				height = "auto",
@@ -652,16 +856,17 @@ createAudioPanel = function(audioAsset, options)
 					volumeSlider:SetClass('hidden', muted)
 				end,
 			},
-			styles = {
+			--Resolved at build time so the icon color follows the scheme.
+			styles = ThemeEngine.MergeTokens{
 				{
-					bgcolor = 'black',
+					bgcolor = '@fgInverse', --dark-on-gold, like the other marks on the tile.
 					width = 12,
 					height = 12,
 					valign = 'center',
 				},
 				{
 					selectors = 'hover',
-					bgcolor = '#880000',
+					bgcolor = '#880000', --bespoke mute-hover red, not a scheme color.
 				},
 			},
 		}
@@ -972,7 +1177,8 @@ CreateSoundPanel = function()
 			press = function(element)
 				expanded = not expanded
 				element:SetClass("expanded", expanded)
-				body:SetClass("collapsed-anim", not expanded)
+				--collapseAnim is the theme sheet's name for the old collapsed-anim class.
+				body:SetClass("collapseAnim", not expanded)
 				if expanded then
 					body:FireEvent("refreshAssets")
 				end
@@ -1017,7 +1223,7 @@ CreateSoundPanel = function()
 			height = "auto",
 			halign = "left",
 			flow = "horizontal",
-			classes = {cond(expanded, nil, "collapsed-anim")},
+			classes = {cond(expanded, nil, "collapseAnim")},
 			wrap = true,
 
 			monitorAssets = "audio",
@@ -1076,9 +1282,9 @@ CreateSoundPanel = function()
 	local audioFolderPanels = {}
 
 	local audioLibraryItems = gui.Panel{
-		styles = {
-			Styles.FolderLibrary,
-		},
+		--Local tokenized copy of the legacy folder-library sheet; the theme
+		--has no folder rules of its own.
+		styles = ThemeEngine.MergeTokens(folderLibraryStyles),
 
 		height = 500,
 
@@ -1121,7 +1327,9 @@ CreateSoundPanel = function()
 			width = "100%",
 			height = 2,
 			bgimage = "panels/square.png",
-			bgcolor = Styles.textColor,
+			--Divider line follows the scheme's border color. Resolved once at
+			--build time; the panel is rebuilt whenever it is reopened.
+			bgcolor = ThemeEngine.ResolveTokens("@border"),
 		},
 
 		gui.Panel{
@@ -1188,7 +1396,9 @@ CreateSoundPanel = function()
 	local MakeSpectrumSample = function(index)
 		return gui.Panel{
 			bgimage = "panels/square.png",
-			bgcolor = Styles.textColor,
+			--Spectrum bars follow the scheme's foreground color. Resolved once
+			--at build time; the panel is rebuilt whenever it is reopened.
+			bgcolor = ThemeEngine.ResolveTokens("@fg"),
 			valign = "center",
 			halign = "center",
 			width = 3,
@@ -1224,7 +1434,6 @@ CreateSoundPanel = function()
 				floating = true,
 				width = 45,
 				height = 40,
-				bgcolor = Styles.textColor,
 				halign = "center",
 				valign = "center",
 				press = function(element)
@@ -1246,9 +1455,11 @@ CreateSoundPanel = function()
 					}
 
 				end,
-				styles = {
+				--Resolved at build time so the icon tint follows the scheme.
+				styles = ThemeEngine.MergeTokens{
 					{
 						bgimage = 'ui-icons/AudioVolumeButton.png',
+						bgcolor = '@fg',
 					},
 					{
 						selectors = {"muted"},
@@ -1321,97 +1532,10 @@ CreateSoundPanel = function()
 	}
 
 	local mainPanel = gui.Panel{
-		styles = {
-			Styles.Default,
-			{
-				halign = 'left',
-				valign = 'top',
-				width = "100%",
-				height = "auto",
-				flow = "vertical",
-			},
-			{
-				selectors = {"audioItemPanel"},
-				width = 113,
-				height = 64,
-				flow = "vertical",
-				halign = "center",
-				valign = "center",
-			},
-			{
-				selectors = {"audioItemTitleContainer"},
-				width = "95%",
-				height = "30%",
-				flow = "vertical",
-
-			},
-			{
-				selectors = {"audioItemTitle"},
-				fontSize = 14,
-				hmargin = 4,
-				color = Styles.textColor,
-				halign = "left",
-				width = "auto",
-				textAlignment = "center",
-				height = "100%",
-			},
-
-			ColorStyles,
-
-			{
-				selectors = {"playButton"},
-				bgimage = "panels/triangle.png",
-				bgcolor = "black",
-				width = 45*0.5,
-				height = 40*0.5,
-				y = 2,
-			},
-			{
-				selectors = {"playButton", "playing"},
-				bgimage = "panels/square.png",
-				scale = 0.9,
-				y = 2,
-			},
-
-			{
-				selectors = {"loopIcon"},
-				bgimage = "game-icons/infinity.png",
-				bgcolor = "black",
-				width = 16,
-				height = 16,
-				hmargin = 4,
-			},
-
-			{
-				selectors = {"loopIcon", "disabled"},
-				opacity = 0.7,
-			},
-
-			{
-				selectors = {"audioItemBody"},
-				width = "100%",
-				height = "70%",
-				halign = "center",
-				valign = "bottom",
-				bgimage = "panels/square.png",
-				bgcolor = Styles.textColor,
-				cornerRadius = 4,
-
-			},
-			{
-				selectors = {"audioItemBody", "hover"},
-				brightness = 1.8,
-			},
-			{
-				selectors = {"durationLabel"},
-				fontSize = 12,
-				bold = true,
-				color = "black",
-				width = "auto",
-				height = "auto",
-
-			},
-		},
+		--Dockable content root: carries the full theme sheet plus this file's
+		--own rules (hoisted to audioPanelStyles above). The legacy
+		--Styles.Default table is replaced by the theme's base rules.
+		styles = ThemeEngine.MergeStyles(audioPanelStyles),
 
 		refreshAudio = function(element)
 			element:FireEventTree("refreshPlayingAudio")
@@ -1486,6 +1610,17 @@ CreateSoundPanel = function()
 	audio.events:Listen(mainPanel)
 
 	mainPanel:ScheduleEvent("refreshAudio", 0.01)
+
+	--Re-resolve the token colors if the user switches theme or color scheme
+	--while the panel is open.
+	ThemeEngine.OnThemeChanged(mod, function()
+		if mainPanel ~= nil and mainPanel.valid then
+			mainPanel.styles = ThemeEngine.MergeStyles(audioPanelStyles)
+		end
+		if audioLibraryItems ~= nil and audioLibraryItems.valid then
+			audioLibraryItems.styles = ThemeEngine.MergeTokens(folderLibraryStyles)
+		end
+	end)
 
 	return mainPanel
 end

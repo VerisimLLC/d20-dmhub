@@ -36,7 +36,7 @@ local function SmartImporterPanel(doc)
             height = 12,
             cornerRadius = 6,
             bgimage = "panels/square.png",
-            bgcolor = Styles.textColor,
+            bgcolor = ThemeEngine.ResolveTokens("@fg"),
             hmargin = 2,
             halign = "right",
             valign = "center",
@@ -52,7 +52,7 @@ local function SmartImporterPanel(doc)
             hmargin = 6,
             fontSize = 16,
             minFontSize = 10,
-            color = Styles.textColor,
+            color = ThemeEngine.ResolveTokens("@fg"),
 
             thinkTime = 0.2,
 
@@ -73,6 +73,7 @@ local function SmartImporterPanel(doc)
     local m_init = false
     return gui.Panel{
         classes = {"collapsed"},
+        --error text stays red in every color scheme so failures are unmistakable.
         styles = {
             {
                 selectors = {"label"},
@@ -329,6 +330,9 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
             bgimage = "panels/square.png",
             halign = "left",
             valign = "top",
+            --these overlay colors sit on top of the rendered PDF page, so they are
+            --deliberate fixed signal colors (blue = selecting, green = ok, red = failed),
+            --not theme colors.
             styles = {
                 {
                     selectors = {"dragPanel"},
@@ -610,7 +614,7 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
             width = 600,
             height = 600,
             classes = {"framedPanel"},
-            styles = Styles.Panel,
+            styles = ThemeEngine.GetStyles(),
             flow = "vertical",
             gui.Label{
                 classes = {"dialogTitle"},
@@ -669,6 +673,13 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
             }
         }
 
+        --recolor live if the user switches theme while the dialog is open.
+        ThemeEngine.OnThemeChanged(mod, function()
+            if dialog ~= nil and dialog.valid then
+                dialog.styles = ThemeEngine.GetStyles()
+            end
+        end)
+
         gui.ShowModal(dialog)
     end
 
@@ -687,7 +698,9 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
             flow = "vertical",
             vscroll = true,
 
-            styles = {
+            --the theme cascade comes from the viewer root; these local rules just
+            --need their @ tokens resolved against the active color scheme.
+            styles = ThemeEngine.MergeTokens{
                 {
                     selectors = {"listItem"},
                     bgimage = "panels/square.png",
@@ -699,11 +712,11 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
                 },
                 {
                     selectors = {"listItem", "hover"},
-                    bgcolor = Styles.textColor,
+                    bgcolor = "@bgInverse",
                 },
                 {
                     selectors = {"listItem", "selected"},
-                    bgcolor = Styles.textColor,
+                    bgcolor = "@bgInverse",
                 },
                 {
                     selectors = {"label"},
@@ -711,16 +724,16 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
                     minFontSize = 8,
                     height = 18,
                     textWrap = false,
-                    color = Styles.textColor,
+                    color = "@fg",
                     textAlignment = "left",
                 },
                 {
                     selectors = {"label", "parent:hover"},
-                    color = "black",
+                    color = "@fgInverse",
                 },
                 {
                     selectors = {"label", "parent:selected"},
-                    color = "black",
+                    color = "@fgInverse",
                 },
             },
 
@@ -878,7 +891,10 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
                     halign = "center",
                     flow = "vertical",
 
-                    styles = {
+                    --the theme cascade comes from the viewer root; @ tokens here follow
+                    --the active color scheme. The white fills stay white because they
+                    --are the paper behind the rendered PDF thumbnails, not chrome.
+                    styles = ThemeEngine.MergeTokens{
                         {
                             selectors = {"page"},
                             bgcolor = "white",
@@ -897,7 +913,7 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
                         {
                             selectors = {"page", "selected", "loaded"},
                             transitionTime = 0.1,
-                            bgcolor = Styles.textColor,
+                            bgcolor = "@bgInverse",
                             brightness = 10,
                             opacity = 1,
                         },
@@ -910,13 +926,15 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
                             height = "100%-4",
                         },
                         {
+                            --black border reads against the white page image, so it is
+                            --not a theme color.
                             selectors = {"pageImage", "parent:selected"},
                             borderWidth = 2.5,
                             borderColor = "black",
                         },
                         {
                             selectors = {"pageFooter"},
-                            color = Styles.textColor,
+                            color = "@fg",
                             fontSize = 12,
                             width = "auto",
                             height = 12,
@@ -925,7 +943,7 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
                         },
                         {
                             selectors = {"pageFooter", "parent:selected"},
-                            color = "white",
+                            color = "@fgStrong",
                             fontWeight = "bold",
                         },
                     },
@@ -1134,6 +1152,8 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
                                         height = 48,
                                         halign = "right",
                                         valign = "top",
+                                        --bookmark ribbons are always dark red, like a real
+                                        --bookmark, in every color scheme.
                                         bgcolor = "#770000",
                                         bookmark = function(element, bookmark)
                                             element.data.bookmark = bookmark
@@ -1511,7 +1531,7 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
                     },
 
                     gui.Panel{
-                        bgcolor = Styles.textColor,
+                        bgcolor = ThemeEngine.ResolveTokens("@fg"),
                         bgimage = "icons/icon_tool/icon_tool_41.png",
                         lmargin = 16,
                         halign = "right",
@@ -1528,7 +1548,7 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
                         },
                     },
                     gui.Panel{
-                        bgcolor = Styles.textColor,
+                        bgcolor = ThemeEngine.ResolveTokens("@fg"),
                         bgimage = "icons/icon_tool/icon_tool_40.png",
                         halign = "right",
                         width = 16,
@@ -1569,10 +1589,7 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
                             width = 600,
                             height = 800,
                             classes = {"framedPanel"},
-                            styles = {
-                                Styles.Panel,
-                                Styles.Default,
-                            },
+                            styles = ThemeEngine.GetStyles(),
                             halign = "center",
                             valign = "center",
 
@@ -1586,7 +1603,7 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
                             },
 
                             gui.Label{
-                                classes = {"title"},
+                                classes = {"dialogTitle"},
                                 width = "auto",
                                 height = "auto",
                                 text = "PDF Settings",
@@ -1607,6 +1624,13 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
                                 CreateSettingsEditor("pdfbrightness"),
                             },
                         }
+
+                        --recolor live if the user switches theme while the dialog is open.
+                        ThemeEngine.OnThemeChanged(mod, function()
+                            if dialog ~= nil and dialog.valid then
+                                dialog.styles = ThemeEngine.GetStyles()
+                            end
+                        end)
 
                         gui.ShowModal(dialog)
                     end,
@@ -1638,6 +1662,8 @@ local ShowPDFViewerDialogInternal = function(doc, starting_page)
                     draggable = true,
                     dragMove = false,
 
+                    --the blue text-selection highlight overlays the rendered PDF page,
+                    --so it is a deliberate fixed color, not a theme color.
                     styles = {
                         {
                             selectors = {"loading"},
@@ -2168,6 +2194,21 @@ mod.shared.ShowPDFViewerDialog = function(doc, starting_page)
 
     local document = doc.doc
 
+    --sizing rules for this viewer only; the theme's framedPanel rule supplies
+    --the frame's colors. Built per-open because the size depends on the screen.
+    local viewerCustomStyles = {
+        {
+            selectors = {"framedPanel"},
+            width = 1080*aspectRatio - 16,
+            height = 1080 - 16,
+        },
+        {
+            selectors = {"framedPanel", "windowed"},
+            width = 1080*aspectRatio - 388*2,
+            transitionTime = 0.1,
+        },
+    }
+
     local dialogPanel
     dialogPanel = gui.Panel{
 		classes = {"framedPanel", cond(g_journalWindowedSetting:Get(), "windowed")},
@@ -2176,21 +2217,7 @@ mod.shared.ShowPDFViewerDialog = function(doc, starting_page)
         data = {
             doc = doc,
         },
-		styles = {
-			Styles.Default,
-			Styles.Panel,
-
-            {
-                selectors = {"framedPanel"},
-		        width = 1080*aspectRatio - 16,
-		        height = 1080 - 16,
-            },
-            {
-                selectors = {"framedPanel", "windowed"},
-		        width = 1080*aspectRatio - 388*2,
-                transitionTime = 0.1,
-            },
-		},
+		styles = ThemeEngine.MergeStyles(viewerCustomStyles),
 
 
 
@@ -2245,7 +2272,7 @@ mod.shared.ShowPDFViewerDialog = function(doc, starting_page)
 			gui.Panel{
 				classes = {"iconButton"},
 				bgimage = "ui-icons/icon-scale.png",
-				bgcolor = Styles.textColor,
+				bgcolor = ThemeEngine.ResolveTokens("@fg"),
 				valign = "center",
 				width = 16,
 				height = 16,
@@ -2268,12 +2295,12 @@ mod.shared.ShowPDFViewerDialog = function(doc, starting_page)
 			gui.Panel{
 				classes = {"iconButton"},
 				bgimage = "panels/square.png",
-				bgcolor = "black",
+				bgcolor = ThemeEngine.ResolveTokens("@bg"),
 				valign = "center",
                 linger = function(element)
                     gui.Tooltip("Maximize window")(element)
                 end,
-				borderColor = Styles.textColor,
+				borderColor = ThemeEngine.ResolveTokens("@border"),
 				borderWidth = 2,
 				width = 12,
 				height = 12,
@@ -2296,6 +2323,13 @@ mod.shared.ShowPDFViewerDialog = function(doc, starting_page)
     }
 
     g_pdfViewerDialog = dialogPanel
+
+    --recolor live if the user switches theme while the viewer is open.
+    ThemeEngine.OnThemeChanged(mod, function()
+        if dialogPanel ~= nil and dialogPanel.valid then
+            dialogPanel.styles = ThemeEngine.MergeStyles(viewerCustomStyles)
+        end
+    end)
 
 	gui.ShowModal(dialogPanel)
     GameHud.instance.modalPanel.interactable = false

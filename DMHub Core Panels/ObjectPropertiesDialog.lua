@@ -661,6 +661,18 @@ local CreateEditorPanel = function(fieldInfo, displayInfo, options, valueIndex, 
 							sliderWidth = 60,
 							labelWidth = 20,
 							labelFormat = "%d",
+							--Notch color comes from the active color scheme; MergeTokens
+							--resolves the @ token at build time.
+							styles = ThemeEngine.MergeTokens({
+								{
+									selectors = {"sliderNotch"},
+									bgimage = true,
+									bgcolor = "@fgMuted",
+									width = "100%",
+									halign = "center",
+									borderWidth = 0,
+								},
+							}),
 							style = {
 								height = 20,
 								fontSize = 12,
@@ -759,26 +771,27 @@ local CreateEditorPanel = function(fieldInfo, displayInfo, options, valueIndex, 
 					element.value = fieldInfo.fieldList[1]:GetValue(valueIndex)
 				end,
 			},
-			styles = {
+			--Border colors come from the active color scheme; geometry stays local.
+			styles = ThemeEngine.MergeTokens({
 				{
 					halign = 'right',
 					valign = 'center',
 					height = 24,
 					width = 24,
 					borderWidth = 2,
-					borderColor = '#ffffff77',
+					borderColor = '@border',
 					fontSize = '30%',
 					cornerRadius = 0,
 				},
 				{
 					selectors = 'hover',
-					borderColor = '#ffffffbb',
+					borderColor = '@accent',
 				},
 				{
 					selectors = 'press',
-					borderColor = '#ffffffdd',
+					borderColor = '@accentHover',
 				},
-			},
+			}),
 		}
 	elseif fieldInfo.type == 'float' then
 
@@ -803,6 +816,18 @@ local CreateEditorPanel = function(fieldInfo, displayInfo, options, valueIndex, 
 			labelWidth = labelWidth,
 			labelFormat = labelFormat,
 			wrap = fieldOptions.rotateControls,
+			--Notch color comes from the active color scheme; MergeTokens
+			--resolves the @ token at build time.
+			styles = ThemeEngine.MergeTokens({
+				{
+					selectors = {"sliderNotch"},
+					bgimage = true,
+					bgcolor = "@fgMuted",
+					width = "100%",
+					halign = "center",
+					borderWidth = 0,
+				},
+			}),
 			data = {
 				randomSpread = {},
 
@@ -2096,7 +2121,10 @@ local CreateObjectEditor = function(nodes, options)
 					cornerRadius = 8,
 					width = '90%',
 					height = '40',
-					bgcolor = '#33333399',
+					--Was a translucent dark wash (#33333399); @bgAlt is the scheme's
+				--lighter surface color, which matches how it rendered on the old
+				--dark background and follows scheme switches.
+				bgcolor = '@bgAlt',
 					flow = 'none',
 					borderWidth = 0,
 					valign = 'top',
@@ -2141,7 +2169,10 @@ local CreateObjectEditor = function(nodes, options)
 				cornerRadius = 8,
 				width = '90%',
 				height = 40,
-				bgcolor = '#33333399',
+				--Was a translucent dark wash (#33333399); @bgAlt is the scheme's
+				--lighter surface color, which matches how it rendered on the old
+				--dark background and follows scheme switches.
+				bgcolor = '@bgAlt',
 				flow = 'horizontal',
 				borderWidth = 0,
 				valign = 'top',
@@ -2319,7 +2350,10 @@ local CreateObjectEditor = function(nodes, options)
 				cornerRadius = 8,
 				width = '90%',
 				height = '40',
-				bgcolor = '#33333399',
+				--Was a translucent dark wash (#33333399); @bgAlt is the scheme's
+				--lighter surface color, which matches how it rendered on the old
+				--dark background and follows scheme switches.
+				bgcolor = '@bgAlt',
 				flow = 'none',
 				borderWidth = 0,
 				valign = 'top',
@@ -2376,7 +2410,10 @@ local CreateObjectEditor = function(nodes, options)
 					cornerRadius = 8,
 					width = '90%',
 					height = '40',
-					bgcolor = '#33333399',
+					--Was a translucent dark wash (#33333399); @bgAlt is the scheme's
+				--lighter surface color, which matches how it rendered on the old
+				--dark background and follows scheme switches.
+				bgcolor = '@bgAlt',
 					flow = 'none',
 					borderWidth = 0,
 					valign = 'top',
@@ -2617,6 +2654,148 @@ local function CreateObjectEditorPanel()
 	if dmhub.GetSettingValue("dev") then
 		DialogHeight = DialogHeight + 60
 	end
+
+	--Dialogs don't inherit styles from ancestors, so this root carries the full
+	--theme via MergeStyles. extras holds only layout and dialog-specific rules;
+	--colors are @ tokens resolved against the active color scheme.
+	local extras = {
+		{
+			width = DialogWidth,
+			height = DialogHeight,
+			flow = 'vertical',
+			halign = "left",
+			valign = "top",
+		},
+		{
+			selectors = {"framedPanel", "hasBanner"},
+			height = DialogHeight + DialogWidth/4 + 8,
+		},
+		{
+			selectors = {"framedPanel"},
+			collapsed = 1,
+			opacity = 0,
+			uiscale = {x = 0.01, y = 0.01},
+		},
+		{
+			selectors = {"framedPanel", "show"},
+			collapsed = 0,
+			opacity = 1,
+			transitionTime = 0.0,
+			uiscale = {x = 1, y = 1},
+		},
+		{
+			selectors = {"framedPanel", "show", "left"},
+			x = -400,
+			transitionTime = 0.0,
+		},
+		{
+			selectors = {"framedPanel", "show", "right"},
+			x = 400,
+			transitionTime = 0.0,
+		},
+		{
+			selectors = {"framedPanel", "show", "above"},
+			y = -250,
+			transitionTime = 0.0,
+		},
+		{
+			selectors = {"framedPanel", "show", "below"},
+			y = 250,
+			transitionTime = 0.0,
+		},
+		{
+			selectors = {'#MainObjectPropertiesPanel'},
+			flow = 'horizontal',
+			height = '100% available',
+		},
+		{
+			selectors = {'editor-panel'},
+			priority = 5,
+			flow = 'vertical',
+			width = '70%-20',
+			height = '100%-20',
+		},
+		{
+			selectors = {'add-property-dropdown'},
+			priority = 5,
+			cornerRadius = 0,
+			width = '90%',
+			height = 30,
+		},
+		{
+			selectors = {'dropdown-option'},
+			priority = 10,
+			cornerRadius = 0,
+			width = '200%',
+			height = 30,
+			fontSize = 12,
+		},
+		{
+			selectors = {'left-panel'},
+			priority = 5,
+			width = '30%',
+			height = '100%-20',
+		},
+		{
+			selectors = {"label-text"},
+			priority = 4,
+			fontSize = 14,
+			width = "auto",
+			height = "auto",
+		},
+		{
+			selectors = {"field-editor-panel"},
+			--Was a translucent dark wash (#33333399); @bgAlt is the scheme's
+			--lighter surface color, which matches how it rendered on the old
+			--dark background and follows scheme switches.
+			bgcolor = '@bgAlt',
+			width = "90%",
+			minHeight = 40,
+			height = "auto",
+			priority = 4,
+			cornerRadius = 8,
+			borderWidth = 0,
+			pad = 4,
+			margin = 4,
+			flow = 'none',
+		},
+		{
+			selectors = {"field-description-label"},
+			priority = 4,
+			fontSize = 12,
+			minFontSize = 10,
+			textWrap = false,
+
+			width = 80,
+			height = "auto",
+			halign = 'left',
+			valign = 'center',
+		},
+		{
+			selectors = {"field-name-label"},
+			priority = 5,
+			maxWidth = 160,
+		},
+		{
+			selectors = {'property-label'},
+			priority = 5,
+			width = 'auto',
+			height = 'auto',
+			fontSize = 12,
+			margin = 8,
+			halign = 'right',
+		},
+		{
+			selectors = {"#ArtistsAndKeywords"},
+			priority = 5,
+			hmargin = 0,
+			valign = "bottom",
+			width = "100%",
+			height = "auto",
+			flow = "vertical",
+		},
+	}
+
 	local resultPanel
 	resultPanel = gui.Panel{
 		classes = {"framedPanel"},
@@ -2636,143 +2815,8 @@ local function CreateObjectEditorPanel()
 			element.y = element.y + element.dragDelta.y
 		end,
 
-		styles = {
-			Styles.Panel,
+		styles = ThemeEngine.MergeStyles(extras),
 
-			{
-				width = DialogWidth,
-				height = DialogHeight,
-				flow = 'vertical',
-				halign = "left",
-				valign = "top",
-			},
-			{
-				selectors = {"framedPanel", "hasBanner"},
-				height = DialogHeight + DialogWidth/4 + 8,
-			},
-			{
-				selectors = {"framedPanel"},
-				collapsed = 1,
-				opacity = 0,
-				uiscale = {x = 0.01, y = 0.01},
-			},
-			{
-				selectors = {"framedPanel", "show"},
-				collapsed = 0,
-				opacity = 1,
-				transitionTime = 0.0,
-				uiscale = {x = 1, y = 1},
-			},
-			{
-				selectors = {"framedPanel", "show", "left"},
-				x = -400,
-				transitionTime = 0.0,
-			},
-			{
-				selectors = {"framedPanel", "show", "right"},
-				x = 400,
-				transitionTime = 0.0,
-			},
-			{
-				selectors = {"framedPanel", "show", "above"},
-				y = -250,
-				transitionTime = 0.0,
-			},
-			{
-				selectors = {"framedPanel", "show", "below"},
-				y = 250,
-				transitionTime = 0.0,
-			},
-			{
-				selectors = {'#MainObjectPropertiesPanel'},
-				flow = 'horizontal',
-				height = '100% available',
-			},
-			{
-				selectors = {'editor-panel'},
-				priority = 5,
-				flow = 'vertical',
-				width = '70%-20',
-				height = '100%-20',
-			},
-			{
-				selectors = {'add-property-dropdown'},
-				priority = 5,
-				cornerRadius = 0,
-				width = '90%',
-				height = 30,
-			},
-			{
-				selectors = {'dropdown-option'},
-				priority = 10,
-				cornerRadius = 0,
-				width = '200%',
-				height = 30,
-				fontSize = 12,
-			},
-			{
-				selectors = {'left-panel'},
-				priority = 5,
-				width = '30%',
-				height = '100%-20',
-			},
-			{
-				selectors = {"label-text"},
-				priority = 4,
-				fontSize = 14,
-				width = "auto",
-				height = "auto",
-			},
-			{
-				selectors = {"field-editor-panel"},
-				bgcolor = '#33333399',
-				width = "90%",
-				minHeight = 40,
-				height = "auto",
-				priority = 4,
-				cornerRadius = 8,
-				borderWidth = 0,
-				pad = 4,
-				margin = 4,
-				flow = 'none',
-			},
-			{
-				selectors = {"field-description-label"},
-				priority = 4,
-				fontSize = 12,
-				minFontSize = 10,
-				textWrap = false,
-
-				width = 80,
-				height = "auto",
-				halign = 'left',
-				valign = 'center',
-			},
-			{
-				selectors = {"field-name-label"},
-				priority = 5,
-				maxWidth = 160,
-			},
-			{
-				selectors = {'property-label'},
-				priority = 5,
-				width = 'auto',
-				height = 'auto',
-				fontSize = 12,
-				margin = 8,
-				halign = 'right',
-			},
-			{
-				selectors = {"#ArtistsAndKeywords"},
-				priority = 5,
-				hmargin = 0,
-				valign = "bottom",
-				width = "100%",
-				height = "auto",
-				flow = "vertical",
-			},
-		},
-		
 		data = {
 			objectsShown = {},
 
@@ -2909,6 +2953,14 @@ local function CreateObjectEditorPanel()
 		},
 	}
 
+	--Re-resolve the styles when the player switches theme or color scheme so
+	--an open dialog recolors live.
+	ThemeEngine.OnThemeChanged(mod, function()
+		if resultPanel ~= nil and resultPanel.valid then
+			resultPanel.styles = ThemeEngine.MergeStyles(extras)
+		end
+	end)
+
 	return resultPanel
 end
 
@@ -3008,104 +3060,111 @@ mod.shared.EditObjectDialog = function(nodeids)
 	local DialogWidth = 1200
 	local DialogHeight = 1000
 
+	--Dialogs don't inherit styles from ancestors, so this root carries the full
+	--theme via MergeStyles. extras holds only layout and dialog-specific rules;
+	--colors are @ tokens resolved against the active color scheme.
+	local extras = {
+		{
+			width = DialogWidth,
+			height = DialogHeight,
+			flow = 'vertical',
+		},
+		{
+			selectors = {'#MainObjectPropertiesPanel'},
+			flow = 'horizontal',
+			height = '100%-140',
+		},
+		{
+			selectors = {'editor-panel'},
+			priority = 5,
+			flow = 'vertical',
+			width = '80%',
+			height = '100%',
+		},
+		{
+			selectors = {'dropdown-option'},
+			priority = 10,
+			cornerRadius = 0,
+			width = '200%',
+			height = "100%",
+			fontSize = 12,
+		},
+		{
+			selectors = {'add-property-dropdown'},
+			priority = 5,
+			cornerRadius = 0,
+			width = '90%',
+			height = 40,
+		},
+		{
+			selectors = {'left-panel'},
+			priority = 5,
+			width = '20%',
+			height = '100%',
+		},
+		{
+			selectors = {"label-text"},
+			priority = 4,
+			fontSize = 18,
+			width = "auto",
+			height = "auto",
+		},
+		{
+			selectors = {"field-editor-panel"},
+			--Was a translucent dark wash (#33333399); @bgAlt is the scheme's
+			--lighter surface color, which matches how it rendered on the old
+			--dark background and follows scheme switches.
+			bgcolor = '@bgAlt',
+			width = "40%",
+			minHeight = 40,
+			height = "auto",
+			priority = 4,
+			cornerRadius = 8,
+			borderWidth = 0,
+			pad = 4,
+			margin = 4,
+			flow = 'none',
+		},
+		{
+			selectors = {"field-description-label"},
+			priority = 4,
+			fontSize = 18,
+			width = "auto",
+			height = "auto",
+			halign = 'left',
+			valign = 'center',
+		},
+		{
+			selectors = {"#ArtistsAndKeywords"},
+			priority = 5,
+			valign = "bottom",
+			width = "100%",
+			height = "auto",
+			flow = "vertical",
+		},
+		{
+			selectors = {'property-label'},
+			priority = 5,
+			width = 'auto',
+			height = 'auto',
+			fontSize = 12,
+			margin = 8,
+			halign = 'right',
+		},
+		{
+			selectors = {'property-pane'},
+			width = "auto",
+			height = "auto",
+			priority = 5,
+			flow = 'horizontal',
+		},
+	}
+
 	local dialogPanel = gui.Panel{
 		id = 'EditObjectDialog',
 		classes = {"framedPanel"},
 
-		styles = {
-			Styles.Panel,
-			{
-				width = DialogWidth,
-				height = DialogHeight,
-				flow = 'vertical',
-			},
-			{
-				selectors = {'#MainObjectPropertiesPanel'},
-				flow = 'horizontal',
-				height = '100%-140',
-			},
-			{
-				selectors = {'editor-panel'},
-				priority = 5,
-				flow = 'vertical',
-				width = '80%',
-				height = '100%',
-			},
-			{
-				selectors = {'dropdown-option'},
-				priority = 10,
-				cornerRadius = 0,
-				width = '200%',
-				height = "100%",
-				fontSize = 12,
-			},
-			{
-				selectors = {'add-property-dropdown'},
-				priority = 5,
-				cornerRadius = 0,
-				width = '90%',
-				height = 40,
-			},
-			{
-				selectors = {'left-panel'},
-				priority = 5,
-				width = '20%',
-				height = '100%',
-			},
-			{
-				selectors = {"label-text"},
-				priority = 4,
-				fontSize = 18,
-				width = "auto",
-				height = "auto",
-			},
-			{
-				selectors = {"field-editor-panel"},
-				bgcolor = '#33333399',
-				width = "40%",
-				minHeight = 40,
-				height = "auto",
-				priority = 4,
-				cornerRadius = 8,
-				borderWidth = 0,
-				pad = 4,
-				margin = 4,
-				flow = 'none',
-			},
-			{
-				selectors = {"field-description-label"},
-				priority = 4,
-				fontSize = 18,
-				width = "auto",
-				height = "auto",
-				halign = 'left',
-				valign = 'center',
-			},
-			{
-				selectors = {"#ArtistsAndKeywords"},
-				priority = 5,
-				valign = "bottom",
-				width = "100%",
-				height = "auto",
-				flow = "vertical",
-			},
-			{
-				selectors = {'property-label'},
-				priority = 5,
-				width = 'auto',
-				height = 'auto',
-				fontSize = 12,
-				margin = 8,
-				halign = 'right',
-			},
-			{
-				selectors = {'property-pane'},
-				width = "auto",
-				height = "auto",
-				priority = 5,
-				flow = 'horizontal',
-			},
-		},
+		styles = ThemeEngine.MergeStyles(extras),
 
 		children = {
 			mainPanel,
@@ -3113,6 +3172,14 @@ mod.shared.EditObjectDialog = function(nodeids)
 			buttonPanel,
 		}
 	}
+
+	--Re-resolve the styles when the player switches theme or color scheme so
+	--an open dialog recolors live.
+	ThemeEngine.OnThemeChanged(mod, function()
+		if dialogPanel ~= nil and dialogPanel.valid then
+			dialogPanel.styles = ThemeEngine.MergeStyles(extras)
+		end
+	end)
 
 	gui.ShowModal(dialogPanel)
 end
