@@ -134,7 +134,8 @@ CreateHeightmapEditor = function()
         height = "auto",
         width = "100%",
 
-        styles = Styles.formPanel,
+        --Styles.formPanel never existed (the real table is Styles.Form), so
+        --this was always nil. Removed the dead lookup; look unchanged.
 
         showpanel = function(element)
             if not gui.ChildHasFocus(element) then

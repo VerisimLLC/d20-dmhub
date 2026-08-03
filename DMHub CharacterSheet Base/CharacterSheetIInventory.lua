@@ -116,7 +116,10 @@ local QuantityPopup = function(options)
 			}
 	return gui.Panel{
 		classes = {"framedPanel"},
-		styles = {Styles.Default, Styles.Panel},
+		--This popup already rooted the full legacy style cascade, so it roots
+		--the theme cascade instead; colors come from the active color scheme.
+		--It is rebuilt every time it opens, so no theme-change rebind is needed.
+		styles = ThemeEngine.GetStyles(),
 		selfStyle = {
 			halign = 'center',
 			valign = 'center',
@@ -481,6 +484,7 @@ local CreateInventorySlot = function(dmhud, options)
 		height = 20,
 		bold = true,
 		margin = 4,
+		--coin-yellow price text; semantic currency color, deliberately not themed.
 		color = '#ffff99ff',
 		fontSize = '40%',
 		halign = 'right',
@@ -1990,6 +1994,7 @@ function GameHud.CreateInventoryDialog(self, options)
 					},
 					{
 						selectors = {"cannotAfford"},
+						--red "can't afford" warning tint; semantic, deliberately not themed.
 						bgcolor = "#880000",
 					},
 
@@ -2258,12 +2263,15 @@ function GameHud.CreateInventoryDialog(self, options)
 				height = 16,
 				valign = "center",
 
-				styles = {
+				--The "@" colors resolve against the active color scheme when the
+				--panel is built.
+				styles = ThemeEngine.MergeTokens{
 					{
-						bgcolor = Styles.textColor,
+						bgcolor = "@fg",
 					},
 					{
 						selectors = {"hover"},
+						--white hover tint over the icon image; deliberately not themed.
 						bgcolor = "white",
 					}
 				},
@@ -2344,7 +2352,8 @@ function GameHud.CreateInventoryDialog(self, options)
 				bgimage = mod.images.weight,
 				width = 20,
 				height = 20,
-				bgcolor = Styles.textColor,
+				--icon tint from the active color scheme.
+				bgcolor = ThemeEngine.ResolveTokens("@fg"),
 				halign = "left",
 			},
 
@@ -2354,7 +2363,8 @@ function GameHud.CreateInventoryDialog(self, options)
 				fontSize = 16,
 				halign = "left",
 				hmargin = 4,
-				color = Styles.textColor,
+				--text color from the active color scheme.
+				color = ThemeEngine.ResolveTokens("@fg"),
 				text = "Encumbrance",
 				refreshInventory = function(element)
 					if permanentOptions.isshop then
@@ -2366,13 +2376,14 @@ function GameHud.CreateInventoryDialog(self, options)
 					if capacity ~= nil then
 						element.text = string.format("%s/%s", tostring(math.floor(weight)), tostring(capacity))
 						if weight > capacity then
+							--red overloaded warning; semantic, deliberately not themed.
 							element.selfStyle.color = "red"
 						else
-							element.selfStyle.color = Styles.textColor
+							element.selfStyle.color = ThemeEngine.ResolveTokens("@fg")
 						end
 					else
 						element.text = tostring(weight)
-						element.selfStyle.color = Styles.textColor
+						element.selfStyle.color = ThemeEngine.ResolveTokens("@fg")
 					end
 				end,
 			},
@@ -3049,7 +3060,27 @@ function GameHud.CreateAddItemDialog(self, options)
 		},
 		styles = {
 			SlotStyles,
-			Styles.Panel,
+			--Tokenized copy of the legacy framed-dialog look (Styles.Panel).
+			--The "@" colors resolve against the active color scheme when the
+			--dialog is built.
+			ThemeEngine.MergeTokens{
+				{
+					selectors = {"framedPanel"},
+					bgimage = "panels/square.png",
+					--image-tint-neutral so the gradient paints in its true colors.
+					bgcolor = "white",
+					cornerRadius = 4,
+					gradient = "@surfaceLinear",
+					borderWidth = 2.2,
+					borderColor = "@border",
+				},
+				{
+					selectors = {"framedPanel", "fadein"},
+					opacity = 0,
+					uiscale = {x = 0.01, y = 0.01},
+					transitionTime = 0.2,
+				},
+			},
 		},
 
 		data = {

@@ -3,6 +3,9 @@ print("CHECKPOINT:: CREATE SPELLS")
 
 --this file implements the character spell sheet. (obtained by pressing 'm' with a character selected)
 
+--This sheet is shared by tooltip renderers in other files (Creature,
+--ActivatedAbility, Concentration, Aura, Terrain), so it keeps its legacy
+--hardcoded colors. Converting it is a cross-file job for a follow-up.
 SpellRenderStyles = {
 	gui.Style{
 		selectors = {"create"},
@@ -89,6 +92,130 @@ SpellRenderStyles = {
 	},
 }
 
+--The character sheet has no app-wide theme cascade, so panels in this file
+--carry local copies of the legacy rule sets they used to pull from Styles.*.
+--Colors are "@" tokens resolved through ThemeEngine.MergeTokens at each use
+--site, so they follow the active color scheme without dragging in the
+--theme's base rules.
+
+--Local tokenized copy of the legacy Styles.Panel framed-dialog look.
+local FramedPanelStyles = {
+	{
+		selectors = {"framedPanel"},
+		bgimage = "panels/square.png",
+		--White is a neutral tint; the gradient paints the actual surface.
+		bgcolor = "white",
+		cornerRadius = 4,
+		gradient = "@surfaceLinear",
+		borderWidth = 2.2,
+		borderColor = "@border",
+	},
+	{
+		selectors = {"framedPanel", "fadein"},
+		opacity = 0,
+		uiscale = {x = 0.01, y = 0.01},
+		transitionTime = 0.2,
+	},
+}
+
+--Local tokenized copy of the legacy Styles.Triangle expander arrow.
+local TriangleStyles = {
+	{
+		selectors = {"triangle"},
+		bgimage = "panels/triangle.png",
+		bgcolor = "@fg",
+		width = 12,
+		height = 12,
+		hmargin = 4,
+		valign = "center",
+		halign = "center",
+	},
+	{
+		selectors = {"triangle", "hover"},
+		brightness = 1.5,
+	},
+}
+
+--Local copy of the legacy Styles.ImplementationIcon rules. The status colors
+--are semantic markers (partly done / done / won't do) and stay hardcoded so
+--they read the same in every color scheme.
+local ImplementationIconStyles = {
+	{
+		selectors = {"spellImplementationIcon"},
+		width = 16,
+		height = 16,
+		hmargin = 4,
+	},
+	{
+		selectors = {"spellImplementationIcon", "partial"},
+		bgimage = "icons/icon_common/icon_common_29.png",
+		bgcolor = "yellow",
+	},
+	{
+		selectors = {"spellImplementationIcon", "full"},
+		bgimage = "icons/icon_common/icon_common_29.png",
+		bgcolor = "#77ff77",
+	},
+	{
+		selectors = {"spellImplementationIcon", "wontimplement"},
+		bgimage = "icons/icon_common/icon_common_29.png",
+		bgcolor = "#ff77ff",
+	},
+}
+
+--Local tokenized copy of the legacy Styles.Form rules, used by the monster
+--spellcasting editor.
+local FormStyles = {
+	{
+		classes = "formPanel",
+		flow = "horizontal",
+		width = "100%",
+		height = "auto",
+		valign = "top",
+		vmargin = 4,
+	},
+	{
+		classes = "formLabel",
+		fontSize = 16,
+		color = "@fgStrong",
+		width = "auto",
+		height = "auto",
+		minWidth = 140,
+		halign = "right",
+		valign = "center",
+		hmargin = 8,
+	},
+	{
+		classes = "formInput",
+		fontSize = 16,
+		width = 180,
+		height = 26,
+		color = "@fgStrong",
+		halign = "right",
+		valign = "center",
+		textAlignment = "left",
+	},
+	{
+		classes = {"formInput", "multiline"},
+		textAlignment = "topleft",
+	},
+	{
+		classes = "formDropdown",
+		halign = 'right',
+		vmargin = 4,
+		width = 240,
+		height = 30,
+	},
+	{
+		classes = "formValue",
+		halign = 'right',
+		vmargin = 4,
+		width = 180,
+		height = 30,
+		fontSize = 14,
+	},
+}
+
 function Spell:Render(options)
 	options = options or {}
 
@@ -119,6 +246,8 @@ function Spell:Render(options)
 	local description = self.description
 	if self:try_get("modifyDescriptions") ~= nil then
 		for _,desc in ipairs(self.modifyDescriptions) do
+			--The cyan marks text added by modifiers; a bespoke semantic
+			--color, so it stays hardcoded.
 			description = string.format("%s\n<color=#a6fffe>%s</color>", description, desc)
 		end
 	end
@@ -235,6 +364,8 @@ function CreateCompendiumItemTooltip(spell, options)
 		pad = 24,
 		cornerRadius = 10,
 		bgimage = 'panels/square.png',
+		--Translucent black tooltip backdrop; the alpha is what matters, so
+		--it stays hardcoded rather than using a scheme surface token.
 		bgcolor = '#000000f6',
 		borderWidth = 10,
 		borderFade = true,
@@ -301,7 +432,9 @@ local CreateSpellPanel = function(dmhud, options)
 	local args = {
 		classes = {"spellPanel", "framedPanel"},
 
-		styles = Styles.Panel,
+		--Tokens resolve here, at construction, so the frame matches the
+		--active color scheme.
+		styles = ThemeEngine.MergeTokens(FramedPanelStyles),
 
 		data = {
 			receiveDrags = function()
@@ -958,7 +1091,8 @@ function GameHud.ShowAddSpellDialog(self, options)
 		halign = 'center',
 		width = 'auto',
 		height = 'auto',
-		color = 'white',
+		--Bright dialog-title text; resolved once when the dialog is built.
+		color = ThemeEngine.ResolveTokens("@fgStrong"),
 		fontSize = 28,
 	}
 
@@ -972,7 +1106,10 @@ function GameHud.ShowAddSpellDialog(self, options)
 			valign = 'center',
 		},
 
-		styles = Styles.Panel,
+		--This dialog floats over the game HUD, outside the character sheet,
+		--so it roots the full theme cascade like other converted dialogs.
+		--The local framed-panel rules keep the legacy dialog frame look.
+		styles = ThemeEngine.MergeStyles(FramedPanelStyles),
 
 		changeSpell = options.changeSpell,
 
@@ -1039,6 +1176,14 @@ function GameHud.ShowAddSpellDialog(self, options)
 	}
 
 	resultPanel.data.show(options.spell)
+
+	--Re-resolve colors if the user switches theme or color scheme while the
+	--dialog is open.
+	ThemeEngine.OnThemeChanged(mod, function()
+		if resultPanel ~= nil and resultPanel.valid then
+			resultPanel.styles = ThemeEngine.MergeStyles(FramedPanelStyles)
+		end
+	end)
 
 	self.mainDialogPanel:AddChild(resultPanel)
 
@@ -1314,13 +1459,16 @@ function Spell.CompendiumEditor()
 
 	local spellListPanel = gui.Panel{
 		id = "spellListPanel",
-		styles = {
-			Styles.Triangle,
+		--Tokens resolve at construction so the colors follow the active
+		--color scheme.
+		styles = ThemeEngine.MergeTokens{
+			TriangleStyles,
 			{
 				classes = {"triangle"},
 				halign = "left",
 				width = 12,
 				height = 12,
+				--Near-white tint over the triangle image; stays hardcoded.
 				bgcolor = "#cccccc",
 			},
 			{
@@ -1344,7 +1492,7 @@ function Spell.CompendiumEditor()
 				width = "auto",
 				height = "auto",
 				halign = "left",
-				color = "#aaaaaa",
+				color = "@fgMuted",
 			},
 			{
 				classes = {"spellListPanel"},
@@ -1354,6 +1502,8 @@ function Spell.CompendiumEditor()
 				bgcolor = "clear",
 				flow = "vertical",
 			},
+			--White drag-highlight washes; only the alpha differs, so they
+			--stay hardcoded.
 			{
 				classes = {"spellListPanel", "drag-target"},
 				bgcolor = "#ffffff33",
@@ -1554,6 +1704,7 @@ function Spell.CompendiumEditor()
 			},
 			{
 				selectors = {"spellItemPanel", "hover"},
+				--Bespoke dark-red hover fill; stays hardcoded.
 				bgcolor = "#770000",
 			},
 			{
@@ -1584,7 +1735,7 @@ function Spell.CompendiumEditor()
 				hmargin = 4,
 			},
 
-			Styles.ImplementationIcon,
+			ImplementationIconStyles,
 		},
 	}
 
@@ -1592,27 +1743,30 @@ function Spell.CompendiumEditor()
 end
 
 
+--The "@" color tokens here resolve when the sheet panel is built (via
+--ThemeEngine.MergeTokens at the use site), not at file load, so they pick
+--up the color scheme active at that time.
 local SpellStyles = {
-	gui.Style{
+	{
 		selectors = {"label"},
 		width = "auto",
 		height = "auto",
 		fontSize = 14,
 		hmargin = 4,
 	},
-	gui.Style{
+	{
 		selectors = {"titleLabel"},
 		fontSize = 22,
 		vmargin = 4,
 		bold = true,
 	},
-	gui.Style{
+	{
 		selectors = {"subtitleLabel"},
 		fontSize = 20,
 		vmargin = 4,
 		bold = true,
 	},
-	gui.Style{
+	{
 		selectors = {"featurePanel"},
 		width = "100%-20",
 		height = "auto",
@@ -1622,41 +1776,43 @@ local SpellStyles = {
 		halign = "left",
 		collapsed = 1,
 	},
-	gui.Style{
+	{
 		selectors = {"featurePanel", "selected"},
 		collapsed = 0,
 	},
 
-	gui.Style{
+	{
 		selectors = {"spellSlot"},
 		width = 506,
 		height = 36,
 		vmargin = 4,
 
 		bgimage = "panels/square.png",
-		bgcolor = "black",
+		bgcolor = "@bg",
 
-		color = "grey",
+		color = "@fgMuted",
 		fontSize = 14,
 		textAlignment = "center",
 
 	},
 
-	gui.Style{
+	--Drag feedback (white = valid target, yellow = hovered) is semantic and
+	--stays hardcoded.
+	{
 		selectors = {"spellSlot", "drag-target"},
 		color = "white",
 		border = 2,
 		borderColor = "white",
 	},
 
-	gui.Style{
+	{
 		selectors = {"spellSlot", "drag-target-hover"},
 		color = "yellow",
 		border = 2,
 		borderColor = "yellow",
 	},
 
-	gui.Style{
+	{
 		selectors = {"spellRow"},
 		halign = "center",
 		valign = "center",
@@ -1664,71 +1820,73 @@ local SpellStyles = {
 		width = 500,
 		height = 30,
 		bgimage = "panels/square.png",
-		bgcolor = "black",
+		bgcolor = "@bg",
 	},
 
-	gui.Style{
+	{
 		selectors = {"spellRow", "slotted"},
-		bgcolor = "#222222",
+		bgcolor = "@bgAlt",
 	},
 
-	gui.Style{
+	{
 		selectors = {"spellRow", "oddRow"},
 		opacity = 0.7,
 	},
 
-	gui.Style{
+	{
 		selectors = {"spellRow", "evenRow"},
 		opacity = 0.9,
 	},
 
-	gui.Style{
+	{
 		selectors = {"spellIcon"},
 		height = 30,
 		width = 30,
 	},
 
-	gui.Style{
+	{
 		selectors = {"spellNameLabel"},
 		width = 210,
 		bold = true,
 		fontSize = 18,
 	},
-	gui.Style{
+	{
 		selectors = {"spellLevelLabel"},
 		width = 70,
 		fontSize = 18,
 	},
-	gui.Style{
+	{
 		selectors = {"spellAttributeLabel"},
 		width = 70,
 		fontSize = 18,
 	},
-	gui.Style{
+	{
 		selectors = {"spellSchoolLabel"},
 		width = 130,
 		fontSize = 18,
 	},
-	gui.Style{
+	{
 		selectors = {"spellRefreshTypeLabel"},
 		width = 100,
 		fontSize = 18,
 	},
-	gui.Style{
+	{
 		selectors = {"spellRefreshCountLabel"},
 		width = 20,
 		fontSize = 18,
 		textAlignment = "right",
 	},
-	gui.Style{
+	{
 		selectors = {"label", "editable"},
+		--Pale teal marks values you can click to edit; a bespoke accent, so
+		--it stays hardcoded.
 		color = "#c0eddf",
 	},
-	gui.Style{
+	{
 		selectors = {"label", "editable", "hover"},
 		brightness = 1.5,
 	},
-	gui.Style{
+	{
 		selectors = {"label", "disabled"},
 		opacity = 0.3,
 	},
@@ -2552,6 +2710,8 @@ local CreateCharSheetSpells = function()
 			width = 24,
 			height = 24,
 			hover = gui.Tooltip("Randomize spells"),
+			--White is a neutral icon tint; the magenta hover flash is a
+			--bespoke accent. Both stay hardcoded.
 			styles = {
 				{
 					bgcolor = "white",
@@ -2685,6 +2845,8 @@ local CreateCharSheetSpells = function()
 			width = 24,
 			height = 24,
 			hover = gui.Tooltip("Randomize spells"),
+			--White is a neutral icon tint; the magenta hover flash is a
+			--bespoke accent. Both stay hardcoded.
 			styles = {
 				{
 					bgcolor = "white",
@@ -3320,8 +3482,10 @@ local CreateCharSheetSpells = function()
 			end,
 
 
+			--The sheet has no theme cascade, so the form rules travel with
+			--this panel; tokens resolve when it is built.
 			styles = {
-				Styles.Form,
+				ThemeEngine.MergeTokens(FormStyles),
 				{
 					selectors = {"label", "formLabel"},
 					halign = "left",
@@ -3350,9 +3514,11 @@ local CreateCharSheetSpells = function()
 		width = "100%",
 		height = "100%",
 		flow = "vertical",
+		--The sheet has no theme cascade, so tokens resolve here when the
+		--panel is built.
 		styles = {
-			SpellStyles,
-			Styles.ImplementationIcon,
+			ThemeEngine.MergeTokens(SpellStyles),
+			ImplementationIconStyles,
 		},
 
 		tabsPanel,

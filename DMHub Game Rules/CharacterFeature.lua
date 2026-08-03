@@ -602,6 +602,70 @@ function CharacterFeature:CharacterUniqueID()
 	return self.name
 end
 
+--Rules local to the feature popup editor. The "@" colors resolve against the
+--active color scheme when the table is passed through ThemeEngine.MergeStyles
+--at popup construction. Includes tokenized copies of the legacy Styles.Form
+--rules because the editor body still uses those form class names.
+local g_popupEditorExtras = {
+	{
+		selectors = {"formPanel"},
+		flow = "horizontal",
+		width = "100%",
+		height = "auto",
+		valign = "top",
+		vmargin = 4,
+	},
+	{
+		selectors = {"formLabel"},
+		fontSize = 16,
+		color = "@fgStrong",
+		width = "auto",
+		height = "auto",
+		minWidth = 140,
+		halign = "right",
+		valign = "center",
+		hmargin = 8,
+	},
+	{
+		selectors = {"formInput"},
+		fontSize = 16,
+		width = 180,
+		height = 26,
+		color = "@fgStrong",
+		halign = "right",
+		valign = "center",
+		textAlignment = "left",
+	},
+	{
+		selectors = {"formInput", "multiline"},
+		textAlignment = "topleft",
+	},
+	{
+		selectors = {"formDropdown"},
+		halign = "right",
+		vmargin = 4,
+		width = 240,
+		height = 30,
+	},
+	{
+		selectors = {"formValue"},
+		halign = "right",
+		vmargin = 4,
+		width = 180,
+		height = 30,
+		fontSize = 14,
+	},
+	{
+		selectors = {"popup-editor"},
+		width = 1000,
+		height = 800,
+		--image-tint-neutral so the framedPanel gradient paints in its true colors.
+		bgcolor = "white",
+		halign = "center",
+		valign = "center",
+	},
+}
+
 function CharacterFeature:PopupEditor()
 
 	local backup = dmhub.DeepCopy(self)
@@ -676,20 +740,10 @@ function CharacterFeature:PopupEditor()
 
 		},
 
-		styles = {
-			Styles.Panel,
-			Styles.Default,
-			Styles.Form,
-			{
-				selectors = {'popup-editor'},
-				width = 1000,
-				height = 800,
-				bgcolor = 'white',
-				halign = 'center',
-				valign = 'center',
-			},
-
-		},
+		--This popup already rooted the full legacy style cascade, so it roots
+		--the theme cascade instead; colors come from the active color scheme.
+		--It is rebuilt every time it opens, so no theme-change rebind is needed.
+		styles = ThemeEngine.MergeStyles(g_popupEditorExtras),
 		data = {
 			--notifies this element of 'refreshModifier' on change.
 			notifyElement = nil,

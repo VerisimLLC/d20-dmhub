@@ -378,7 +378,8 @@ dmhub.AddCustomTranslationString = function(labelTarget, str)
 		height = "100%",
 		bgimage = "panels/square.png",
 		bgcolor = "#000000f2",
-		styles = Styles.default,
+		--Styles.default never existed (the real table is Styles.Default), so
+		--this was always nil. Removed the dead lookup; look unchanged.
 
 		escapeActivates = true,
 		escapePriority = EscapePriority.EXIT_MODAL_DIALOG,

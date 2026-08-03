@@ -18,6 +18,9 @@ local ChangeLabelValue = function(info, label, newtext)
 end
 
 
+--The "@" color names here follow the active color scheme. They only resolve
+--when a use site wraps this table with ThemeEngine.MergeTokens; resolving here
+--at load time would freeze the colors to whatever scheme was active at startup.
 local PopupStyles = {
 
 	{
@@ -25,7 +28,7 @@ local PopupStyles = {
 		halign = 'center',
 		width = 'auto',
 		height = 'auto',
-		bgcolor = 'black',
+		bgcolor = '@bg',
 		flow = 'vertical',
 		fontSize = 12,
 	},
@@ -35,10 +38,10 @@ local PopupStyles = {
 		halign = 'center',
 		width = 300,
 		height = 'auto',
-		bgcolor = 'black',
+		bgcolor = '@bg',
 		flow = 'vertical',
 		borderWidth = 2,
-		borderColor = 'white',
+		borderColor = '@border',
 		pad = 6,
 	},
 	{
@@ -50,7 +53,7 @@ local PopupStyles = {
 	},
 	{
 		selectors = {'popupLabel'},
-		color = 'white',
+		color = '@fgStrong',
 		fontSize = 16,
 		width = 'auto',
 		height = 'auto',
@@ -59,7 +62,7 @@ local PopupStyles = {
 	},
 	{
 		selectors = {'popupValue'},
-		color = 'white',
+		color = '@fgStrong',
 		fontSize = 16,
 		width = 'auto',
 		height = 'auto',
@@ -74,17 +77,19 @@ local PopupStyles = {
 	},
 	{
 		selectors = {'editable'},
+		--Kept hardcoded: the blue is the "you can edit this" signal, not part of the themed palette.
 		color = '#aaaaff',
 		priority = 2,
 	},
 	{
 		selectors = {'option'},
-		bgcolor = 'black',
+		bgcolor = '@bg',
 		width = '100%',
 		height = 20,
 	},
 	{
 		selectors = {'option','selected'},
+		--Kept hardcoded: bespoke dark-red selection fill, not part of the themed palette.
 		bgcolor = '#880000',
 	},
 	{
@@ -292,25 +297,29 @@ function CharSheet.CharacterArmorClassPanel()
 						},
 						styles = {
 							Styles.Default,
-							{
-								valign = 'bottom',
-								halign = 'center',
-								width = 'auto',
-								height = 'auto',
-								bgcolor = 'black',
-								flow = 'vertical',
+							--MergeTokens resolves the "@" colors against the active color scheme.
+							ThemeEngine.MergeTokens{
+								{
+									valign = 'bottom',
+									halign = 'center',
+									width = 'auto',
+									height = 'auto',
+									bgcolor = '@bg',
+									flow = 'vertical',
+								},
+								{
+									selectors = {'editable'},
+									--Kept hardcoded: the blue is the "you can edit this" signal.
+									color = '#aaaaff',
+								}
 							},
-							{
-								selectors = {'editable'},
-								color = '#aaaaff',
-							}
 						},
 						children = panels,
 					}), {
 						interactable = true,
 					}
 				)
-				
+
 			end,
 		},
 		gui.Label{
@@ -501,51 +510,57 @@ function CharSheet.CharacterSpeedPanel()
 						},
 						styles = {
 							Styles.Default,
-							{
-								valign = 'bottom',
-								halign = 'center',
-								width = 'auto',
-								height = 'auto',
-								bgcolor = 'black',
-								flow = 'vertical',
-							},
-							{
-								selectors = {'editable'},
-								color = '#aaaaff',
-							},
+							--MergeTokens resolves the "@" colors against the active color scheme.
+							ThemeEngine.MergeTokens{
+								{
+									valign = 'bottom',
+									halign = 'center',
+									width = 'auto',
+									height = 'auto',
+									bgcolor = '@bg',
+									flow = 'vertical',
+								},
+								{
+									selectors = {'editable'},
+									--Kept hardcoded: the blue is the "you can edit this" signal.
+									color = '#aaaaff',
+								},
 
-							{
-								selectors = {"icon"},
-								bgcolor = Styles.textColor,
-							},
-							{
-								selectors = {"icon", "parent:selected"},
-								bgcolor = "white",
-							},
-							{
-								selectors = {"icon", "parent:hover"},
-								bgcolor = "white",
-							},
-							{
-								selectors = {"icon", "parent:disabled"},
-								bgcolor = "grey",
-							},
+								{
+									selectors = {"icon"},
+									bgcolor = "@fg",
+								},
+								--The white states are kept hardcoded: white tint shows the
+								--movement icon at full brightness for the highlight.
+								{
+									selectors = {"icon", "parent:selected"},
+									bgcolor = "white",
+								},
+								{
+									selectors = {"icon", "parent:hover"},
+									bgcolor = "white",
+								},
+								{
+									selectors = {"icon", "parent:disabled"},
+									bgcolor = "@fgMuted",
+								},
 
-							{
-								selectors = {"label", "~editable"},
-								color = Styles.textColor,
-							},
-							{
-								selectors = {"label", "~editable", "parent:selected"},
-								color = "white",
-							},
-							{
-								selectors = {"label", "~editable", "parent:hover"},
-								color = "white",
-							},
-							{
-								selectors = {"label", "~editable", "parent:disabled"},
-								color = "grey",
+								{
+									selectors = {"label", "~editable"},
+									color = "@fg",
+								},
+								{
+									selectors = {"label", "~editable", "parent:selected"},
+									color = "@fgStrong",
+								},
+								{
+									selectors = {"label", "~editable", "parent:hover"},
+									color = "@fgStrong",
+								},
+								{
+									selectors = {"label", "~editable", "parent:disabled"},
+									color = "@fgMuted",
+								},
 							},
 
 						},
@@ -567,6 +582,9 @@ function CharSheet.CharacterSpeedPanel()
 	return resultPanel
 end
 
+--Not tokenized: this table is registered with gui.RegisterTheme at load time,
+--which has no "@" token resolution. Its colors are white image tints and the
+--bespoke magenta reroll highlight anyway, which stay hardcoded by convention.
 local HitpointsStyles = {
 	{
 		selectors = {"#hitpointsInnerPanel"},
@@ -656,6 +674,7 @@ function CharSheet.CharacterHitpointsPanel()
 			},
 			gui.Style{
 				selectors = {"actualHitpoints"},
+				--Kept hardcoded: health green is semantic, deliberately unthemed.
 				color = "#44894f",
 				minWidth = 80,
 				minHeight = 80,
@@ -1170,7 +1189,8 @@ function CharSheet.CharacterSheetSkillsPanel()
 										width = "98%",
 										height = 1,
 										halign = "center",
-										bgcolor = "#999999",
+										--Muted separator line; follows the active color scheme.
+										bgcolor = ThemeEngine.ResolveTokens("@fgMuted"),
 										vmargin = 8,
 									}
 
@@ -1215,7 +1235,7 @@ function CharSheet.CharacterSheetSkillsPanel()
 											width = 300,
 											styles = {
 												Styles.Default,
-												PopupStyles,
+												ThemeEngine.MergeTokens(PopupStyles),
 											},
 											children = panels,
 										},
@@ -1450,7 +1470,7 @@ function CharSheet.CharacterSheetSavingThrowPanel()
 											classes = {'popupWindow'},
 											styles = {
 												Styles.Default,
-												PopupStyles,
+												ThemeEngine.MergeTokens(PopupStyles),
 											},
 											children = panels,
 										})
@@ -1531,7 +1551,8 @@ function CharSheet.CharacterSheetSavingThrowPanel()
 											width = "98%",
 											height = 1,
 											halign = "center",
-											bgcolor = "#999999",
+											--Muted separator line; follows the active color scheme.
+											bgcolor = ThemeEngine.ResolveTokens("@fgMuted"),
 											vmargin = 8,
 										}
 
@@ -1558,7 +1579,7 @@ function CharSheet.CharacterSheetSavingThrowPanel()
 											classes = {'popupWindow'},
 											styles = {
 												Styles.Default,
-												PopupStyles,
+												ThemeEngine.MergeTokens(PopupStyles),
 											},
 											children = panels,
 										})
@@ -2506,7 +2527,7 @@ function CharSheet.CharacterSheetEditLanguagesPopup(element, info)
 			height = "auto",
 			styles = {
 				Styles.Default,
-				PopupStyles,
+				ThemeEngine.MergeTokens(PopupStyles),
 				CharSheet.GetCharacterSheetStyles(),
 			},
 
@@ -2774,7 +2795,7 @@ function CharSheet.CharacterSheetEditPassiveSensesPopup(element, info)
 			height = "auto",
 			styles = {
 				Styles.Default,
-				PopupStyles,
+				ThemeEngine.MergeTokens(PopupStyles),
 				CharSheet.GetCharacterSheetStyles(),
 			},
 
@@ -2838,6 +2859,7 @@ function CharSheet.CharacterSheetEditConditions(element, info)
 		bgimage = "panels/square.png",
 		width = "90%",
 		height = 2,
+		--Kept hardcoded: translucent white separator; tokens have no alpha steps.
 		bgcolor = "#ffffffaa",
 		halign = "center",
 		vmargin = 8,
@@ -2858,7 +2880,7 @@ function CharSheet.CharacterSheetEditConditions(element, info)
 
 			styles = {
 				Styles.Default,
-				PopupStyles,
+				ThemeEngine.MergeTokens(PopupStyles),
 
 				{
 					selectors = {"conditionOption"},
@@ -2868,6 +2890,8 @@ function CharSheet.CharacterSheetEditConditions(element, info)
 					bgcolor = "clear",
 					halign = "center",
 				},
+				--Kept hardcoded: bespoke translucent red/grey washes; the theme
+				--tokens have no alpha steps to express these.
 				{
 					selectors = {"conditionOption", "hover"},
 					bgcolor = "#ff444466",
@@ -2942,6 +2966,7 @@ function CharSheet.CharacterSheetEditResistancesPopup(element, info)
 
 	children[#children+1] = gui.Panel{
 		bgimage = "panels/square.png",
+		--Kept hardcoded: deliberately bright white separator between popup sections.
 		bgcolor = "white",
 		height = 1,
 		width = 100,
@@ -3037,7 +3062,7 @@ function CharSheet.CharacterSheetEditResistancesPopup(element, info)
 			height = "auto",
 			styles = {
 				Styles.Default,
-				PopupStyles,
+				ThemeEngine.MergeTokens(PopupStyles),
 			},
 
 			children = children,
@@ -3129,6 +3154,8 @@ function CharSheet.CharacterSheetConditions()
 							bold = true,
 							editable = true,
 							characterLimit = 2,
+							--Kept hardcoded: floats over the condition icon artwork, so it
+							--needs full white for contrast regardless of theme.
 							color = "white",
 							floating = true,
 							halign = "right",
@@ -3304,6 +3331,8 @@ function CharSheet.CharacterSheetAvatarPanel()
 				width = "100%",
 				height = "100%",
 				bgimage = "panels/square.png",
+				--Kept hardcoded: a darkening scrim over the portrait art, so it
+				--stays black in every theme.
 				bgcolor = "black",
 
 				click = function(element)
@@ -3333,9 +3362,10 @@ function CharSheet.CharacterSheetAvatarPanel()
 					halign = "center",
 					valign = "center",
 					bgimage = "panels/square.png",
+					--Black strip is part of the scrim; the text color follows the theme.
 					bgcolor = "black",
 					text = "Customize Appearance",
-					color = "white",
+					color = ThemeEngine.ResolveTokens("@fgStrong"),
 					textAlignment = "center",
 					fontSize = 14,
 					interactable = false,
@@ -3505,7 +3535,7 @@ function CharSheet.CharacterSheetAvatarPanel()
 				gui.Panel{
 					styles = {
 						Styles.Default,
-						PopupStyles,
+						ThemeEngine.MergeTokens(PopupStyles),
 					},
 
 					children = panels
@@ -3628,6 +3658,9 @@ function CharSheet.CharacterSheetAvatarPanel()
 						halign = "right",
 						valign = "center",
 						interactable = true,
+						--Kept hardcoded: this picker uses an alpha-graded white/yellow
+						--ramp (dim -> highlight -> selected) that the theme tokens
+						--cannot express.
 						styles = {
 							{
 								selectors = {"alignmentLabel"},
@@ -3852,7 +3885,8 @@ function CharSheet.InspirationPanel()
 				width = 60,
 				height = 60,
 				borderWidth = 2,
-				borderColor = Styles.textColor,
+				--The diamond/circle frames follow the active color scheme.
+				borderColor = ThemeEngine.ResolveTokens("@border"),
 				bgimage = "panels/square.png",
 				bgcolor = "clear",
 				rotate = 45,
@@ -3866,7 +3900,7 @@ function CharSheet.InspirationPanel()
 				height = 62,
 				cornerRadius = 31,
 				borderWidth = 1.4,
-				borderColor = Styles.textColor,
+				borderColor = ThemeEngine.ResolveTokens("@border"),
 				bgimage = "panels/square.png",
 				bgcolor = "clear",
 				rotate = 45,
@@ -4069,18 +4103,22 @@ function CharSheet.InitiativePanel()
 							},
 							styles = {
 								Styles.Default,
-								{
-									valign = 'bottom',
-									halign = 'center',
-									width = 'auto',
-									height = 'auto',
-									bgcolor = 'black',
-									flow = 'vertical',
+								--MergeTokens resolves the "@" colors against the active color scheme.
+								ThemeEngine.MergeTokens{
+									{
+										valign = 'bottom',
+										halign = 'center',
+										width = 'auto',
+										height = 'auto',
+										bgcolor = '@bg',
+										flow = 'vertical',
+									},
+									{
+										selectors = {'editable'},
+										--Kept hardcoded: the blue is the "you can edit this" signal.
+										color = '#aaaaff',
+									}
 								},
-								{
-									selectors = {'editable'},
-									color = '#aaaaff',
-								}
 							},
 							children = panels,
 						}), {
@@ -4443,7 +4481,7 @@ function CharSheet.AttrPanel(attrid)
 							gui.Panel{
 								styles = {
 									Styles.Default,
-									PopupStyles,
+									ThemeEngine.MergeTokens(PopupStyles),
 								},
 
 								children = panels
@@ -4776,19 +4814,22 @@ function CharSheet.ActionsPanel()
 												},
 												styles = {
 													Styles.Default,
-													{
-														valign = 'bottom',
-														halign = 'center',
-														width = 'auto',
-														height = 'auto',
-														bgcolor = 'black',
-														flow = 'vertical',
-														color = '#c4c1aa',
+													--MergeTokens resolves the "@" colors against the active color scheme.
+													ThemeEngine.MergeTokens{
+														{
+															valign = 'bottom',
+															halign = 'center',
+															width = 'auto',
+															height = 'auto',
+															bgcolor = '@bg',
+															flow = 'vertical',
+															color = '@fgStrong',
+														},
+														{
+															selectors = {'editable'},
+															color = '@fgStrong',
+														}
 													},
-													{
-														selectors = {'editable'},
-														color = '#d4d1ba',
-													}
 												},
 
 												gui.Panel{
@@ -4800,7 +4841,7 @@ function CharSheet.ActionsPanel()
 														height = "auto",
 														halign = "center",
 														fontSize = 16,
-														color = "white",
+														color = ThemeEngine.ResolveTokens("@fgStrong"),
 														text = parentPanel.data.abilityName,
 													},
 													gui.Panel{
@@ -5455,13 +5496,15 @@ function CharSheet.CharacterFeaturesPanel()
 							body:SetClass('collapsed-anim', tri:HasClass('expanded'))
 							tri:SetClass('expanded', not tri:HasClass('expanded'))
 						end,
-						styles = {
+						--MergeTokens resolves the "@" colors against the active color scheme.
+						styles = ThemeEngine.MergeTokens{
 							{
 								selectors = {"featureHeader"},
-								bgcolor = 'black',
+								bgcolor = '@bg',
 							},
 							{
 								selectors = {"featureHeader","hover"},
+								--Kept hardcoded: bespoke dark-red hover fill, not part of the themed palette.
 								bgcolor = '#770000ff',
 							},
 						},
@@ -5861,7 +5904,8 @@ function CharSheet.FeaturesNotesPanel()
 					multiline = false,
 					width = "60%",
 					height = 22,
-					color = "#d4d1ba",
+					--Parchment note text follows the active color scheme.
+					color = ThemeEngine.ResolveTokens("@fgStrong"),
 					blockChangesWhenEditing = true,
 					placeholderText = "Enter section title...",
 					refreshToken = function(element, info)
@@ -5903,7 +5947,8 @@ function CharSheet.FeaturesNotesPanel()
 				minHeight = 100,
 				textAlignment = "topleft",
 				fontSize = 14,
-				color = "#d4d1ba",
+				--Parchment note text follows the active color scheme.
+				color = ThemeEngine.ResolveTokens("@fgStrong"),
 				blockChangesWhenEditing = true,
 
 				placeholderText = "Enter notes...",
@@ -6331,7 +6376,7 @@ function CharSheet.MainSheet()
 						pad = 12,
 						styles = {
 							Styles.Default,
-							PopupStyles,
+							ThemeEngine.MergeTokens(PopupStyles),
 						},
 
 						gui.Label{

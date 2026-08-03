@@ -267,7 +267,22 @@ end
 --- @return table[]
 local function _buildResolvedStyles(rawStyles, tables)
     local out = {}
-    for _, rule in ipairs(rawStyles) do
+    local function addRule(rule)
+        if type(rule) ~= "table" then
+            --gui.Style objects are engine userdata we cannot iterate, so
+            --they pass through untouched. Any "@" tokens inside them will
+            --NOT resolve -- author such rules as plain tables instead.
+            out[#out + 1] = rule
+            return
+        end
+        if rule[1] ~= nil then
+            --A nested list of rules (array entries instead of properties)
+            --is flattened, so callers can compose style sets freely.
+            for _, sub in ipairs(rule) do
+                addRule(sub)
+            end
+            return
+        end
         local cloned = {}
         for k, v in pairs(rule) do
             if k == "selectors" then
@@ -285,6 +300,9 @@ local function _buildResolvedStyles(rawStyles, tables)
             end
         end
         out[#out + 1] = cloned
+    end
+    for _, rule in ipairs(rawStyles) do
+        addRule(rule)
     end
     return out
 end

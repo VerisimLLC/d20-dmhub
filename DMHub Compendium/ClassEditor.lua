@@ -1933,7 +1933,8 @@ mod.shared.StartingEquipmentEditor = function(options)
 		vmargin = 8,
 		bgimage = "panels/clear.png",
 		borderWidth = 2,
-		borderColor = Styles.color,
+		--Styles.color never existed, so this was always nil; the border draws
+		--in the engine default color. Kept behavior, removed the dead lookup.
 		pad = 8,
 		width = 400,
 		height = "auto",

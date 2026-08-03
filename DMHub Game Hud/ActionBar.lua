@@ -1999,7 +1999,9 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 		halign = "center",
 		valign = "center",
 
-		styles = {
+		--The number color follows the scheme; the translucent white chip
+		--glass and the red invalid state are deliberate and stay hardcoded.
+		styles = ThemeEngine.MergeTokens{
 			{
 				selectors = {"levelPanel"},
 				width = 16,
@@ -2007,7 +2009,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 				hmargin = 2,
 				valign = "center",
 				fontSize = 14,
-				color = Styles.textColor,
+				color = "@fg",
 				textAlignment = "center",
 				borderWidth = 1,
 				bgimage = "panels/square.png",
@@ -2152,7 +2154,8 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 		text = "Channeled Resource",
 		fontSize = 14,
 		markdown = true,
-		color = Styles.textColor,
+		--Resolved against the active scheme at construction.
+		color = ThemeEngine.ResolveTokens("@fg"),
 		halign = "center",
 		valign = "top",
 		width = "auto",
@@ -2191,7 +2194,9 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 			children = {},
 		},
 
-		styles = {
+		--The number color follows the scheme; the translucent white chip
+		--glass and the red invalid state are deliberate and stay hardcoded.
+		styles = ThemeEngine.MergeTokens{
 			{
 				selectors = {"levelPanel"},
 				width = 16,
@@ -2199,7 +2204,7 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 				hmargin = 2,
 				valign = "center",
 				fontSize = 14,
-				color = Styles.textColor,
+				color = "@fg",
 				textAlignment = "center",
 				borderWidth = 1,
 				bgimage = "panels/square.png",
@@ -3756,7 +3761,8 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 
 					local iconPanel = gui.Panel{
 						classes = {'icon'},
-						bgcolor = "#d4d1ba",
+						--Parchment icon tint; follows the scheme's light tone.
+						bgcolor = ThemeEngine.ResolveTokens("@fgStrong"),
 						refresh = function(element)
 							if token == nil or token.properties == nil then
 								return
@@ -3844,7 +3850,8 @@ function GameHud.CreateActionBar(self, dialog, tokenInfo)
 													gui.Panel{
 														classes = {'icon'},
 														bgimage = info.icon,
-														bgcolor = "#d4d1ba",
+														--Parchment icon tint; follows the scheme's light tone.
+														bgcolor = ThemeEngine.ResolveTokens("@fgStrong"),
 													},
 												}
 												
@@ -4705,6 +4712,30 @@ function GameHud:ShowActionBarEditDialog(creature, actionBar, pagingPanels)
 		children = pagingPanels,
 	}
 
+	--The theme provides the dialog frame and title; the slot art rules ride
+	--along. MergeStyles needs one flat rule list, so SlotStyles is appended
+	--entry by entry, with this dialog's overrides after it so they win.
+	local editDialogStyles = {}
+	for _,rule in ipairs(SlotStyles) do
+		editDialogStyles[#editDialogStyles+1] = rule
+	end
+	editDialogStyles[#editDialogStyles+1] = {
+		selectors = {'slot'},
+		halign = "left",
+	}
+	editDialogStyles[#editDialogStyles+1] = {
+		selectors = {'slot', 'drag-target-hover'},
+		brightness = 10,
+	}
+	editDialogStyles[#editDialogStyles+1] = {
+		selectors = {'slot-highlight','parent:drag-target-hover'},
+		brightness = 10,
+	}
+	editDialogStyles[#editDialogStyles+1] = {
+		selectors = {'slot', 'suppressed'},
+		saturation = 0,
+	}
+
 	local dialogPanel
 	dialogPanel = gui.Panel{
 		id = "ActionBarEdit",
@@ -4713,27 +4744,7 @@ function GameHud:ShowActionBarEditDialog(creature, actionBar, pagingPanels)
 		height = 800,
 		pad = 8,
 		flow = "vertical",
-		styles = {
-			Styles.Default,
-			Styles.Panel,
-			SlotStyles,
-			{
-				selectors = {'slot'},
-				halign = "left",
-			},
-			{
-				selectors = {'slot', 'drag-target-hover'},
-				brightness = 10,
-			},
-			{
-				selectors = {'slot-highlight','parent:drag-target-hover'},
-				brightness = 10,
-			},
-			{
-				selectors = {'slot', 'suppressed'},
-				saturation = 0,
-			},
-		},
+		styles = ThemeEngine.MergeStyles(editDialogStyles),
 
 		gui.Label{
 			classes = {"dialogTitle"},

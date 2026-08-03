@@ -11,6 +11,9 @@ local g_profileName = dmhub.ProfileMarker("tokenui.name")
 local g_profileStatus = dmhub.ProfileMarker("tokenui.status")
 local g_profileMain = dmhub.ProfileMarker("tokenui.main")
 
+--Bespoke shine gradient for the round radial-menu buttons. Kept hardcoded:
+--the theme's @surfaceLinear gradient ends darker (#1c1c1c vs #3c3c3c) and
+--would visibly dull the buttons.
 local g_menuGradient = gui.Gradient{
     point_a = {x = 0, y = 0},
     point_b = {x = 1, y = 1},
@@ -28,8 +31,11 @@ local g_menuGradient = gui.Gradient{
 
 RegisterGameType("TokenHud", "Hud")
 
+--The "@" color names resolve against the active color scheme when this table
+--is passed through ThemeEngine.MergeTokens where each radial menu is built.
+--The menus are rebuilt on every open, so they pick up theme switches then.
 local RadialStyles = {
-	gui.Style{
+	{
 		flow = 'none',
 		height = 8,
 		width = 8,
@@ -37,7 +43,7 @@ local RadialStyles = {
 		valign = 'center',
 		bgcolor = 'white',
 	},
-	gui.Style{
+	{
 		selectors = {'radial-menu-item'},
 		width = 50,
 		height = 50,
@@ -46,40 +52,40 @@ local RadialStyles = {
         cornerRadius = 25,
         gradient = g_menuGradient,
         borderWidth = 1.2,
-        borderColor = Styles.textColor,
+        borderColor = "@border",
 	},
-	gui.Style{
+	{
 		selectors = {'radial-menu-icon'},
 		width = 60,
 		height = 60,
 	},
-	gui.Style{
+	{
 		selectors = {'radial-menu-item', 'hover'},
 		brightness = 1.2,
 		scale = 1.1,
 		transitionTime = 0.1,
 	},
-	gui.Style{
+	{
 		selectors = {'radial-menu-item', 'press'},
 		brightness = 0.8,
 		scale = 1.1,
 		transitionTime = 0.05,
 	},
-	gui.Style{
+	{
 		selectors = {'radial-menu-item', 'selected'},
 		brightness = 1.8,
 	},
-	gui.Style{
+	{
 		selectors = {'radial-menu-icon', 'hover'},
 		brightness = 1.2,
 		transitionTime = 0.1,
 	},
-	gui.Style{
+	{
 		selectors = {'radial-menu-icon', 'press'},
 		brightness = 0.8,
 		transitionTime = 0.05,
 	},
-	gui.Style{
+	{
 		selectors = {"create"},
 		transitionTime = 0.2,
 		opacity = 0,
@@ -464,6 +470,8 @@ TokenHud.RegisterPanel{
 
 			gui.Label{
 				bgimage = "panels/square.png",
+				--Soft black scrim so the player-colored name reads over any map
+				--art. Stays hardcoded; theming it would break contrast.
 				bgcolor = "#000000ff",
 				borderColor = "#000000ff",
 				borderFade = true,
@@ -1654,6 +1662,9 @@ function CreateTokenHud(token)
 				collapsed = 1,
 			},
 
+			--The white selection/focus rings and red targeting/damage flashes
+			--below are gameplay signals drawn around tokens, not chrome. They
+			--stay hardcoded so they never change meaning with the theme.
 			{
 				selectors = { 'select' },
 				borderWidth = 4,
@@ -2029,6 +2040,7 @@ function CreateTokenHud(token)
 					elseif current_damage_entry.heal then
 						element.data.PlayEffect('curewounds')
 						if token.canControl then
+							--Teal is the healing signal color (matches the health bar). Not themed.
 							element:ScheduleEvent('floatlabel', delayFloat, string.format("%d", current_damage_entry.heal), '#004d52')
 						end
 					end
@@ -2344,7 +2356,8 @@ function CreateTokenHud(token)
 					escape = function()
 						element.popup = nil
 					end,
-					styles = RadialStyles,
+					--Resolve the scheme tokens now; the menu is rebuilt each open.
+					styles = ThemeEngine.MergeTokens(RadialStyles),
 					children = {
 
 						gui.Panel{
@@ -2474,6 +2487,8 @@ function CreateTokenHud(token)
 								transitionTime = 0.2,
 								translate = core.Vector2(0,-70):Rotate(index*45),
 							},
+                            --The cancel "X" glyph drawn over the emote icon. Grey
+                            --with alpha so it reads over any emoji art; not themed.
                             {
                                 selectors = {"X"},
                                 width = "12%",
@@ -2525,6 +2540,8 @@ function CreateTokenHud(token)
                     local bindingLabel = gui.Label{
                         text = dmhub.GetCommandBinding(command),
                         bgimage = "panels/square.png",
+                        --Black fading badge so the keybind text reads over the
+                        --emoji art underneath. Stays hardcoded, like the nameplate.
                         bgcolor = "#000000fa",
                         borderColor = "#000000fa",
                         borderWidth = 5,
@@ -2595,7 +2612,8 @@ function CreateTokenHud(token)
 					escape = function()
 						element.popup = nil
 					end,
-					styles = RadialStyles,
+					--Resolve the scheme tokens now; the menu is rebuilt each open.
+					styles = ThemeEngine.MergeTokens(RadialStyles),
 					children = emojiItems,
 				}
 

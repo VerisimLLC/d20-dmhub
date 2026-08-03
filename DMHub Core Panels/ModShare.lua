@@ -4415,7 +4415,7 @@ mod.shared.ShowExportDialog = function()
 				sheet = function()
 					return gui.Panel{
 						id = "exportHud",
-						styles = Styles.default,
+						--Styles.default never existed; this was always nil.
 						flow = "none",
 						width = 1920,
 						height = 1080,
