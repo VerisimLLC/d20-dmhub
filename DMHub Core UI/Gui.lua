@@ -1003,6 +1003,13 @@ function gui.Check(args)
 		label.text = text .. colon
 	end
 
+	--Safety net for the theme rollout: when /safetheme is on, checkboxes get
+	--the theme rules merged under their own styles so missing conversions
+	--show up instead of rendering unstyled.
+	if ThemeEngine.ForceSafety() then
+		if options.styles == nil then options.styles = {} end
+		options.styles = ThemeEngine.MergeStyles(options.styles)
+	end
 
 	resultPanel = gui.Panel(options)
 	return resultPanel
@@ -2395,7 +2402,7 @@ function gui.ContextMenuItem(args, params)
 			end)
 		end
 		arrow = gui.Panel{
-			classes = {'arrow'},
+			classes = {'contextMenuArrow'},
 			bgimage = 'panels/triangle.png',
 			selfStyle = { rotate = 90 },
 		}
@@ -2410,7 +2417,7 @@ function gui.ContextMenuItem(args, params)
 		labelClass = "have-check"
 
 		checkPanel = gui.Panel{
-			classes = {"context-menu-check", cond(args.check, "checked"), cond(args.check == "partial", "partial")},
+			classes = {"contextMenuCheck", cond(args.check, "checked"), cond(args.check == "partial", "partial")},
 			halign = "left",
 			bgimage = "icons/icon_common/icon_common_29.png",
 			width = 16,
@@ -2423,7 +2430,7 @@ function gui.ContextMenuItem(args, params)
 	if args.icon ~= nil then
 		labelClass = "have-icon"
 		iconPanel = gui.Panel{
-			classes = {"context-menu-icon", cond(args.check == false, "context-menu-icon-unchecked")},
+			classes = {"contextMenuIcon", cond(args.check == false, "contextMenuIconUnchecked")},
 			bgimage = args.icon,
 		}
 	end
@@ -2431,7 +2438,7 @@ function gui.ContextMenuItem(args, params)
 	local bindLabel = nil
 	if args.bind ~= nil then
 		bindLabel = gui.Label{
-			classes = {"context-menu-bind", cond(args.disabled, "disabled")},
+			classes = {"contextMenuBind", cond(args.disabled, "disabled")},
 			text = args.bind,
 		}
 	end
@@ -2444,7 +2451,7 @@ function gui.ContextMenuItem(args, params)
 	return gui.Panel{
 		id = args.id,
 		bgimage = 'panels/square.png',
-		classes = {'context-menu-item', cond(args.hidden, "collapsed")},
+		classes = {'contextMenuItem', cond(args.hidden, "collapsed")},
 		swallowPress = true,
 
 		events = {
@@ -2473,7 +2480,7 @@ function gui.ContextMenuItem(args, params)
 			hover = function(element)
 				if not args.disabled then
 					element.parent:FireEvent('hoverChild')
-					element:SetClass('hover-linger', true)
+					element:SetClass('hoverLinger', true)
 
 					if args.tooltip ~= nil then
 						gui.Tooltip(args.tooltip)(element)
@@ -2486,7 +2493,7 @@ function gui.ContextMenuItem(args, params)
 			checkPanel,
 			iconPanel,
 			gui.Label{
-				classes = {"context-menu-label", labelClass, cond(args.disabled, "disabled")},
+				classes = {"contextMenuLabel", labelClass, cond(args.disabled, "disabled")},
 				text = args.text,
 				newContentMarker,
 			},
@@ -2510,7 +2517,7 @@ function gui.ContextMenu(args)
 			--add a divider if we are going to a different group
 			if i > 1 and i < #args.entries and args.entries[i+1] ~= nil and entry.group ~= args.entries[i+1].group then
 				items[#items+1] = gui.Panel{
-					classes = {'context-menu-div'},
+					classes = {'contextMenuDiv'},
 				}
 			end
 		end
@@ -2527,20 +2534,14 @@ function gui.ContextMenu(args)
 	end
 
 	return gui.Panel{
-		x = args.x or 0,
-		floating = args.floating or false,
-		classes = {'context-menu', cond(args.submenu, 'context-menu-sub', 'context-menu-parent')},
-		halign = halign,
-		styles = {
+		--Colors, fonts, and hover states come from the theme's contextMenu
+		--rules; only layout stays here. MergeStyles makes the menu its own
+		--cascade root, which popups need since they don't inherit ancestor
+		--styles.
+		styles = ThemeEngine.MergeStyles({
 			{
-				selectors = {'context-menu'},
-				bgimage = 'panels/square.png',
-				bgcolor = "white",
-				gradient = Styles.dialogGradient,
-				borderColor = Styles.textColor,
-				border = 2,
+				selectors = {'contextMenu'},
 				pad = 8,
-
 				margin = 4,
 				width = "auto",
 				height = 'auto',
@@ -2549,48 +2550,24 @@ function gui.ContextMenu(args)
 				valign = 'bottom',
 			},
 			{
-				selectors = {'context-menu-sub'},
+				selectors = {'contextMenuSub'},
 				valign = 'top',
 				hidden = 1,
+				maxHeight = 400,
 			},
 			{
-				selectors = {'context-menu-sub','parent:hover-linger'},
+				selectors = {'contextMenuSub','parent:hoverLinger'},
 				hidden = 0,
 			},
-
 			{
-				selectors = {'context-menu-label'},
-				color = Styles.textColor,
-				fontFace = "dubai",
-				fontSize = 18,
+				selectors = {'contextMenuLabel'},
 				textAlignment = 'left',
 				hmargin = 2,
 				height = "auto",
 				width = "auto",
 			},
 			{
-				selectors = {'context-menu-label', 'disabled'},
-				color = "#777777",
-			},
-			{
-				selectors = {'context-menu-label', 'have-check'},
-				--hmargin = 20,
-			},
-			{
-				selectors = {'context-menu-label', 'have-icon'},
-				--hmargin = 20,
-			},
-@if MCDM
-			{
-				selectors = {'context-menu-label', 'parent:hover'},
-				color = "black",
-			},
-@end
-			{
-				selectors = {'context-menu-bind'},
-				color = Styles.textColor,
-				fontFace = "dubai",
-				fontSize = 16,
+				selectors = {'contextMenuBind'},
 				textAlignment = 'right',
 				hmargin = 2,
 				height = "auto",
@@ -2598,124 +2575,76 @@ function gui.ContextMenu(args)
 				halign = "right",
 			},
 			{
-				selectors = {'context-menu-bind', 'disabled'},
-				color = "#777777",
-			},
-@if MCDM
-			{
-				selectors = {'context-menu-bind', 'parent:hover'},
-				color = "black",
-			},
-@end
-			{
-				selectors = {'context-menu-icon'},
+				selectors = {'contextMenuIcon'},
 				width = 16,
 				height = 16,
 				valign = "center",
 				halign = "left",
 				hmargin = 2,
-				bgcolor = Styles.textColor,
 			},
-
 			{
-				selectors = {'context-menu-icon-unchecked'},
-				opacity = 0.1,
-			},
-
-			{
-				selectors = {'context-menu-check'},
-				bgcolor = Styles.textColor,
+				selectors = {'contextMenuIconUnchecked'},
 				opacity = 0.1,
 			},
 			{
-				selectors = {'context-menu-check', 'checked'},
+				selectors = {'contextMenuCheck'},
+				opacity = 0.1,
+			},
+			{
+				selectors = {'contextMenuCheck', 'checked'},
 				opacity = 1,
 			},
 			{
-				selectors = {'context-menu-check', 'partial'},
+				selectors = {'contextMenuCheck', 'partial'},
 				opacity = 0.4,
 			},
-@if MCDM
 			{
-				selectors = {'context-menu-check', '~checked', '~partial', 'parent:hover'},
+				selectors = {'contextMenuCheck', '~checked', '~partial', 'parent:hover'},
 				opacity = 0.4,
 			},
-
 			{
-				selectors = {'context-menu-icon', 'parent:hover'},
-				bgcolor = "black",
+				selectors = {'contextMenuIcon', 'parent:hover'},
 				opacity = 1,
 			},
-
 			{
-				selectors = {'context-menu-check', 'parent:hover'},
-				bgcolor = "black",
-			},
-@end
-
-			{
-				selectors = {'context-menu-item'},
-				bgimage = 'panels/context-menu-background.png',
+				selectors = {'contextMenuItem'},
 				height = 'auto',
 				minWidth = args.width or 200,
 				width = "auto",
 				halign = 'left',
 				valign = 'top',
-				borderWidth = 0,
-				borderColor = 'white',
-				bgcolor = '#ffffff00',
-				color = 'white',
 				vmargin = 0,
 				hmargin = 0,
 				pad = 2,
 				flow = 'horizontal',
 			},
-@if MCDM
 			{
-				selectors = {'context-menu-item','hover'},
-				bgimage = 'panels/square.png',
-				bgcolor = 'white',
-				color = "black",
-			},
-@else
-			{
-				selectors = {'context-menu-item','hover'},
-				bgimage = 'panels/context-menu-background-hover.png',
-				bgcolor = '#ffffff88',
-			},
-@end
-			{
-				selectors = {'context-menu-item','press'},
-				bgcolor = '#aaaaaa66',
-			},
-			{
-				selectors = {'context-menu-div'},
-				bgimage = "panels/square.png",
+				selectors = {'contextMenuDiv'},
 				hmargin = 0,
 				width = args.width or 200,
 				halign = "center",
 				height = 1,
-@if MCDM
 				opacity = 1,
-@else
-				opacity = 0.4,
-@end
-				bgcolor = Styles.textColor,
 			},
 			{
-				selectors = {'arrow'},
+				selectors = {'contextMenuArrow'},
 				halign = 'right',
 				valign = 'center',
 				width = 10,
 				height = 10,
-				bgcolor = Styles.textColor,
 			},
-		},
+		}),
+		x = args.x or 0,
+		floating = args.floating or false,
+		classes = {'contextMenu', cond(args.submenu, 'contextMenuSub', 'contextMenuParent')},
+		vscroll = cond(args.submenu, true),
+		halign = halign,
+		flow = "vertical",
 
 		events = {
 			hoverChild = function(element)
 				for i,child in ipairs(element.children) do
-					child:SetClass('hover-linger', false)
+					child:SetClass('hoverLinger', false)
 				end
 			end,
 		},
@@ -2891,15 +2820,10 @@ function gui.AudioEditor(args)
 		bgimage = "icons/icon_media/icon_media_5.png",
 		halign = "center",
 		valign = "center",
-		styles = {
-			{
-				bgcolor = Styles.textColor,
-			},
-			{
-				selectors = {"parent:hover"},
-				bgcolor = "black",
-				transitionTime = 0.2,
-			},
+		--MergeTokens resolves the @color names against the active scheme.
+		styles = ThemeEngine.MergeTokens{
+			{ bgcolor = "@fg" },
+			{ selectors = {"parent:hover"}, bgcolor = "@fgInverse", transitionTime = 0.2 },
 		},
 	}
 
@@ -2984,20 +2908,16 @@ function gui.AudioEditor(args)
 			autoplayVolume = vol
 		end,
 
-		styles = {
-			{
-				selectors = {"audioPanel"},
-				borderWidth = 2,
-				borderColor = Styles.textColor,
-				bgimage = "panels/square.png",
-				bgcolor = "black",
-			},
-			{
-				selectors = {"audioPanel", "hover"},
-				bgcolor = Styles.textColor,
-				transitionTime = 0.2,
-				brightness = 1.2,
-			},
+		styles = ThemeEngine.MergeTokens{
+			{ selectors = {"audioPanel"},
+			  borderWidth = 2,
+			  borderColor = "@border",
+			  bgimage = "panels/square.png",
+			  bgcolor = "@bg" },
+			{ selectors = {"audioPanel", "hover"},
+			  bgcolor = "@bgInverse",
+			  transitionTime = 0.2,
+			  brightness = 1.2 },
 		},
 
 		musicIcon,
@@ -3013,15 +2933,9 @@ function gui.AudioEditor(args)
 			text = "Sound",
 			fontSize = 16 * scaling,
 
-			styles = {
-				{
-					color = Styles.textColor,
-				},
-				{
-					selectors = {"parent:hover"},
-					color = "black",
-					transitionTime = 0.2,
-				}
+			styles = ThemeEngine.MergeTokens{
+				{ color = "@fg" },
+				{ selectors = {"parent:hover"}, color = "@fgInverse", transitionTime = 0.2 },
 			},
 			create = function(element)
 				if value == nil or assets.audioTable[value] == nil then
@@ -3118,15 +3032,10 @@ function gui.AudioEditor(args)
 						resultPanel.popup = nil
 					end,
 
-					styles = {
-						{
-							selectors = {"audioEntry"},
-							bgcolor = "black",
-						},
-						{
-							selectors = {"audioEntry", "hover"},
-							bgcolor = "#770000",
-						},
+					--The red hover wash is bespoke and stays hardcoded.
+					styles = ThemeEngine.MergeTokens{
+						{ selectors = {"audioEntry"}, bgcolor = "@bg" },
+						{ selectors = {"audioEntry", "hover"}, bgcolor = "#770000" },
 					},
 
 					data = {
@@ -3439,19 +3348,13 @@ function gui.AudioEditor(args)
 			
 			popupPanel = gui.Panel{
 				classes = {"framedPanel"},
-				styles = {
-					Styles.Default,
-					Styles.Panel,
-					{
-						flow = 'vertical',
-						halign = 'left',
-						valign = 'center',
-						width = 600,
-						height = 820,
-						borderWidth = 0,
-						bgcolor = 'white',
-					},
-				},
+				--The framedPanel theme rule draws the frame and background.
+				styles = ThemeEngine.GetStyles(),
+				flow = 'vertical',
+				halign = 'left',
+				valign = 'center',
+				width = 600,
+				height = 820,
 				children = {
 					searchInput,
 					soundsGrid,
@@ -4260,28 +4163,24 @@ function gui.IconEditor(args)
 		
 		popupPanel = gui.Panel{
 			classes = {"framedPanel"},
-			styles = {
-				Styles.Default,
-				Styles.Panel,
-				{
-					flow = 'vertical',
-					halign = 'left',
-					valign = 'center',
-					width = 600,
-					height = 860,
-					borderWidth = 0,
-					bgcolor = 'white',
-				},
+			--The framedPanel theme rule draws the frame and background; the
+			--local rules below are picker-specific extras.
+			styles = ThemeEngine.MergeStyles({
 				{
 					selectors = {'image-background', 'hover'},
 					borderWidth = 2,
-					borderColor = 'white',
+					borderColor = '@fg',
 				},
 				{
 					selectors = {'icon-image', 'deleted'},
 					brightness = 0.2,
 				},
-			},
+			}),
+			flow = 'vertical',
+			halign = 'left',
+			valign = 'center',
+			width = 600,
+			height = 860,
 			children = {
 				searchInput,
 				categoriesPanel,
