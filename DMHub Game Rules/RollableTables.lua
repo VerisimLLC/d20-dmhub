@@ -1,10 +1,16 @@
 local mod = dmhub.GetModLoading()
 
 --either a direct rolltable, or a reference to one.
-RegisterGameType("RollTableReference")
+---@class RollTableReference
+---@field tableName string the name of the table this references, or "none" if it's an anonymous table.
+---@field key string the key in the table this references, or "none" if it's an anonymous table.
+---@field docid string
+RollTableReference = RegisterGameType("RollTableReference")
 
 RollTableReference.tableName = "none"
 RollTableReference.key = "none"
+RollTableReference.docid = false
+RollTableReference.tableid = false
 
 function RollTableReference:TryUpload(data)
 	if self:has_key("tableName") then
@@ -25,6 +31,13 @@ function RollTableReference.CreateRef(tableName, key)
 	end
 end
 
+function RollTableReference.CreateDocumentReference(docid, tableid)
+    return RollTableReference.new{
+        docid = docid,
+        tableid = tableid,
+    }
+end
+
 function RollTableReference.CreateAnonymous()
 	return RollTableReference.new{
 		table = RollTable.CreateNew(),
@@ -32,6 +45,18 @@ function RollTableReference.CreateAnonymous()
 end
 
 function RollTableReference:GetTable()
+
+    --a reference to a markdown document.
+    if self.docid then
+        local t = dmhub.GetTable(CustomDocument.tableName)
+        local doc = t[self.docid]
+        if doc ~= nil then
+            local result = doc:GetRollableTable(self.tableid)
+            return result
+        end
+        return
+    end
+
 	if self:has_key("table") then
 		return self.table
 	end
@@ -45,9 +70,22 @@ function RollTableReference:GetTable()
 	return nil
 end
 
-RegisterGameType("RollTable")
+--- @class RollTable
+--- @field name string Display name.
+--- @field details string Optional rules text for this table.
+--- @field rollType string How to determine the roll: "auto", "autoUnusual", or "custom".
+--- @field customRoll string Dice expression used when rollType is "custom" (e.g. "1d100").
+--- @field rollModifier string Optional GoblinScript (creature context) added to the roll when rolling on this table.
+--- @field visibility string Visibility setting: "visible" or "hidden".
+--- @field rows RollTableRow[] Ordered list of rows in this table.
+RollTable = RegisterGameType("RollTable")
 
-RegisterGameType("RollTableRow")
+--- @class RollTableRow
+--- @field weight number Relative weight for weighted random selection.
+--- @field revealed boolean If true, this row's result has been revealed to players.
+--- @field value VariantCollection The reward/outcome for this row.
+--- @field rollRange string Optional author-defined value range (e.g. "1-12", "13+", "5") used instead of the auto-computed range when the table has a Modifier.
+RollTableRow = RegisterGameType("RollTableRow")
 
 RollTableRow.weight = 1
 RollTableRow.revealed = false
@@ -63,6 +101,7 @@ RollTable.name = "New Table"
 RollTable.details = "" --rule details of the table. Optional.
 RollTable.rollType = "auto"
 RollTable.customRoll = "1d100"
+RollTable.rollModifier = ""
 RollTable.visibility = "visible"
 
 local rollTypes = {
@@ -85,6 +124,10 @@ local rollTypes = {
 	{
 		id = "d4",
 		text = "1d4",
+	},
+	{
+		id = "d3",
+		text = "1d3",
 	},
 	{
 		id = "d6",
@@ -115,6 +158,8 @@ local rollTypes = {
 		text = "Custom",
 	},
 }
+
+RollTable.RollTypes = rollTypes
 
 --things this rolltable accepts.
 RollTable.text = true
@@ -184,6 +229,65 @@ function RollTable:CalculateValue()
 	return result
 end
 
+--Sentinel "max" for an open-ended ("13+") custom range. Large enough that any
+--modified total lands inside it; the result clamp in RowIndexFromDiceResult also
+--keeps over-max totals on the highest range.
+RollTable.OpenRangeMax = 1000000
+
+--Parse an author-typed custom range string into a {min, max[, openEnded]} table.
+--Accepts "13" (single), "1-12" (inclusive range), and "13+" (13 or higher).
+--Returns nil for empty/unrecognized input (meaning: fall back to the auto range).
+function RollTable.ParseCustomRange(str)
+	if type(str) ~= "string" then
+		return nil
+	end
+
+	str = trim(str)
+	if str == "" then
+		return nil
+	end
+
+	--"13+" -> 13 or higher.
+	local plusMin = string.match(str, "^(%-?%d+)%s*%+$")
+	if plusMin ~= nil then
+		return { min = tonumber(plusMin), max = RollTable.OpenRangeMax, openEnded = true }
+	end
+
+	--"13-15" -> inclusive range.
+	local lo, hi = string.match(str, "^(%-?%d+)%s*%-%s*(%-?%d+)$")
+	if lo ~= nil and hi ~= nil then
+		lo = tonumber(lo)
+		hi = tonumber(hi)
+		if hi < lo then
+			lo, hi = hi, lo
+		end
+		return { min = lo, max = hi }
+	end
+
+	--"13" -> single value.
+	local single = string.match(str, "^(%-?%d+)$")
+	if single ~= nil then
+		local n = tonumber(single)
+		return { min = n, max = n }
+	end
+
+	return nil
+end
+
+--Format a rollRanges entry for display ("-", "13", "13-15", or "13+").
+function RollTable.FormatRange(range)
+	if range == nil or range.invalid then
+		return "-"
+	end
+	if range.openEnded then
+		return string.format("%d+", round(range.min))
+	end
+	if range.min == range.max then
+		return string.format("%d", round(range.min))
+	end
+	return string.format("%d-%d", round(range.min), round(range.max))
+end
+
 function RollTable:CalculateRollInfo()
 	local weightSum = 0
 	for _,row in ipairs(self.rows) do
@@ -202,7 +306,7 @@ function RollTable:CalculateRollInfo()
 	local rollFaces = 100
 
 	if self.rollType == "auto" then
-		local diceTypes = {4,6,8,10,12,20,100}
+		local diceTypes = {3,4,6,8,10,12,20,100}
 		local bestDice = nil
 		for _,diceType in ipairs(diceTypes) do
 			if weightSum <= diceType then
@@ -308,6 +412,18 @@ function RollTable:CalculateRollInfo()
 		currentValue = currentValue + weights[i]
 	end
 
+	--When the table carries a Modifier, authors may override individual row
+	--ranges with custom values (e.g. "1-12", "13+", "5"). These take precedence
+	--over the auto-computed ranges; rows left blank keep their auto range.
+	if trim(self:try_get("rollModifier", "")) ~= "" then
+		for i,row in ipairs(self.rows) do
+			local custom = RollTable.ParseCustomRange(row:try_get("rollRange"))
+			if custom ~= nil then
+				rollRanges[i] = custom
+			end
+		end
+	end
+
 	return {
 		rollFaces = rollFaces,
 		roll = roll,
@@ -349,13 +465,13 @@ local SetData = function(tableName, rolltablePanel, key, options)
 
 		--the name of the table.
 		children[#children+1] = gui.Panel{
-			classes = {'formPanel'},
+			classes = {"formStackedRow"},
 			gui.Label{
-				text = 'Name:',
-				valign = 'center',
-				minWidth = 240,
+				classes = {"formStacked"},
+				text = "Name:",
 			},
 			gui.Input{
+				classes = {"formStacked"},
 				text = data.name,
 				change = function(element)
 					data.name = element.text
@@ -373,18 +489,19 @@ local SetData = function(tableName, rolltablePanel, key, options)
 
 		if options.hasDetails then
 			children[#children+1] = gui.Panel{
-				classes = {'formPanel'},
+				classes = {"formStackedRow"},
 				gui.Label{
+					classes = {"formStacked"},
 					text = "Details:",
-					valign = "center",
-					minWidth = 240,
 				},
-
 				gui.Input{
+					classes = {"formStacked"},
 					multiline = true,
-					width = 600,
 					height = "auto",
-					minHeight = 24,
+					minHeight = 30,
+					maxHeight = 300,
+					vscroll = true,
+					textAlignment = "topleft",
 					text = data.details,
 					change = function(element)
 						data.details = element.text
@@ -400,16 +517,13 @@ local SetData = function(tableName, rolltablePanel, key, options)
 		end
 
 		children[#children+1] = gui.Panel{
-			classes = {'formPanel'},
+			classes = {"formStackedRow"},
 			gui.Label{
-				text = 'Roll:',
-				valign = 'center',
-				minWidth = 240,
+				classes = {"formStacked"},
+				text = "Roll:",
 			},
 			gui.Dropdown{
-				width = 260,
-				height = 36,
-				fontSize = 20,
+				classes = {"formStacked"},
 				options = rollTypes,
 				idChosen = data.rollType,
 				change = function(element)
@@ -421,16 +535,52 @@ local SetData = function(tableName, rolltablePanel, key, options)
 		}
 
 		children[#children+1] = gui.Panel{
-			classes = {'formPanel', cond(data.rollType ~= 'custom', 'hidden')},
+			classes = {"formStackedRow"},
+			gui.Label{
+				classes = {"formStacked"},
+				text = "Modifier:",
+			},
+			gui.GoblinScriptInput{
+				classes = {"formStacked"},
+				value = data:try_get("rollModifier", ""),
+				placeholderText = "(none)",
+				change = function(element)
+					data.rollModifier = element.value
+					UploadTable()
+					--Refresh rows so the per-row range fields become (un)editable
+					--as the Modifier is added or removed.
+					tablePanel:FireEvent("refreshTable")
+				end,
+				documentation = {
+					help = "GoblinScript added to the roll whenever this table is rolled on. Evaluated against the creature making the roll. Leave blank for no modifier.",
+					output = "number",
+					examples = {
+						{
+							script = "2",
+							text = "Add 2 to the roll.",
+						},
+						{
+							script = "level",
+							text = "Add the rolling creature's level to the roll.",
+						},
+					},
+					subject = creature.helpSymbols,
+					subjectDescription = "The creature making the roll.",
+				},
+			}
+		}
+
+		children[#children+1] = gui.Panel{
+			classes = {"formStackedRow", cond(data.rollType ~= "custom", "collapsed")},
 			refreshData = function(element)
-				element:SetClass("hidden", data.rollType ~= 'custom')
+				element:SetClass("collapsed", data.rollType ~= "custom")
 			end,
 			gui.Label{
-				text = 'Custom Roll:',
-				valign = 'center',
-				minWidth = 240,
+				classes = {"formStacked"},
+				text = "Custom Roll:",
 			},
 			gui.Input{
+				classes = {"formStacked"},
 				text = data.customRoll,
 				change = function(element)
 					data.customRoll = element.text
@@ -441,14 +591,13 @@ local SetData = function(tableName, rolltablePanel, key, options)
 		}
 
 		children[#children+1] = gui.Panel{
-			classes = {"formPanel"},
+			classes = {"formStackedRow"},
 			gui.Label{
+				classes = {"formStacked"},
 				text = "Player Visibility:",
-				minWidth = 240,
 			},
-
 			gui.Dropdown{
-				width = 260,
+				classes = {"formStacked"},
 				idChosen = data.visibility,
 				options = {
 					{
@@ -489,8 +638,9 @@ local SetData = function(tableName, rolltablePanel, key, options)
 		local rollValue = nil
 		if options.showValue then
 			rollValue = gui.Label{
+				markdown = true,
 				width = 400,
-				height = 22,
+				height = "auto",
 				fontSize = 16,
 				refreshTable = function(element)
 					local val = data:CalculateValue()
@@ -509,19 +659,22 @@ local SetData = function(tableName, rolltablePanel, key, options)
 		local valueLabel = nil
 		if options.showValue then
 			valueLabel = gui.Label{
-				bold = true,
+				markdown = true,
 				text = "Value",
 				minWidth = 80,
+				height = "auto",
 				textAlignment = "left",
 			}
 		end
 
 
 		local headerRow = gui.TableRow{
+				classes = {"headerRow"},
 				gui.Label{
-					bold = true,
+					markdown = true,
 					text = "Roll",
 					minWidth = 120,
+					height = "auto",
 					textAlignment = "center",
 					refreshRoll = function(element)
 						if choice then
@@ -539,15 +692,17 @@ local SetData = function(tableName, rolltablePanel, key, options)
 				},
 				gui.Label{
 					classes = {cond(choice, "collapsed")},
-					bold = true,
+					markdown = true,
 					text = "Weight",
 					minWidth = 80,
+					height = "auto",
 					textAlignment = "center",
 				},
 				gui.Label{
-					bold = true,
+					markdown = true,
 					text = "Result",
 					minWidth = 400,
+					height = "auto",
 					textAlignment = "left",
 				},
 				--add heading.
@@ -568,14 +723,18 @@ local SetData = function(tableName, rolltablePanel, key, options)
 		local newItem = RollTableRow.Create()
 		local newItemRow = gui.TableRow{
 			gui.Label{
+				markdown = true,
 				text = "",
 				minWidth = 120,
+				height = "auto",
 				textAlignment = "center",
 			},
 			gui.Label{
 				classes = {cond(choice, "collapsed")},
+				markdown = true,
 				text = "",
 				minWidth = 80,
+				height = "auto",
 				textAlignment = "center",
 			},
 			gui.VariantCollectionEditor{
@@ -618,10 +777,8 @@ local SetData = function(tableName, rolltablePanel, key, options)
 					element:FireEventTree("setinputfocus")
 				end,
 			},
-			gui.AddButton{
-				classes = {"add-row-button"},
-				width = 16,
-				height = 16,
+			gui.Button{
+				classes = {"addButton", "sizeS", "add-row-button"},
 				valign = "center",
 				halign = "right",
 				click = function(element)
@@ -641,7 +798,10 @@ local SetData = function(tableName, rolltablePanel, key, options)
 			width = "auto",
 			height = "auto",
 			styles = {
-				Styles.Table,
+                {
+                    selectors = {"formPanel"},
+                    flow = "horizontal",
+                },
 
 				{
 					selectors = {"delete-item-button"},
@@ -720,8 +880,10 @@ local SetData = function(tableName, rolltablePanel, key, options)
 					local valueItem = nil
 					if options.showValue and rowPanels[i] == nil then
 						valueItem = gui.Label{
+							markdown = true,
 							text = "",
 							minWidth = 60,
+							height = "auto",
 							halign = "left",
 							refreshRoll = function(element)
 								local val = row.value:Value()
@@ -765,15 +927,30 @@ local SetData = function(tableName, rolltablePanel, key, options)
 							row = newRow
 						end,
 						gui.Label{
+							markdown = true,
 							text = "",
 							minWidth = 120,
+							height = "auto",
 							textAlignment = "center",
-							editable = data.rollType == "namedChoice",
+							editable = data.rollType == "namedChoice" or (not data:IsChoice() and trim(data:try_get("rollModifier", "")) ~= ""),
 							change = function(element)
-								row.choiceName = element.text
+								if data.rollType == "namedChoice" then
+									row.choiceName = element.text
+									UploadTable()
+									return
+								end
+
+								--Modifier tables: author a custom value range per
+								--row ("1-12", "13+", "5"); blank reverts to auto.
+								row.rollRange = trim(element.text or "")
+								tablePanel:FireEvent("refreshTable")
 								UploadTable()
 							end,
 							refreshRoll = function(element)
+
+								--Range fields are editable for named choices, and
+								--for dice tables that carry a Modifier.
+								element.editable = data.rollType == "namedChoice" or (not data:IsChoice() and trim(data:try_get("rollModifier", "")) ~= "")
 
 								if data.rollType == "namedChoice" then
 									if row ~= nil then
@@ -789,15 +966,8 @@ local SetData = function(tableName, rolltablePanel, key, options)
 									element.text = "-"
 									return
 								end
-								
-								local range = rollInfo.rollRanges[index]
-								if range.invalid then
-									element.text = "-"
-								elseif range.min == range.max then
-									element.text = string.format("%d", round(range.min))
-								else
-									element.text = string.format("%d-%d", round(range.min), round(range.max))
-								end
+
+								element.text = RollTable.FormatRange(rollInfo.rollRanges[index])
 							end,
 
 							gui.Panel{
@@ -816,8 +986,10 @@ local SetData = function(tableName, rolltablePanel, key, options)
 						},
 						gui.Label{
 							classes = {cond(choice, "collapsed")},
+							markdown = true,
 							text = "",
 							minWidth = 80,
+							height = "auto",
 							textAlignment = "center",
 							editable = true,
 							update = function(element, row)
@@ -859,9 +1031,8 @@ local SetData = function(tableName, rolltablePanel, key, options)
 							end,
 						},
 
-						gui.AddButton{
-							width = 16,
-							height = 16,
+						gui.Button{
+							classes = {"addButton", "sizeS"},
 							valign = "center",
 							halign = "right",
 							click = function(element)
@@ -923,38 +1094,12 @@ function RollTable.CreateEditor(args)
 
 		styles = {
 			{
-				halign = "left",
-			},
-			{
 				classes = {'class-panel'},
-				width = 1200,
+				width = "100%",
 				height = '90%',
 				halign = 'left',
 				flow = 'vertical',
 				pad = 20,
-			},
-			{
-				classes = {'label'},
-				color = 'white',
-				fontSize = 22,
-				width = 'auto',
-				height = 'auto',
-				maxWidth = 500,
-			},
-			{
-				classes = {'input'},
-				width = 200,
-				height = 26,
-				fontSize = 18,
-				color = 'white',
-			},
-			{
-				classes = {'formPanel'},
-				flow = 'horizontal',
-				width = 'auto',
-				height = 'auto',
-				halign = 'left',
-				vmargin = 2,
 			},
 		},
 	}
@@ -1003,6 +1148,21 @@ end
 
 function RollTable:RowIndexFromDiceResult(rollNum)
 	local rollInfo = self:CalculateRollInfo()
+
+	--Clamp to the table's valid range so an added Modifier that pushes the total
+	--past either end still maps to the nearest edge row instead of falling off
+	--the table. For an unmodified roll the dice exactly span the range, so this
+	--never alters the result.
+	local minValid, maxValid
+	for _,range in ipairs(rollInfo.rollRanges) do
+		if not range.invalid then
+			if minValid == nil or range.min < minValid then minValid = range.min end
+			if maxValid == nil or range.max > maxValid then maxValid = range.max end
+		end
+	end
+	if minValid ~= nil and rollNum < minValid then rollNum = minValid end
+	if maxValid ~= nil and rollNum > maxValid then rollNum = maxValid end
+
 	for i,range in ipairs(rollInfo.rollRanges) do
 		if (not range.invalid) and rollNum >= range.min and rollNum <= range.max then
 			if self.rows[i] == nil then
@@ -1029,12 +1189,14 @@ function RollTable:Roll(choiceIndex, collection, depth)
 
 	if choiceIndex == nil then
 		local rollInfo = self:CalculateRollInfo()
-		local rollNum = dmhub.RollInstant(rollInfo.roll)
-		for i,range in ipairs(rollInfo.rollRanges) do
-			if (not range.invalid) and rollNum >= range.min and rollNum <= range.max then
-				choiceIndex = i
-			end
-		end
+        if rollInfo ~= nil then
+            local rollNum = dmhub.RollInstant(rollInfo.roll)
+            for i,range in ipairs(rollInfo.rollRanges) do
+                if (not range.invalid) and rollNum >= range.min and rollNum <= range.max then
+                    choiceIndex = i
+                end
+            end
+        end
 	end
 	
 	if choiceIndex ~= nil and self.rows[choiceIndex] ~= nil then

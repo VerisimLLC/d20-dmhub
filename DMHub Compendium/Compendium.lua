@@ -4978,10 +4978,17 @@ local LibraryPanel = function()
                     element:SetClass("hidden", true)
                     dialog:FireEvent("destroy")
                     dialog:FireEventTree("popout")
+                    --owner-routed modals: anything shown with an owner
+                    --inside the compendium now lands in the popout
+                    --window's own modal layer (see Hud.ResolveModalLayer).
+                    dialog.data.nativeWindowRoot = true
                     dialog:MoveToNativeWindow{
                         scaling = 0.9,
                         resizeable = true,
                         updateFrequencyDefocused = 30,
+                        --the OS window title; engines predating it fall
+                        --back to the product name.
+                        title = "Compendium",
                     }
 
                     dialog.selfStyle.uiscale = 0.9

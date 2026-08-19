@@ -502,6 +502,10 @@ function GameHud:CreateTopLeftButtonPanel()
 
 		width = "auto",
 		height = "auto",
+		--Sit at the top of the bar. Without this the buttons are centered
+		--against the taller initiative bar beside them, which leaves an
+		--empty strip above them.
+		valign = "top",
 		y = 1,
 
 		--the refreshUndo event is triggered by dmhub due to undo state having changed.
@@ -842,6 +846,26 @@ function GameHud:CreateTopBar()
 	return self.topBarPanel
 end
 
+--The docks that currently exist, in serialization order. The dock system
+--iterates this for save/restore; rawget because the floating dock only
+--exists once the DockablePanel fork is active.
+function GameHud:Docks()
+	local result = {}
+	result[#result+1] = rawget(self, "leftDock")
+	result[#result+1] = rawget(self, "rightDock")
+	result[#result+1] = rawget(self, "floatingDock")
+	return result
+end
+
+--Dialogs that can be presented to players by id (see RegisterPresentableDialog).
+local g_presentableDialogs = {}
+
+--Registers a dialog that the DM can present to players. The document
+--system's floating windows register themselves here.
+function GameHud.RegisterPresentableDialog(args)
+	g_presentableDialogs[args.id] = args
+end
+
 GameHud.instance = false
 
 dmhub.CreateGameHud = function(dialog, tokenInfo)
@@ -856,56 +880,6 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 		--start below it instead of assuming the default 46px top bar.
 		dockTopReserve = 82,
 	}
-
-	--Defined further down, once the docks exist; declared here so the
-	--backdrop's think below can call it.
-	local StyleDockChrome
-
-	--A full-height backdrop behind one side's dock, shown only while that
-	--dock is visible. The dock frame art is transparent inside, so without
-	--this the app's plain black shows through instead of the theme color.
-	--See the note at the children list below for why it is drawn first.
-	local CreateDockCapPanel = function(side)
-		return gui.Panel{
-			interactable = false,
-			width = DockablePanel.DockWidth,
-			height = "100%",
-			halign = side,
-			valign = "top",
-			bgimage = "panels/square.png",
-			--Set inline: a style rule with no selectors would only reach
-			--children, not this panel itself.
-			bgcolor = ThemeEngine.ResolveTokens("@bg"),
-			themeUpdate = function(element)
-				element.selfStyle.bgcolor = ThemeEngine.ResolveTokens("@bg")
-			end,
-			data = {},
-			thinkTime = 0.3,
-			think = function(element)
-				local dock = nil
-				if side == "left" then
-					dock = gamehud.leftDock
-				else
-					dock = gamehud.rightDock
-				end
-				local show = dock ~= nil and dock.valid and (not dock:HasClass("offscreen")) and #dock.data.GetChildren() > 0
-				element:SetClass("hidden", not show)
-
-				--Recolor any dock chrome the engine has just built. Cheap
-				--because it only runs when the panel count changes.
-				if dock ~= nil and dock.valid and StyleDockChrome ~= nil then
-					local count = #dock.data.GetChildren()
-					if element.data.chromeCount ~= count then
-						element.data.chromeCount = count
-						StyleDockChrome(dock)
-					end
-				end
-			end,
-			create = function(element)
-				element:FireEvent("think")
-			end,
-		}
-	end
 
 	GameHud.instance = gamehud
 
@@ -963,6 +937,10 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 	--the dialog info that we have read from the cloud.
 	local m_presentedDialog = nil
 	local m_presentedDialogArgs = nil
+
+	gamehud.GetCurrentlyPresentedDialog = function()
+		return m_presentedDialogArgs
+	end
 
 	--the dialog info that we have written to the cloud.
 	local m_presentDialogParentElement = nil
@@ -1186,13 +1164,6 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 		children = {
 			gamehud:CreateShapesLayer(),
 
-			--Backdrops for the two dock strips, in the active scheme's
-			--background color. They must come after the shapes layer, which
-			--paints over everything before it, and before the top bar so its
-			--buttons still draw on top of them.
-			CreateDockCapPanel("left"),
-			CreateDockCapPanel("right"),
-
 			gamehud:RequireRollListenerPanel(),
 			gamehud:CreateTopBar(),
 			--gamehud:CreateSidePanel(),
@@ -1218,65 +1189,9 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 
 	gamehud.parentPanel = parentPanel
 
-	--The engine's dock frame is a gold picture, and everything in the dock is
-	--drawn inside it. Tinting or draining the picture's color would hit the
-	--contents too (character portraits went grey that way), so instead the
-	--picture is swapped for a plain square we can color: the fill becomes the
-	--dock background and the border becomes the dock outline.
-	--The frame is built a moment after the hud, hence the retry.
-	local function StyleDockFrame(element)
-		element.selfStyle.bgimage = "panels/square.png"
-		element.selfStyle.bgcolor = ThemeEngine.ResolveTokens("@bg")
-		element.selfStyle.borderColor = ThemeEngine.ResolveTokens("@border")
-		element.selfStyle.borderWidth = 2
-		element.selfStyle.cornerRadius = 8
-	end
-
-	--The dock's title text and divider lines are painted by the engine's own
-	--registered theme, which outranks anything we set from here, so they are
-	--colored one panel at a time. New panels get picked up by the sweep in
-	--the corner backdrop's think below.
-	StyleDockChrome = function(element)
-		if element == nil or not element.valid then
-			return
-		end
-		if element:HasClass("verticalDragDivider") then
-			element.selfStyle.bgcolor = ThemeEngine.ResolveTokens("@border")
-		elseif element:HasClass("panelTitle") then
-			element.selfStyle.color = ThemeEngine.ResolveTokens("@fg")
-		end
-		for _,child in ipairs(element.children) do
-			StyleDockChrome(child)
-		end
-	end
-
-	local function PaintDockInterior(dockName, attemptsLeft)
-		local dock = gamehud[dockName]
-		if dock ~= nil and dock.valid then
-			for _,child in ipairs(dock.children) do
-				if child:HasClass("dockFrame") then
-					StyleDockFrame(child)
-					child.events = child.events or {}
-					child.events.themeUpdate = StyleDockFrame
-					StyleDockChrome(dock)
-					return
-				end
-			end
-		end
-
-		if attemptsLeft > 0 then
-			dmhub.Schedule(0.2, function()
-				if not mod.unloaded then
-					PaintDockInterior(dockName, attemptsLeft - 1)
-				end
-			end)
-		end
-	end
-
-	PaintDockInterior("leftDock", 25)
-	PaintDockInterior("rightDock", 25)
-
-	--One listener re-colors the hud chrome when the scheme changes.
+	--One listener re-colors the hud chrome when the scheme changes. The
+	--docks style themselves now (DockablePanel.lua owns its own theme
+	--cascade), so only the hud's own rules need refreshing here.
 	ThemeEngine.OnThemeChanged(mod, function()
 		if parentPanel ~= nil and parentPanel.valid then
 			parentPanel.styles = { Styles.Default, HudThemeRules() }

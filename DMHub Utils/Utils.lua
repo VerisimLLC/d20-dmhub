@@ -247,3 +247,69 @@ if rawget(_G, "EventUtils") == nil then
     }
 
 end
+
+--split that keeps empty entries ("a||b" -> {"a", "", "b"}), unlike
+--string.split which drops them. Ported from the codex utils for the
+--markdown document system.
+function string.split_allow_duplicates(inputstr, sep)
+        if sep == nil then
+                sep = "%s"
+        end
+        local t={}
+        for str in string.gmatch(inputstr, "([^"..sep.."]*)") do
+                table.insert(t, str)
+        end
+        return t
+end
+
+--split on sep, but ignore separators inside [square brackets] so markdown
+--table cells can contain [[links|with pipes]]. Ported from the codex utils.
+function string.split_with_square_brackets(inputstr, sep)
+    local result = {}
+    local chars = {}
+    local depth = 0
+    for i = 1, #inputstr do
+        local c = inputstr:sub(i,i)
+        if depth <= 0 and c == sep then
+            result[#result+1] = table.concat(chars)
+            chars = {}
+        else
+            if c == "[" then
+                depth = depth+1
+            elseif c == "]" then
+                depth = depth-1
+            end
+
+            chars[#chars+1] = c
+        end
+    end
+
+    result[#result+1] = table.concat(chars)
+    return result
+end
+
+--stable sort: equal elements keep their original order, which table.sort
+--does not guarantee. Ported from the codex utils.
+function table.stable_sort(t, cmp)
+    -- decorate with original indices
+    local decorated = {}
+    for i, v in ipairs(t) do
+        decorated[i] = { value = v, index = i }
+    end
+
+    -- sort with index tie-breaker
+    table.sort(decorated, function(a, b)
+        if cmp(a.value, b.value) then
+            return true
+        elseif cmp(b.value, a.value) then
+            return false
+        else
+            return a.index < b.index
+        end
+    end)
+
+    -- write back
+    for i, d in ipairs(decorated) do
+        t[i] = d.value
+    end
+end

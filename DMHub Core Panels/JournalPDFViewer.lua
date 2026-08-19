@@ -2283,10 +2283,17 @@ mod.shared.ShowPDFViewerDialog = function(doc, starting_page)
 				click = function(element)
                     dialogPanel:FireEvent("destroy")
                     dialogPanel:FireEventTree("popout")
+                    --owner-routed modals: anything shown with an owner
+                    --inside this dialog now lands in the popout window's
+                    --own modal layer (see Hud.ResolveModalLayer).
+                    dialogPanel.data.nativeWindowRoot = true
                     dialogPanel:MoveToNativeWindow{
                         scaling = 0.9,
                         resizeable = true,
                         updateFrequencyDefocused = 30,
+                        --the OS window title; engines predating it fall
+                        --back to the product name.
+                        title = doc.description,
                     }
                     gui.CloseModal()
 				end,
@@ -2481,10 +2488,30 @@ end
 
 RegisterGameType("PDFFragment")
 
+--journal-integration fields ported from the codex viewer: the codex
+--Journal panel and LinkResolution list fragments out of this table.
+PDFFragment.tableName = "pdfReferences"
+PDFFragment.refid = "none" --the PDF document we refer to.
+PDFFragment.name = "PDF Fragment"
+PDFFragment.ord = 0
+PDFFragment.AddAlias("description", "name")
+PDFFragment.hidden = false
+PDFFragment.parentFolder = false
+PDFFragment.ownerid = false
+PDFFragment.nodeType = "pdffragment"
 PDFFragment.width = 1024
 PDFFragment.height = 1024
 PDFFragment.page = 0
 PDFFragment.area = {0,0,1,1}
+PDFFragment.bookmarks = {}
+
+function PDFFragment:Upload()
+    dmhub.SetAndUploadTableItem(self.tableName, self)
+end
+
+function PDFFragment:HaveEditPermissions()
+    return dmhub.isDM or (self.ownerid == dmhub.loginUserid)
+end
 
 function PDFFragment:Render(options)
     options = options or {}

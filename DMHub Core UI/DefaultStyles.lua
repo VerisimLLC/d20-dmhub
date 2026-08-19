@@ -581,6 +581,19 @@ ThemeEngine.RegisterTheme{
             border = 2,
             bold = false,
             height = 26,
+            -- The dims below mirror the legacy Styles.Default 'input-main' rule
+            -- (DMHub Titlescreen/Styles.lua). Every normal surface inherits that
+            -- sheet from its root, so these values change nothing there -- but a
+            -- panel popped out via MoveToNativeWindow becomes its own root and
+            -- loses the ancestor cascade, so the theme sheet must supply them
+            -- itself or popped-out inputs render unpadded at 40x26 instead of
+            -- 60x34. The pads are intentionally additive (no borderBox): inputs
+            -- are not labels, so pad grows the rect AND insets the text, and
+            -- borderBox here would shrink every input in the app.
+            width = 240,
+            hpad = 10,
+            vpad = 4,
+            selectedColor = "#444444",
         },
         {
             selectors = {"input", "focus"},
@@ -1922,7 +1935,9 @@ ThemeEngine.RegisterTheme{
         {
             selectors = {"framedPanel"},
             bgimage = true,
-            bgcolor = "white",
+            -- White means "draw the gradient untinted"; the alpha on the end
+            -- makes dialogs just barely see-through, matching the docks.
+            bgcolor = "#fffffff7",
             -- cornerRadius = 4,
             gradient = "@surfaceLinear",
             borderWidth = 2.2,
@@ -2174,6 +2189,22 @@ ThemeEngine.RegisterTheme{
             halign = "center",
             valign = "center",
             vpad = 4,
+        },
+
+        -- Focus edge on the panel that owns keyboard focus in a dock.
+        -- Fades rather than snapping, so it reads as state moving
+        -- between panels instead of flickering.
+        {
+            selectors = {"dockPanelFocusOutline"},
+            bgcolor = "clear",
+            borderColor = "@accent",
+            border = {x1 = 4, x2 = 0, y1 = 0, y2 = 0},
+            opacity = 0,
+            transitionTime = 0.15,
+        },
+        {
+            selectors = {"dockPanelFocusOutline", "parent:focused"},
+            opacity = 1,
         },
 
         -- Header gradient strip across the top of each panel/tab group.

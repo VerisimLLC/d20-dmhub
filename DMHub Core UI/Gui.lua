@@ -2016,7 +2016,7 @@ gui.TriangleStyles = triangleStyles
 --- @return Panel
 function gui.TreeNode(args)
 
-	local options = dmhub.DeepCopy(args)
+	local options = DeepCopy(args)
 
 	local text = options.text
 	options.text = nil
@@ -2030,7 +2030,7 @@ function gui.TreeNode(args)
 	local editable = options.editable
 	options.editable = nil
 
-	local characterLimit = options.characterLimit or 16
+	local characterLimit = options.characterLimit or 32
 	options.characterLimit = nil
 
 	local dragTarget = options.dragTarget
@@ -2038,6 +2038,9 @@ function gui.TreeNode(args)
 
 	local collapsedClass = options.collapsedClass or "collapsed"
 	options.collapsedClass = nil
+
+	local headerExtraClasses = options.headerExtraClasses or {}
+	options.headerExtraClasses = nil
 
 	if contentPanel == nil then
 		dmhub.Error('gui.TreeNode must have a contentPanel')
@@ -2083,9 +2086,21 @@ function gui.TreeNode(args)
 				},
 			})
 
+	local headerClasses = {"folder"}
+	for _, cls in ipairs(headerExtraClasses) do
+		headerClasses[#headerClasses+1] = cls
+	end
+
+    local headerClick = nil
+    if options.click == nil and options.press == nil then
+        headerClick = function(element)
+            triangle:FireEvent("toggle")
+        end
+    end
+
 	local headerPanel = gui.Panel({
-		
-		classes = {"folder"},
+
+		classes = headerClasses,
 		bgimage = 'panels/square.png',
 
 		dragTarget = dragTarget,
@@ -2110,6 +2125,7 @@ function gui.TreeNode(args)
 		},
 
 		events = {
+            click = headerClick,
 			rightClick = function(element)
 				resultPanel:FireEvent('contextMenu')
 			end,
@@ -2166,10 +2182,6 @@ function gui.TreeNode(args)
 
 	options.setempty = function(element, val)
 		triangle:SetClass("empty", val)
-	end
-
-	options.click = function(element)
-		triangle:FireEvent("toggle")
 	end
 
 	options.children = {

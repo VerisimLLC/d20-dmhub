@@ -1371,6 +1371,158 @@ CreateEditor = function(panelArgs)
 				dependenciesPanel,
 				permissionsPanel,
 				devSettingsButton,
+
+				--Files that exist on disk in the git folder but are not part
+				--of the mod. The engine only loads files listed in the mod's
+				--manifest, so a new file dropped into the folder does nothing
+				--until it is added here.
+				gui.Panel{
+					flow = "vertical",
+					width = "auto",
+					height = "auto",
+					data = {
+						panels = {},
+					},
+					refreshMod = function(element)
+						if not mod.isUsingGit then
+							element:SetClass("collapsed", true)
+							return
+						end
+
+						local unmanagedFiles = mod.unmanagedGitFiles
+						if unmanagedFiles == nil then
+							element:SetClass("collapsed", true)
+							return
+						end
+
+						element:SetClass("collapsed", false)
+
+						local children = {}
+						local panels = element.data.panels
+						local newPanels = {}
+
+						for _,file in ipairs(unmanagedFiles) do
+							local panel = panels[file] or gui.Panel{
+								flow = "horizontal",
+								width = "auto",
+								height = "auto",
+
+								gui.Label{
+									fontSize = 14,
+									text = file,
+									width = "auto",
+									height = "auto",
+									minWidth = 180,
+									valign = "center",
+								},
+
+								gui.Label{
+									fontSize = 14,
+									text = "Not in Mod",
+									width = "auto",
+									height = "auto",
+									minWidth = 100,
+									valign = "center",
+								},
+
+								gui.Button{
+									halign = "left",
+									text = "Add to Mod",
+									fontSize = 12,
+									width = 100,
+									height = 20,
+									hmargin = 8,
+									valign = "center",
+									click = function(element)
+										mod:AddFile(file)
+									end,
+								},
+							}
+
+							newPanels[file] = panel
+							children[#children+1] = panel
+						end
+
+						element.data.panels = newPanels
+						element.children = children
+					end,
+				},
+
+				--The reverse case: files in the mod's manifest that have no
+				--file on disk in the git folder yet.
+				gui.Panel{
+					flow = "vertical",
+					width = "auto",
+					height = "auto",
+					data = {
+						panels = {},
+					},
+					refreshMod = function(element)
+						if not mod.isUsingGit then
+							element:SetClass("collapsed", true)
+							return
+						end
+
+						local unmanagedFiles = mod.filesMissingFromGit
+						if unmanagedFiles == nil then
+							element:SetClass("collapsed", true)
+							return
+						end
+
+						element:SetClass("collapsed", false)
+
+						local children = {}
+						local panels = element.data.panels
+						local newPanels = {}
+
+						for _,file in ipairs(unmanagedFiles) do
+							local panel = panels[file] or gui.Panel{
+								flow = "horizontal",
+								width = "auto",
+								height = "auto",
+
+								gui.Label{
+									fontSize = 14,
+									text = file,
+									width = "auto",
+									height = "auto",
+									minWidth = 180,
+									valign = "center",
+								},
+
+								gui.Label{
+									fontSize = 14,
+									text = "Not in Git",
+									width = "auto",
+									height = "auto",
+									minWidth = 100,
+									valign = "center",
+								},
+
+								gui.Button{
+									halign = "left",
+									text = "Add to Mod",
+									fontSize = 12,
+									width = 100,
+									height = 20,
+									hmargin = 8,
+									valign = "center",
+									click = function(element)
+										mod:ReplicateFileToGit(file)
+										element.root:FireEventTree("refreshMod")
+									end,
+								},
+							}
+
+							newPanels[file] = panel
+							children[#children+1] = panel
+						end
+
+						element.data.panels = newPanels
+						element.children = children
+					end,
+				},
+
 				tabHeading,
 				codePanel,
 				changesPanel,

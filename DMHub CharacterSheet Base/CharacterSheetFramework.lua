@@ -1123,6 +1123,22 @@ function CharSheet.CreateCharacterSheet(params)
 
 		children = tabPanels,
 
+		--popped-out sheet: refit whenever the OS window is created or
+		--resized (dims are the window client size in layout units,
+		--forwarded by the harness's resize handler). Pin the layout to the
+		--1920x1080 design and scale it uniformly to the window,
+		--letterboxing whichever dimension has room left over.
+		sheetAreaResize = function(element, w, h)
+			local availHeight = h - 40 --the tab strip
+			local s = min(w/characterSheetWidth, availHeight/characterSheetHeight)
+			element.selfStyle.scale = s
+			element.selfStyle.x = 0
+			--children resolve percentage heights against the design height
+			--rather than the window, so the scaled result always matches
+			--the sheet's 1920x1080 look.
+			element.selfStyle.height = characterSheetHeight
+		end,
+
 		showTab = function(element, tabIndex)
 			for i,p in ipairs(tabPanels) do
 				if p ~= nil then
@@ -1268,10 +1284,17 @@ function CharSheet.CreateCharacterSheet(params)
 
 		data = {},
 
+		--The harness itself claims Escape (rather than the corner close
+		--button) so the chain also works in the popped-out window, where
+		--the close button is hidden. captureEscape routes the key to the
+		--'escape' handler below.
+		captureEscape = true,
+		escapePriority = EscapePriority.EXIT_CHARACTER_SHEET,
+
         closeCharacterSheet = function(element)
             dmhub.PopUserRichStatus(element.data.richstatusid)
         end,
-		
+
 		escape = function(element)
 			for _,p in ipairs(tabPanels) do
 				p:FireEventTree("charsheetActivate", false)
@@ -1285,6 +1308,62 @@ function CharSheet.CreateCharacterSheet(params)
 			SelectTab(tabid or CharSheet.defaultSheet)
 			resultPanel:PulseClassTree("fadein")
 			element:SetClass("collapsed", false)
+			if element.data.poppedOut then
+				--the sheet lives in its own OS window; bring it to the front.
+				element:RaiseNativeWindow()
+			end
+		end,
+
+		--scheduled by the pop-out corner button: move the sheet into its own
+		--native OS window, slightly smaller than the in-app sheet (like the
+		--PDF viewer's popout).
+		popoutSheet = function(element)
+			if element.data.poppedOut then
+				return
+			end
+			element.data.poppedOut = true
+			--owner-routed modals fired from inside the sheet land in this
+			--window's own modal layer rather than the main window.
+			element.data.nativeWindowRoot = true
+			element:FireEventTree("popout")
+
+			local title = "Character Sheet"
+			if contextInfo ~= nil and contextInfo.token ~= nil then
+				pcall(function()
+					local name = contextInfo.token.name
+					if type(name) == "string" and name ~= "" then
+						title = name
+					end
+				end)
+			end
+
+			element:MoveToNativeWindow{
+				scaling = 0.9,
+				resizeable = true,
+				title = title,
+			}
+		end,
+
+		--fired by the native-window canvas when the popped-out window is
+		--created and whenever the user resizes it (dims arrive in layout
+		--units). Adopt the window's client size and refit the sheet design.
+		resize = function(element, w, h)
+			if not element.data.poppedOut then
+				return
+			end
+			element.selfStyle.width = w
+			element.selfStyle.height = h
+			element:FireEventTree("sheetAreaResize", w, h)
+		end,
+
+		--the user closed the popped-out OS window; the engine destroys this
+		--panel right after this event. Run the same deactivation the escape
+		--path runs so the rich status and tab state don't leak.
+		nativeWindowClosed = function(element)
+			for _,p in ipairs(tabPanels) do
+				p:FireEventTree("charsheetActivate", false)
+			end
+			element:FireEventTree("closeCharacterSheet")
 		end,
 
 		refreshToken = function(element, info)
@@ -1350,6 +1429,66 @@ function CharSheet.CreateCharacterSheet(params)
 			--follow the active color scheme.
 			styles = ThemeEngine.GetStyles(),
 
+			--"Pop out": move the sheet into its own native OS window (the
+			--companion-app mechanism the PDF viewer uses).
+			gui.Panel{
+				classes = {"iconButton"},
+				bgimage = "drawsteel/Icons_Nav_MaxWindow.png",
+				valign = "center",
+				width = 24,
+				height = 24,
+				rmargin = 4,
+				linger = function(element)
+					gui.Tooltip("Pop out into its own window")(element)
+				end,
+				popout = function(element)
+					element:SetClass("collapsed", true)
+				end,
+				click = function(element)
+					if resultPanel.data.poppedOut then
+						return
+					end
+					resultPanel:FireEvent("popoutSheet")
+				end,
+			},
+
+			--"Pop in": only visible while popped out. Closes the OS window and
+			--reopens the sheet in-app for the same character and tab. The sheet
+			--is destroyed and rebuilt through the engine's normal open path, so
+			--the deferred ShowSheet must wait a tick for the destroy to land.
+			gui.Panel{
+				classes = {"iconButton", "collapsed"},
+				bgimage = "drawsteel/Icons_Nav_MinWindow.png",
+				valign = "center",
+				width = 24,
+				height = 24,
+				rmargin = 4,
+				linger = function(element)
+					gui.Tooltip("Return to the app")(element)
+				end,
+				popout = function(element)
+					element:SetClass("collapsed", false)
+				end,
+				click = function(element)
+					local token = nil
+					if contextInfo ~= nil then
+						token = contextInfo.token
+					end
+					local tab = selectedTab
+					resultPanel:FireEvent("escape")
+					if token ~= nil then
+						dmhub.Schedule(0.1, function()
+							if mod.unloaded then
+								return
+							end
+							pcall(function()
+								token:ShowSheet(tab)
+							end)
+						end)
+					end
+				end,
+			},
+
 			gui.Panel{
 				classes = {"iconButton"},
 				bgimage = "panels/square.png",
@@ -1360,6 +1499,10 @@ function CharSheet.CreateCharacterSheet(params)
 				styles = ThemeEngine.MergeTokens{
 					{ bgcolor = "@bg", borderColor = "@border" },
 				},
+				--windowed mode makes no sense inside an OS window.
+				popout = function(element)
+					element:SetClass("collapsed", true)
+				end,
 				click = function(element)
 					dmhub.SetSettingValue("sheet:windowed", not dmhub.GetSettingValue("sheet:windowed"))
 					element:Get("characterSheetHarness"):SetClass("windowed", dmhub.GetSettingValue("sheet:windowed"))
@@ -1370,7 +1513,14 @@ function CharSheet.CreateCharacterSheet(params)
 				width = 32,
 				height = 32,
 				valign = "center",
-				escapePriority = EscapePriority.EXIT_CHARACTER_SHEET,
+				--Escape is claimed by the harness itself (captureEscape above),
+				--not this button, so it keeps working in the popped-out window
+				--where this button is hidden.
+				escapeActivates = false,
+				--the OS window's own X replaces this button while popped out.
+				popout = function(element)
+					element:SetClass("collapsed", true)
+				end,
 				click = function(element)
 					resultPanel:FireEvent("escape")
 				end,

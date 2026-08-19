@@ -3413,3 +3413,101 @@ CreateBestiaryPanel = function()
 
 	return resultPanel
 end
+
+--The same summary + details stack as the sidebar Character panel, but
+--bound to ONE character instead of following map selection. Used by the
+--document system's floating windows and rail character cards, so the
+--character pane is reused rather than rebuilt from scratch.
+CharacterPanel.CreatePinnedCharacterPanel = function(charid, options)
+    options = options or {}
+    local summaryPanel = nil
+    local detailsPanel = nil
+    local missingLabel = nil
+
+    --options.deferBuild: the first refresh only schedules the real build
+    --for the next frame, so a window hosting this content can render its
+    --chrome immediately instead of blocking the click on the full
+    --summary + details build.
+    local m_deferred = options.deferBuild == true
+
+    local resultPanel
+    resultPanel = gui.Panel {
+        styles = ThemeEngine.MergeStyles(g_charDisplayExtras),
+
+        flow = "vertical",
+        width = "100%",
+        height = "auto",
+
+        deferredBuild = function(element)
+            element:FireEvent("refresh")
+        end,
+
+        refresh = function(element)
+            if m_deferred then
+                m_deferred = false
+                element:ScheduleEvent("deferredBuild", 0.01)
+                return
+            end
+            local token = dmhub.GetCharacterById(charid)
+            if token == nil or not token.valid or token.properties == nil then
+                --the character is gone (deleted or unloaded); leave a
+                --note rather than an empty window.
+                if missingLabel == nil then
+                    missingLabel = gui.Label {
+                        classes = {"modalMessage"},
+                        text = "This character is no longer available.",
+                        width = "100%",
+                        height = "auto",
+                        vmargin = 24,
+                    }
+                    element:AddChild(missingLabel)
+                end
+                if summaryPanel ~= nil then
+                    summaryPanel:SetClass("collapsed", true)
+                end
+                if detailsPanel ~= nil then
+                    detailsPanel:SetClass("collapsed", true)
+                end
+                return
+            end
+
+            if missingLabel ~= nil then
+                missingLabel:DestroySelf()
+                missingLabel = nil
+            end
+
+            if summaryPanel == nil then
+                summaryPanel = CharacterPanel.SingleCharacterDisplaySidePanel(token)
+                detailsPanel = CharacterDetailsPanel(token)
+                element.children = { summaryPanel, detailsPanel }
+            end
+
+            summaryPanel:SetClass("collapsed", false)
+            detailsPanel:SetClass("collapsed", false)
+            detailsPanel:FireEvent("dirtyToken", token)
+
+            --outside the dock nothing refreshes us on its own: follow
+            --the character's own data so hit points and conditions stay
+            --live in the window.
+            element.monitorGame = token.monitorPath
+        end,
+
+        refreshGame = function(element)
+            element:FireEvent("refresh")
+        end,
+    }
+
+    ThemeEngine.OnThemeChanged(mod, function()
+        if resultPanel ~= nil and resultPanel.valid then
+            resultPanel.styles = ThemeEngine.MergeStyles(g_charDisplayExtras)
+        end
+    end)
+
+    --deferred content builds from the host's create-time refresh instead
+    --(see deferBuild above); an immediate refresh here would defeat it.
+    if not options.deferBuild then
+        resultPanel:FireEvent("refresh")
+    end
+
+    return resultPanel
+end
