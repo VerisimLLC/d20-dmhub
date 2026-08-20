@@ -4161,17 +4161,27 @@ function CustomDocument:MatchesSearch(search)
     return false
 end
 
-GameHud.RegisterPresentableDialog {
-    id = "document",
-    create = function(args)
-        local doc = (dmhub.GetTable(CustomDocument.tableName) or {})[args.docid]
-        if doc ~= nil then
-            doc:ShowDocument()
-        end
-        return nil
-    end,
-    keeplocal = true,
-}
+-- GameHud.RegisterPresentableDialog is defined by the DMHub Game Hud mod,
+-- which loads after this one, so reading it here at load time errors (game
+-- types reject unknown field reads). Defer registration the same way
+-- Styles.lua defers Commands.RegisterMacro; pcall in case the Game Hud mod
+-- is absent entirely.
+dmhub.Schedule(0.1, function()
+    if mod.unloaded then return end
+    local ok, register = pcall(function() return GameHud.RegisterPresentableDialog end)
+    if (not ok) or register == nil then return end
+    register {
+        id = "document",
+        create = function(args)
+            local doc = (dmhub.GetTable(CustomDocument.tableName) or {})[args.docid]
+            if doc ~= nil then
+                doc:ShowDocument()
+            end
+            return nil
+        end,
+        keeplocal = true,
+    }
+end)
 
 ----------------------------------------------------------------------
 -- PanelDocument

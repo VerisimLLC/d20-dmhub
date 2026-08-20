@@ -193,6 +193,38 @@ function Commands.RegisterMacro(args)
     }
 end
 
+--Splits a macro argument string into an array of arguments. Arguments are
+--separated by whitespace; double-quoted sections become a single argument
+--with the quotes removed.
+if Commands.SplitArgs == nil then
+    function Commands.SplitArgs(str)
+        local args = {}
+        local i = 1
+        str = str or ""
+        while i <= #str do
+            local c = str:sub(i, i)
+            if c:match("%s") then
+                i = i + 1
+            elseif c == '"' then
+                local closing = str:find('"', i + 1, true)
+                if closing == nil then
+                    args[#args+1] = str:sub(i + 1)
+                    i = #str + 1
+                else
+                    args[#args+1] = str:sub(i + 1, closing - 1)
+                    i = closing + 1
+                end
+            else
+                local spacePos = str:find("%s", i)
+                local last = (spacePos or (#str + 1)) - 1
+                args[#args+1] = str:sub(i, last)
+                i = last + 1
+            end
+        end
+        return args
+    end
+end
+
 -- =============================================================================
 -- EventUtils (ported from the Draw Steel Codex). The legacy DMHub_Core_UI mod's
 -- Utils.lua also defines an identical EventUtils; redefining it here would

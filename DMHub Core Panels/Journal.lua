@@ -17,7 +17,19 @@ local docid = "journal"
 
 RegisterGameType("CustomDocument")
 
-Commands.RegisterMacro{
+-- Commands.RegisterMacro is defined by the DMHub Utils mod, which loads
+-- after this one, so register macros after a short delay (the same
+-- workaround Styles.lua uses).
+local function RegisterMacro(args)
+    dmhub.Schedule(0.1, function()
+        if mod.unloaded then return end
+        local commands = rawget(_G, "Commands")
+        if commands == nil or commands.RegisterMacro == nil then return end
+        commands.RegisterMacro(args)
+    end)
+end
+
+RegisterMacro{
     name = "doc",
     summary = "open a document",
     doc = "Usage: /doc <document ID> [page]\nOpens the given document (PDF or custom document) by ID.",
@@ -56,7 +68,7 @@ Commands.RegisterMacro{
     end,
 }
 
-Commands.RegisterMacro{
+RegisterMacro{
     name = "glossary",
     summary = "show a glossary definition",
     doc = "Usage: /glossary <term>\nShows the glossary definition for a rules term.",
@@ -153,7 +165,7 @@ function GetCurrentAdventuresDocument()
     return doc
 end
 
-Commands.RegisterMacro{
+RegisterMacro{
     name = "clearadventuredocuments",
     summary = "clear adventure docs",
     doc = "Usage: /clearadventuredocuments\nClears the current adventure document list.",
@@ -169,7 +181,7 @@ Commands.RegisterMacro{
     end,
 }
 
-Commands.RegisterMacro{
+RegisterMacro{
     name = "setadventuredocumentstitle",
     summary = "set adventure title",
     doc = "Usage: /setadventuredocumentstitle name [icon]\nSets the title for adventure documents, and optionally an icon.",
@@ -185,7 +197,7 @@ Commands.RegisterMacro{
     end,
 }
 
-Commands.RegisterMacro{
+RegisterMacro{
     name = "setadventuredocument",
     summary = "set adventure doc",
     doc = "Usage: /setadventuredocument <order> <document name>\nSets a document as a 'current' adventure document. Use 'off' for order to remove.",
@@ -1699,7 +1711,7 @@ CreateFolderContentsPanel = function(journalPanel, folderid)
     return contentPanel
 end
 
-Commands.RegisterMacro{
+RegisterMacro{
     name = "getdocument",
     summary = "list PDF documents",
     doc = "Prints all unhidden PDF document IDs and descriptions to the console.",
