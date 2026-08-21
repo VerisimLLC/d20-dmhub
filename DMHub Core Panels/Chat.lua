@@ -580,10 +580,23 @@ local CreateSingleChatPanel = function(message)
 	return result
 end
 
+--How much history a fresh chat panel builds. Building every message froze
+--the app for seconds each time the chat window opened in rail mode (the
+--window is destroyed on close and rebuilt on open, and a dice-roll message
+--panel takes ~20ms to construct -- ~2.5s measured at 130 messages). A new
+--panel starts with just the most recent messages; older ones build in
+--batches when the user scrolls up to them.
+local g_initialHistoryCount = 30
+local g_historyBatchCount = 50
+
 CreateChatPanel = function()
 
 	local children = {}
 	local messagePanels = {}
+
+	--index into chat.messages of the oldest message this panel has built;
+	--nil until the first refreshChat computes it.
+	local historyStart = nil
 
 	--Chrome colors come from the active color scheme. Dice-roll glyphs and
 	--their white/green/red result states are drawn over dice art and stay
@@ -612,6 +625,12 @@ CreateChatPanel = function()
 				valign = "center",
 			},
 
+			--fontSize here must be ABSOLUTE, not a percentage. A percent
+			--fontSize multiplies whatever size cascaded from ancestor
+			--styles; this used to be the engine default of 36 (so '40%'
+			--rendered ~14pt), but the theme engine's base label rule now
+			--supplies 14 in every themed host (rail windows and docks
+			--alike), which shrank '40%' to an unreadable ~5.6pt.
 			{
 				selectors = {'chat-message-panel'},
 				textAlignment = 'topleft',
@@ -619,8 +638,24 @@ CreateChatPanel = function()
 				width = '100%',
 				height = 'auto',
 				color = '@fgStrong',
-				fontSize = '40%',
+				fontSize = 14,
 				vmargin = 2,
+			},
+
+			{
+				selectors = {'load-earlier-panel'},
+				bgcolor = 'clear',
+				color = '@fg',
+				textAlignment = 'center',
+				halign = 'center',
+				width = '100%',
+				height = 'auto',
+				fontSize = 12,
+				vmargin = 4,
+			},
+			{
+				selectors = {'load-earlier-panel', 'hover'},
+				color = '@fgStrong',
 			},
 
 			{
@@ -761,7 +796,105 @@ CreateChatPanel = function()
 			},
 	}
 
-	local chatPanel = gui.Panel{
+	local chatPanel = nil
+
+	--true once the panel has settled at the bottom after opening. Until
+	--then the sentinel ignores expose events: during the first layout
+	--frames the view briefly sits at the top, which would read as the
+	--user scrolling up and pull in history nobody asked for.
+	local earlierArmed = false
+
+	--true from the moment a backfill starts until its scroll anchor has
+	--been applied. expose can fire again while the sentinel is still in
+	--view (the view only moves once the anchor lands, up to a second
+	--later), and without this guard one scroll-to-top would cascade
+	--batch after batch into building the whole history anyway. A plain
+	--time cooldown doesn't work here: building a batch of roll panels
+	--itself takes long enough to outlast any reasonable cooldown.
+	local backfillPending = false
+
+	local LoadEarlierMessages = function()
+		if backfillPending then
+			return
+		end
+		if historyStart == nil or historyStart <= 1 or chatPanel == nil or not chatPanel.valid then
+			return
+		end
+		backfillPending = true
+
+		--Anchor the view before prepending: record how far (in pixels) the
+		--view sits from the BOTTOM of the content. Prepending panels above
+		--doesn't move the existing content relative to the bottom, so
+		--restoring this distance afterwards keeps the reader on the same
+		--message. Content height is the sum of children's rendered heights
+		--(no engine content-height property exists; same approach as
+		--MarkdownDocument's ScrollFindTargetIntoView).
+		local ContentRange = function()
+			local h = 0
+			for _,child in ipairs(chatPanel.children) do
+				h = h + (child.renderedHeight or 0)
+			end
+			return h - (chatPanel.renderedHeight or 0)
+		end
+		local rangeOld = ContentRange()
+		local distFromBottom = 0
+		if rangeOld > 0 then
+			distFromBottom = chatPanel.vscrollPosition * rangeOld
+		end
+
+		historyStart = math.max(1, historyStart - g_historyBatchCount)
+		chatPanel:FireEvent("refreshChat")
+
+		--the new panels report renderedHeight 0 until layout has run, so
+		--retry until the content range has actually grown (capped: a batch
+		--of messages could in principle collapse to nothing).
+		local attempts = 0
+		local TryAnchor
+		TryAnchor = function()
+			if mod.unloaded or chatPanel == nil or not chatPanel.valid then
+				backfillPending = false
+				return
+			end
+			local rangeNew = ContentRange()
+			if rangeNew <= rangeOld and attempts < 20 then
+				attempts = attempts + 1
+				dmhub.Schedule(0.05, TryAnchor)
+				return
+			end
+			if rangeNew > 0 then
+				chatPanel.vscrollPosition = math.min(1, distFromBottom / rangeNew)
+			end
+			backfillPending = false
+		end
+		dmhub.Schedule(0.05, TryAnchor)
+	end
+
+	--sits above the oldest built message while older history remains.
+	--Scrolling it into view (expose fires when hideObjectsOutOfScroll
+	--un-culls it) or clicking it builds the next batch. Constructed
+	--lazily by refreshChat: the engine reports any panel that is created
+	--but never attached, which would happen whenever the whole history
+	--fits or the panel's create event never fires.
+	local loadEarlierPanel = nil
+	local CreateLoadEarlierPanel = function()
+		return gui.Label{
+			classes = {'chat-message-panel', 'load-earlier-panel'},
+			bgimage = 'panels/square.png',
+			text = "Show earlier messages",
+			events = {
+				press = function(element)
+					LoadEarlierMessages()
+				end,
+				expose = function(element)
+					if earlierArmed then
+						LoadEarlierMessages()
+					end
+				end,
+			},
+		}
+	end
+
+	chatPanel = gui.Panel{
 		id = 'chat-panel',
 		vscroll = true,
 		hideObjectsOutOfScroll = true,
@@ -788,12 +921,35 @@ CreateChatPanel = function()
 					end
 				end)
 				element:FireEvent('refreshChat')
+
+				--arm the load-earlier sentinel only after the open-time
+				--scroll-to-bottom (moveToBottom at 0.05s) has settled.
+				dmhub.Schedule(0.5, function()
+					if not mod.unloaded and element.valid then
+						earlierArmed = true
+					end
+				end)
 			end,
 			refreshChat = function(element)
+				local messages = chat.messages
+
+				--only build from historyStart onward; older messages wait
+				--behind the load-earlier sentinel. Recompute when unset (a
+				--fresh panel) or past the end (the log was cleared).
+				if historyStart == nil or historyStart > #messages then
+					historyStart = math.max(1, #messages - g_initialHistoryCount + 1)
+				end
+
 				local newMessagePanels = {}
 				local children = {}
+				if historyStart > 1 then
+					loadEarlierPanel = loadEarlierPanel or CreateLoadEarlierPanel()
+					loadEarlierPanel.text = string.format("Show earlier messages (%d)", historyStart - 1)
+					children[#children+1] = loadEarlierPanel
+				end
 				local newMessage = false
-				for i,message in ipairs(chat.messages) do
+				for i = historyStart, #messages do
+					local message = messages[i]
 					newMessage = (messagePanels[message.key] == nil)
 					local child = messagePanels[message.key] or CreateSingleChatPanel(message)
 					newMessagePanels[message.key] = child
@@ -858,7 +1014,9 @@ CreateChatPanel = function()
 			bgcolor = '#82231DFF',
 			width = '100%',
 			height = 20,
-			fontSize = '40%',
+			--absolute for the same reason as chat-message-panel above: the
+			--themed cascade turned the old '40%' into ~5.6pt.
+			fontSize = 14,
 			color = 'white',
 			halign = 'left',
 			valign = 'top',
