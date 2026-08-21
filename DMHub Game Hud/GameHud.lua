@@ -846,17 +846,14 @@ function GameHud:CreateTopBar()
 	--dmControlsPanel = self:DMGameControlsPanel()
 	--layersPanel = self:CreateLayersPanel()
 
-	--the title bar overlays the top of the screen rather than shrinking
-	--the hud, so sit below it when it is mounted (0 otherwise).
-	local titleReserve = 0
-	if rawget(_G, "TitleBar") ~= nil then
-		titleReserve = TitleBar.Reserve()
-	end
-
+	--No title bar offset needed here: the engine anchors the whole game hud
+	--dialog BELOW the 32px title bar strip (the dialog is 1048 tall on a
+	--1080 screen, top edge at screen y=32), so our y=0 already sits flush
+	--under the bar. Adding TitleBar.Reserve() here double-counts it and
+	--leaves a bar-sized gap (seen with the initiative bar, 2026-08-21).
 	self.topBarPanel = gui.Panel{
 		width = "100%",
 		valign = "top",
-		y = titleReserve,
 		height = "auto",
 		flow = "horizontal",
 
@@ -901,8 +898,11 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 
 		--The 5e top-left button block is 82px tall; the dock system reads
 		--this so the left dock starts below it instead of assuming the
-		--default 46px top bar. The title bar's own 32px, when mounted, is
-		--added on top of this in CreateDocks via TitleBar.Reserve().
+		--default 46px top bar. (CreateDocks also subtracts
+		--TitleBar.Reserve() from its hardcoded 1080 reference height --
+		--that compensates for the hud dialog being 32px shorter when the
+		--bar is mounted, not for the bar's position; the dialog itself is
+		--anchored below the bar.)
 		dockTopReserve = 82,
 	}
 

@@ -775,12 +775,16 @@ end
 
 function GameHud:CreateDocks()
 
-	--Every dock leaves room at the top for the title bar:
-	--TitleBar.Reserve() is its height, or 0 when the bar could not mount
-	--(older engine without titleBarContainer). The hud's top-left button
-	--block additionally reserves dockTopReserve, and only the LEFT dock
-	--sits under that. (rawget: reading an unset field on a game type
-	--errors.)
+	--Dock heights are computed against a hardcoded 1080 reference, but the
+	--engine anchors the hud dialog BELOW the title bar strip, shrinking it
+	--by the bar's height (1048 tall when the 32px bar is mounted). So
+	--subtracting TitleBar.Reserve() here converts the 1080 reference into
+	--the actual dialog height; it is NOT an offset for the bar's position.
+	--Reserve() is 0 when the bar could not mount (older engine without
+	--titleBarContainer), where the dialog is the full 1080. The hud's
+	--top-left button block additionally reserves dockTopReserve, and only
+	--the LEFT dock sits under that. (rawget: reading an unset field on a
+	--game type errors.)
 	local titleReserve = 0
 	if rawget(_G, "TitleBar") ~= nil then
 		titleReserve = TitleBar.Reserve()
