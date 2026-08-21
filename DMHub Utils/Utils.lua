@@ -320,6 +320,18 @@ function string.split_with_square_brackets(inputstr, sep)
     return result
 end
 
+--keep only the elements of array t for which f returns true. (Used by
+--the title bar's Panels menu.)
+function table.filter(t, f)
+    local result = {}
+    for _, v in ipairs(t or {}) do
+        if f(v) then
+            result[#result+1] = v
+        end
+    end
+    return result
+end
+
 --stable sort: equal elements keep their original order, which table.sort
 --does not guarantee. Ported from the codex utils.
 function table.stable_sort(t, cmp)

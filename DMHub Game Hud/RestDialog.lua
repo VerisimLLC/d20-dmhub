@@ -15,6 +15,7 @@ local CreateRestDialog
 
 LaunchablePanel.Register{
 	name = "Rest",
+	menu = "game",
 	icon = "icons/icon_activity/icon_activity_117.png",
 	halign = "center",
 	valign = "center",

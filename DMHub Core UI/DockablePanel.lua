@@ -775,12 +775,17 @@ end
 
 function GameHud:CreateDocks()
 
-	--The codex reserves 32px for its title bar on every dock. 5e has no
-	--title bar; instead its top-left button block is 82px tall and only
-	--the LEFT dock sits under it. The hud declares that height as
-	--dockTopReserve. (rawget: reading an unset field on a game type
+	--Every dock leaves room at the top for the title bar:
+	--TitleBar.Reserve() is its height, or 0 when the bar could not mount
+	--(older engine without titleBarContainer). The hud's top-left button
+	--block additionally reserves dockTopReserve, and only the LEFT dock
+	--sits under that. (rawget: reading an unset field on a game type
 	--errors.)
-	local topReserve = rawget(self, "dockTopReserve") or 0
+	local titleReserve = 0
+	if rawget(_G, "TitleBar") ~= nil then
+		titleReserve = TitleBar.Reserve()
+	end
+	local topReserve = (rawget(self, "dockTopReserve") or 0) + titleReserve
 
 	self.leftDock = self:CreateSingleDock{
 		height = 1080 - topReserve - g_dockGap,
@@ -789,14 +794,14 @@ function GameHud:CreateDocks()
 		valign = "bottom",
 	}
 	self.rightDock = self:CreateSingleDock{
-		height = 1080 - g_dockGap,
+		height = 1080 - titleReserve - g_dockGap,
 		id = "rightDock",
 		halign = "right",
 		valign = "bottom",
 	}
 
     self.floatingDock = self:CreateSingleDock{
-		height = 1080 - g_dockGap,
+		height = 1080 - titleReserve - g_dockGap,
         id = "floatingDock",
         halign = "center",
         valign = "bottom",

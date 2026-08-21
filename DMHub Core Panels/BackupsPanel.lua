@@ -4,6 +4,7 @@ local BackupsDialog
 
 LaunchablePanel.Register{
     name = "Game Backups",
+    menu = "game",
     icon = "panels/hud/56_map.png",
     halign = "center",
     valign = "center",

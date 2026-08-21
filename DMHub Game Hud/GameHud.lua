@@ -306,7 +306,37 @@ function GameHud:CreateTopLeftButtonPanel()
 --		}
 --	}
 
-	local topLevelButtons = {
+	--With the title bar mounted, its DMHub/Game/Tools/Panels menus replace
+	--both the engine's Tools/Main menus and the hud's pinnable toolbar
+	--strip, so the whole top-left block ends up empty; on an engine
+	--without titleBarContainer the bar is absent and both stay.
+	local titleBarMounted = rawget(_G, "TitleBar") ~= nil and TitleBar.IsMounted()
+
+	local engineMenus = nil
+	if not titleBarMounted then
+		engineMenus = gui.Panel{
+			flow = "horizontal",
+			y = -12,
+			x = -2,
+			width = "auto",
+			height = "auto",
+
+			styles = {
+				{
+					hmargin = 2,
+					flow = 'horizontal',
+				}
+			},
+
+			self:CreateToolsMenu(),
+			self:CreateMainMenu(),
+		}
+	end
+
+	local topLevelButtons = {}
+
+	if not titleBarMounted then
+		topLevelButtons = {
 		self:CreateToolbarPanel(),
 
 --	gui.HudIconButton{
@@ -376,24 +406,9 @@ function GameHud:CreateTopLeftButtonPanel()
 	--	end,
 	--},
 
-		gui.Panel{
-			flow = "horizontal",
-			y = -12,
-			x = -2,
-			width = "auto",
-			height = "auto",
-
-			styles = {
-				{
-					hmargin = 2,
-					flow = 'horizontal',
-				}
-			},
-
-			self:CreateToolsMenu(),
-			self:CreateMainMenu(),
+		engineMenus,
 		}
-	}
+	end
 
 	if dmhub.isDM and false then
 
@@ -831,9 +846,17 @@ function GameHud:CreateTopBar()
 	--dmControlsPanel = self:DMGameControlsPanel()
 	--layersPanel = self:CreateLayersPanel()
 
+	--the title bar overlays the top of the screen rather than shrinking
+	--the hud, so sit below it when it is mounted (0 otherwise).
+	local titleReserve = 0
+	if rawget(_G, "TitleBar") ~= nil then
+		titleReserve = TitleBar.Reserve()
+	end
+
 	self.topBarPanel = gui.Panel{
 		width = "100%",
 		valign = "top",
+		y = titleReserve,
 		height = "auto",
 		flow = "horizontal",
 
@@ -876,8 +899,10 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 		openInventoryDialogs = {},
 		interactionQueue = {},
 
-		--The 5e top bar is 82px tall; the engine's docks read this so they
-		--start below it instead of assuming the default 46px top bar.
+		--The 5e top-left button block is 82px tall; the dock system reads
+		--this so the left dock starts below it instead of assuming the
+		--default 46px top bar. The title bar's own 32px, when mounted, is
+		--added on top of this in CreateDocks via TitleBar.Reserve().
 		dockTopReserve = 82,
 	}
 

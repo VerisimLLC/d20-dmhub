@@ -428,7 +428,33 @@ local function _cacheKey(themeId, schemeId)
     return (themeId or "_") .. "|" .. (schemeId or "_")
 end
 
+--Subscriptions made before EventUtils (DMHub Utils) has loaded -- possible
+--at the cold-boot lobby, where the engine loads ONLY this module (the
+--title bar at the end of this file subscribes during that phase). Each
+--entry becomes a real EventUtils registration on flush.
+local _pendingThemeListeners = {}
+
+local function _flushPendingThemeListeners()
+    if #_pendingThemeListeners == 0 then
+        return
+    end
+    local eu = rawget(_G, "EventUtils")
+    if eu == nil then
+        return
+    end
+    local pending = _pendingThemeListeners
+    _pendingThemeListeners = {}
+    for _, p in ipairs(pending) do
+        if not p.deregistered then
+            p.listener = eu.RegisterGlobalEventHandler(p.mod, THEME_CHANGED_EVENT, p.callback)
+        end
+    end
+end
+
 local function _fireThemeChanged()
+    --late-loading listeners first, so a registration queued before
+    --EventUtils existed still receives this very event.
+    _flushPendingThemeListeners()
     local eu = rawget(_G, "EventUtils")
     if eu then
         eu.FireGlobalEvent(THEME_CHANGED_EVENT)
@@ -485,6 +511,12 @@ function ThemeEngine.RegisterColorScheme(spec)
         colors = spec.colors or {},
         gradients = spec.gradients or {},
     }
+    --clear the resolved-styles cache, mirroring DeregisterColorScheme: a
+    --consumer that resolved styles BEFORE this registration (e.g. the title
+    --bar, which loads with this module, ahead of DefaultStyles) memoized a
+    --result missing these colors; without this, that stale entry would be
+    --returned forever for the same theme/scheme pair.
+    _cache = {}
     return true
 end
 
@@ -557,6 +589,9 @@ function ThemeEngine.RegisterTheme(spec)
         fonts = spec.fonts or {},
         styles = spec.styles or {},
     }
+    --clear the resolved-styles cache, mirroring DeregisterTheme (see the
+    --note in RegisterColorScheme).
+    _cache = {}
     return true
 end
 
@@ -807,11 +842,32 @@ end
 --- The callback receives no arguments. The returned entry has a `Deregister()` method
 --- for explicit unsubscribe; the handler is also automatically removed when the caller's
 --- mod unloads.
+---
+--- Safe to call before DMHub Utils has loaded (the cold-boot lobby, where the
+--- engine loads only this module): the registration is queued and flushed into
+--- EventUtils by the next OnThemeChanged call or theme-changed fire after Utils
+--- loads. The returned handle's Deregister works in either state.
 --- @param callingMod table The caller's mod object, from `dmhub.GetModLoading()`
 --- @param callback fun()
---- @return table entry { guid, handlerfn, Deregister }
+--- @return table entry { Deregister, ... }
 function ThemeEngine.OnThemeChanged(callingMod, callback)
-    return EventUtils.RegisterGlobalEventHandler(callingMod, THEME_CHANGED_EVENT, callback)
+    _flushPendingThemeListeners()
+
+    local eu = rawget(_G, "EventUtils")
+    if eu ~= nil then
+        return eu.RegisterGlobalEventHandler(callingMod, THEME_CHANGED_EVENT, callback)
+    end
+
+    local p = { mod = callingMod, callback = callback, listener = nil, deregistered = false }
+    _pendingThemeListeners[#_pendingThemeListeners + 1] = p
+    return {
+        Deregister = function()
+            p.deregistered = true
+            if p.listener ~= nil then
+                p.listener:Deregister()
+            end
+        end,
+    }
 end
 
 -- Ids beginning with "__" are reserved for internal / transient registrations
@@ -2494,3 +2550,754 @@ Styles = {
 	},
 }
 
+
+
+--============================================================================
+--The title bar: a 32px menu strip across the very top of the screen with
+--the DMHub / Game / Tools / Panels / Developer menus, plus Settings and
+--Quit to Desktop on the main menu. The Draw Steel Codex (DMHub's sibling
+--system) ships the same bar; this brings it to 5e.
+--
+--Why it lives at the END OF THIS FILE instead of its own file: the engine
+--loads code mods one at a time over several seconds at boot, and the
+--titlescreen appears almost immediately. This module is one of the first
+--to load, so the bar shows up while the user is still on the lobby. (It
+--originally lived in DMHub Game Hud, which loads so late that users
+--always entered a game before the bar existed.) It sits below ThemeEngine
+--because that is the only thing it needs at load time.
+--
+--The bar's panel is attached to dmhub.titleBarContainer, an engine-owned
+--layer drawn over the top of the screen. The rest of the UI still spans
+--the full screen behind it, so panels near the top must leave a
+--TitleBar.Reserve()-sized gap to avoid being covered.
+--============================================================================
+
+TitleBar = {}
+
+--The bar's height. The hud and dock system read it through
+--TitleBar.Reserve() rather than hardcoding it.
+TitleBar.Height = 32
+
+local g_mounted = false
+
+--True when the bar mounted into the engine's titleBarContainer. The hud
+--(GameHud:CreateTopLeftButtonPanel) keeps the engine's Tools/Main menus
+--when this is false; the dock system (GameHud:CreateDocks) reserves space
+--on every dock when it is true.
+function TitleBar.IsMounted()
+    return g_mounted
+end
+
+--Vertical space the rest of the UI should leave for the bar: Height when
+--mounted, 0 otherwise.
+function TitleBar.Reserve()
+    return cond(g_mounted, TitleBar.Height, 0)
+end
+
+--Collects the entries for one title-bar menu (the DMHub, Game, or Tools
+--menu) from both panel registries.
+--
+--A panel chooses its menu by declaring `menu = "codex"|"game"|"tools"`
+--when it registers. "codex" is the key for the DMHub menu -- the name is
+--historical (both systems share this registration API) and kept so
+--registrations work unchanged across systems. A dockable panel with no
+--`menu` is listed in the Panels menu instead; a launchable panel with no
+--`menu` defaults to the DMHub menu.
+--
+--rawget guards: at a cold-boot lobby only this module is loaded, so
+--neither registry exists yet. The menus that call this are in-game only,
+--but the guards keep a stray click from erroring.
+local function WindowMenuItems(menuName)
+    local result = {}
+
+    if rawget(_G, "DockablePanel") ~= nil then
+        for _,item in ipairs(DockablePanel.GetMenuItems()) do
+            if item.menu == menuName then
+                result[#result+1] = item
+            end
+        end
+    end
+
+    if rawget(_G, "LaunchablePanel") ~= nil then
+        for _,item in ipairs(LaunchablePanel.GetMenuItems()) do
+            if (item.menu or "codex") == menuName and item.text ~= "Development Tools" then
+                result[#result+1] = item
+            end
+        end
+    end
+
+    return result
+end
+
+--Minimal dropdown for the cold-boot lobby, where Core UI's
+--gui.ContextMenu is not loaded yet: a plain vertical list of clickable
+--text rows. Handles only text + click, which is all the lobby-visible
+--menus (DMHub: Settings / Log Out / Quit to Desktop) carry.
+local function CreateFallbackMenu(element, menuItems)
+    local rows = {}
+    for _,item in ipairs(menuItems) do
+        rows[#rows+1] = gui.Label{
+            classes = {"titleBarFallbackRow"},
+            bgimage = true,
+            text = item.text or "",
+            width = 220,
+            height = 28,
+            valign = "center",
+            textAlignment = "left",
+            pad = 6,
+            press = function()
+                element.popup = nil
+                if item.click ~= nil then
+                    item.click()
+                end
+            end,
+        }
+    end
+
+    return gui.Panel{
+        width = "auto",
+        height = "auto",
+        flow = "vertical",
+        x = -element.renderedWidth,
+        styles = {
+            {
+                selectors = {"titleBarFallbackRow"},
+                bgcolor = "#161616f7",
+                fontSize = 16,
+                color = "srgb:#C09571",
+                borderWidth = 1,
+                borderColor = "srgb:#C09571",
+            },
+            {
+                selectors = {"titleBarFallbackRow", "hover"},
+                bgcolor = "srgb:#C09571",
+                color = "#161616",
+            },
+        },
+        children = rows,
+    }
+end
+
+--One item on the menu strip: an icon+label that shows a dropdown of
+--menuItems() when pressed. menuItems is called fresh on every press so
+--entries always reflect current state.
+local function CreateTitleBarMenuItem(args)
+    local iconPanel
+
+    local m_mainmenu = args.mainmenu
+    args.mainmenu = nil
+
+    local name = args.name
+    args.name = nil
+    local menuItems = args.menuItems
+    args.menuItems = nil
+
+    if args.icon then
+        iconPanel = gui.Panel{
+            classes = {"menuItemIcon"},
+            width = 24,
+            height = 24,
+            bgimage = args.icon,
+            valign = "center",
+            interactable = false,
+            seticon = function(element, icon)
+                element.bgimage = icon
+            end,
+        }
+        args.icon = nil
+    end
+
+    local CollectMenuItems
+    CollectMenuItems = function(menuItems, result)
+        for _,item in ipairs(menuItems) do
+            if item.submenu then
+                CollectMenuItems(item.submenu, result)
+            else
+                result[#result+1] = item
+            end
+        end
+    end
+
+    --mainmenu = true shows the item only on the main menu; mainmenu = "always"
+    --shows it both on the main menu and in-game; otherwise in-game only.
+    local visibilityClass
+    if m_mainmenu == "always" then
+        visibilityClass = nil
+    elseif m_mainmenu then
+        visibilityClass = "mainmenuOnly"
+    else
+        visibilityClass = "ingameOnly"
+    end
+
+    local resultPanel = {
+
+        classes = {"menuItem", visibilityClass},
+        popupPositioning = 'panel',
+
+        width = "auto",
+        height = "100%",
+        flow = "horizontal",
+
+        iconPanel,
+
+        gui.Label{
+            classes = {"menuLabel"},
+            text = name,
+            setname = function(element, newname)
+                name = newname
+                element.text = newname
+            end,
+            interactable = false,
+        },
+
+        --appends this menu's entries (submenus flattened) to result. A
+        --global search feature could fire this event across the strip to
+        --gather every menu command; nothing calls it yet.
+        collectMenuItems = function(element, result)
+            CollectMenuItems(menuItems(), result)
+        end,
+
+        hover = function(element)
+            --see if a sibling menu is shown; if so, hover-follow into this one.
+            for _,sibling in ipairs(element.parent.children) do
+                if sibling ~= element and sibling.popup ~= nil then
+                    sibling.popup = nil
+                    element:FireEvent("press")
+                    return
+                end
+            end
+        end,
+
+        press = function(element)
+
+            if element.popup ~= nil then
+                element.popup = nil
+                return
+            end
+
+            local menuItems = menuItems()
+
+            --gui.ContextMenu is defined by DMHub Core UI's Gui.lua, which
+            --is not loaded at the cold-boot lobby (only this module is);
+            --fall back to the minimal dropdown there. rawget: ContextMenu
+            --is a plain Lua assignment onto the gui table when present.
+            local menuPanel
+            if rawget(gui, "ContextMenu") ~= nil then
+                menuPanel = gui.ContextMenu{
+                    width = 300,
+                    x = -element.renderedWidth,
+                    entries = menuItems,
+                    click = function()
+                        element.popup = nil
+                    end,
+                }
+            else
+                menuPanel = CreateFallbackMenu(element, menuItems)
+            end
+
+            element.popup = gui.Panel{
+                width = "auto",
+                height = "auto",
+                halign = "right",
+                valign = "bottom",
+                menuPanel,
+            }
+
+        end,
+    }
+
+    for k,v in pairs(args) do
+        resultPanel[k] = v
+    end
+
+    return gui.Panel(resultPanel)
+end
+
+--flipped whenever the theme changes; SetClassTree with the new value
+--forces every descendant to re-cascade styles (reassigning .styles alone
+--updates the rule array but does not mark descendants dirty).
+local themeRefreshTick = false
+
+local function CreateTopBar(container)
+
+    local m_inGame = nil
+
+    local menuBar = gui.Panel{
+        id = "menuBarPanel",
+        classes = {"titleBarSurface"},
+        width = "100%",
+        height = TitleBar.Height,
+        floating = true,
+        valign = "top",
+        bgimage = true,
+        flow = "horizontal",
+
+        styles = {
+            {
+                selectors = {"mainmenuOnly", "ingame"},
+                collapsed = 1,
+            },
+            {
+                selectors = {"ingameOnly", "~ingame"},
+                collapsed = 1,
+            },
+        },
+
+        thinkTime = 0.2,
+        think = function(element)
+            --toggle the "ingame" class on the whole strip when the player
+            --enters or leaves a game; the style rules above show/hide the
+            --menu items from it. isLobbyGame covers transitional "lobby
+            --game" states some engine flows use -- those still count as
+            --the main menu.
+            if (dmhub.inGame and not dmhub.isLobbyGame) ~= m_inGame then
+                m_inGame = (dmhub.inGame and not dmhub.isLobbyGame)
+                element:SetClassTree("ingame", m_inGame)
+            end
+            element:FireEventTree("calculateVisibility")
+        end,
+
+        --main-menu variant of the DMHub menu: Settings, Log Out, and Quit
+        --to Desktop as hardcoded entries. In-game the equivalents arrive
+        --through registered commands instead (see the in-game variant
+        --below).
+        CreateTitleBarMenuItem{
+            name = "DMHub",
+            icon = "ui-icons/DMHubLogo.png",
+            mainmenu = true,
+            menuItems = function()
+                return {
+                    {
+                        text = "Settings",
+                        icon = "panels/hud/gear.png",
+                        click = function()
+                            dmhub.ShowPlayerSettings()
+                        end,
+                    },
+                    {
+                        --same flow as the engine titlescreen's corner Log Out
+                        --button (which the engine destroys once this bar
+                        --mounts): hide the main screen, log out, show login.
+                        --The titlescreen instance is the engine-core global
+                        --`titlescreen`; rawget-guarded in case a future
+                        --engine build renames it.
+                        text = "Log Out",
+                        icon = "game-icons/exit-door.png",
+                        click = function()
+                            local ts = rawget(_G, "titlescreen")
+                            if ts == nil then
+                                return
+                            end
+                            local mainScreen = ts:try_get("mainScreen")
+                            if mainScreen ~= nil and mainScreen.valid then
+                                mainScreen:SetClass("hidden", true)
+                            end
+                            dmhub.Logout()
+                            ts:ShowLoginScreen()
+                        end,
+                    },
+                    {
+                        text = "Quit to Desktop",
+                        icon = "game-icons/power-button.png",
+                        click = function()
+                            dmhub.QuitApplication()
+                        end,
+                    },
+                }
+            end,
+        },
+
+        CreateTitleBarMenuItem{
+            name = "DMHub",
+            icon = "ui-icons/DMHubLogo.png",
+            menuItems = function()
+                return WindowMenuItems("codex")
+            end,
+        },
+
+        CreateTitleBarMenuItem{
+            name = "Game",
+            menuItems = function()
+                return WindowMenuItems("game")
+            end,
+        },
+
+        CreateTitleBarMenuItem{
+            name = "Tools",
+            menuItems = function()
+                return WindowMenuItems("tools")
+            end,
+        },
+
+        CreateTitleBarMenuItem{
+            name = "Panels",
+            menuItems = function()
+                local dockablePanels = DockablePanel.GetMenuItems()
+                --a dockable panel that declared `menu` is listed in that
+                --title-bar menu (DMHub/Game/Tools) instead of here --
+                --listing it in both would just be clutter.
+                dockablePanels = table.filter(dockablePanels, function(item) return item.text ~= "Development Tools" and item.menu == nil end)
+
+                --folder submenus are a different kind of row than the
+                --panel toggles; giving them their own group makes the
+                --context menu insert a divider before them.
+                for _,p in ipairs(dockablePanels) do
+                    if p.submenu ~= nil then
+                        p.group = "folder"
+                    end
+                end
+
+                local locked = dmhub.GetSettingValue("uilocked")
+                local railMode = rawget(_G, "RailModeActive") ~= nil and RailModeActive()
+
+                --rail mode has no Lock Panels row (see below), so it must not
+                --honour the lock either -- a user who locked in dock mode and
+                --then switched would find every row disabled with nothing left
+                --to unlock it. Locking is a dock concept; the rail ignores it.
+                if locked and not railMode then
+                    for _,p in ipairs(gui.FlattenContextMenuItems(dockablePanels)) do
+                        p.disabled = true
+                    end
+                end
+
+                --In rail mode the rows keep their DEFAULT click: it routes
+                --through the rail's open handler. Only the check needs
+                --overriding: the default tracks the DOCK instance, which is
+                --slid away in rail mode, so light the row while the panel
+                --is shown anywhere on the rail surface instead.
+                if railMode then
+                    for _,p in ipairs(gui.FlattenContextMenuItems(dockablePanels)) do
+                        local panelName = p.text
+                        if panelName ~= nil and p.submenu == nil then
+                            p.check = PanelDocument.IsPanelShown(string.lower(panelName))
+                        end
+                    end
+                end
+
+                --Dock/lock rows are dock-mode only: in rail mode the docks are
+                --slid off screen and the rail owns placement, so toggling a
+                --dock or resetting the dock layout does nothing visible, and
+                --the lock has no meaning.
+                if not railMode then
+                    --icons so the dock rows align with the panel rows below,
+                    --which all carry check gutter + icon + text.
+                    table.insert(dockablePanels, 1, {
+                        text = "Left Dock",
+                        icon = "phosphor/sidebar-simple.png",
+                        check = not dmhub.GetSettingValue("leftdockoffscreen"),
+                        group = "panel",
+
+                        click = function()
+                            dmhub.SetSettingValue("leftdockoffscreen", not dmhub.GetSettingValue("leftdockoffscreen"))
+                        end,
+                    })
+
+                    table.insert(dockablePanels, 1, {
+                        text = "Right Dock",
+                        icon = "phosphor/sidebar-simple.png",
+                        check = not dmhub.GetSettingValue("rightdockoffscreen"),
+                        group = "panel",
+
+                        click = function()
+                            dmhub.SetSettingValue("rightdockoffscreen", not dmhub.GetSettingValue("rightdockoffscreen"))
+                        end,
+                    })
+
+                    table.insert(dockablePanels, 1, {
+                        text = "Reset Panels",
+                        icon = "icons/icon_tool/icon_power.png",
+                        group = "panel",
+
+                        click = function()
+                            dmhub.ResetSetting(GetDockablePanelsSetting())
+                            InitDockablePanels()
+                        end,
+                    })
+
+                    table.insert(dockablePanels, 1, {
+                        text = cond(locked, "Unlock Panels", "Lock Panels"),
+                        icon = cond(locked, "icons/icon_tool/icon_tool_30.png", "icons/icon_tool/icon_tool_30_unlocked.png"),
+                        check = locked,
+                        group = "panel",
+                        click = function()
+                            dmhub.SetSettingValue("uilocked", not locked)
+                        end,
+                    })
+                end
+
+                --Workspace Views: the Panels menu is the only switcher UI,
+                --so it carries the full verb set: switch, save, save-as,
+                --reset, manage. Only in rail mode.
+                if rawget(_G, "ViewsListForUser") ~= nil and railMode then
+                    local active = ViewsActiveId()
+                    local drift = ViewsIsDrifted()
+                    local viewItems = {}
+                    viewItems[#viewItems + 1] = {
+                        text = "Custom",
+                        check = active == nil,
+                        group = "views",
+                        click = function()
+                            ViewsSwitchTo(nil)
+                        end,
+                    }
+                    for _, v in ipairs(ViewsListForUser()) do
+                        local vid = v.id
+                        local text = v.name
+                        if vid == active and drift then
+                            text = text .. "  (unsaved changes)"
+                        end
+                        --a newer built-in version of this view exists;
+                        --switching to it prompts the user to take the
+                        --update or keep their copy.
+                        if v.updated then
+                            text = text .. "  (updated)"
+                        end
+                        viewItems[#viewItems + 1] = {
+                            text = text,
+                            check = vid == active,
+                            group = "views",
+                            click = function()
+                                local skipped = ViewsSwitchTo(vid)
+                                if rawget(_G, "ViewsPostApplyNotices") ~= nil then
+                                    ViewsPostApplyNotices(vid, skipped)
+                                end
+                            end,
+                        }
+                    end
+                    if active ~= nil and drift then
+                        viewItems[#viewItems + 1] = {
+                            text = "Save view",
+                            group = "views",
+                            click = function()
+                                if ViewsSave() and rawget(_G, "ViewsToast") ~= nil then
+                                    ViewsToast("View updated", function()
+                                        ViewsUndoSave()
+                                    end)
+                                end
+                            end,
+                        }
+                    end
+                    viewItems[#viewItems + 1] = {
+                        text = "Save as new view...",
+                        group = "views",
+                        click = function()
+                            if rawget(_G, "ViewsSaveAsDialog") ~= nil then
+                                ViewsSaveAsDialog()
+                            end
+                        end,
+                    }
+                    if active ~= nil then
+                        viewItems[#viewItems + 1] = {
+                            text = "Reset view to saved",
+                            group = "views",
+                            click = function()
+                                ViewsResetToSaved()
+                            end,
+                        }
+                    end
+                    viewItems[#viewItems + 1] = {
+                        text = "Manage views...",
+                        group = "views",
+                        click = function()
+                            if rawget(_G, "ViewsManageDialog") ~= nil then
+                                ViewsManageDialog()
+                            end
+                        end,
+                    }
+                    --one "Views" folder row rather than five-plus rows inline:
+                    --the switcher is the least-used half of this menu and
+                    --would push the panel toggles off the top.
+                    table.insert(dockablePanels, 1, {
+                        id = "FolderViews",
+                        text = "Views",
+                        group = "views",
+                        submenu = viewItems,
+                    })
+                end
+
+                return dockablePanels
+            end,
+        },
+
+        CreateTitleBarMenuItem{
+            name = "Developer",
+            calculateVisibility = function(element)
+                element.selfStyle.collapsed = cond(devmode(), 0, 1)
+            end,
+            menuItems = function()
+                if not devmode() then
+                    return {}
+                end
+                --collect the entries of every "Development Tools" folder
+                --from both panel registries into one flat menu.
+                --(rawget: at the lobby the registries are not loaded yet.)
+                local registries = {}
+                if rawget(_G, "DockablePanel") ~= nil then
+                    registries[#registries+1] = DockablePanel.GetMenuItems()
+                end
+                if rawget(_G, "LaunchablePanel") ~= nil then
+                    registries[#registries+1] = LaunchablePanel.GetMenuItems()
+                end
+                local menuItems = {}
+                for i,items in ipairs(registries) do
+                    for j,item in ipairs(items) do
+                        if item.submenu and item.text == "Development Tools" then
+                            for _,entry in ipairs(item.submenu) do
+                                menuItems[#menuItems+1] = entry
+                            end
+                        end
+                    end
+                end
+                return menuItems
+            end,
+        },
+    }
+
+    local titleBarStyleExtras = {
+        -- Title-bar surface paints with the scheme's barTrack gradient.
+        -- bgcolor = "white" is the image-tint multiplier: without it the
+        -- cascade's @bg tints the gradient down to near-black on dark
+        -- schemes.
+        {
+            selectors = {"titleBarSurface"},
+            bgimage = true,
+            bgcolor = "white",
+            gradient = "@barTrack",
+        },
+    }
+
+    --At the cold-boot lobby the engine has loaded ONLY this module (mods
+    --load one at a time and the rest arrive on game entry), so ThemeEngine
+    --has no themes or color schemes registered and @tokens cannot resolve.
+    --These literal rules copy the default scheme's menuItem/menuLabel/
+    --menuItemIcon values so the bar still paints correctly on the lobby;
+    --the think below upgrades to the real merged theme styles the moment
+    --the themes register. The surface is plain black rather than the
+    --default scheme's teal barTrack gradient -- neutral against the
+    --classic titlescreen art.
+    local fallbackStyles = {
+        {
+            selectors = {"titleBarSurface"},
+            bgimage = true,
+            bgcolor = "#000000ff",
+        },
+        {
+            selectors = {"menuItem"},
+            bgimage = true,
+            bgcolor = "clear",
+            hpad = 8,
+        },
+        {
+            selectors = {"menuItem", "hover"},
+            bgcolor = "srgb:#C09571",
+        },
+        {
+            selectors = {"menuLabel"},
+            fontSize = 16,
+            width = "auto",
+            height = "auto",
+            valign = "center",
+            hmargin = 4,
+            color = "srgb:#C09571",
+        },
+        {
+            selectors = {"menuLabel", "parent:hover"},
+            color = "#161616",
+        },
+        {
+            selectors = {"menuItemIcon"},
+            bgcolor = "srgb:#C09571",
+        },
+        {
+            selectors = {"menuItemIcon", "parent:hover"},
+            bgcolor = "#161616",
+        },
+    }
+
+    local function ResolveTitleBarStyles()
+        if #ThemeEngine.ListThemes() > 0 then
+            return ThemeEngine.MergeStyles(titleBarStyleExtras)
+        end
+        return fallbackStyles
+    end
+
+    local m_themed = #ThemeEngine.ListThemes() > 0
+
+    local topBarPanel = gui.Panel{
+        id = "topBar",
+        width = container.width,
+        height = container.height,
+        flow = "horizontal",
+
+        screenResized = function(element)
+            element.selfStyle.width = container.width
+            element.selfStyle.height = container.height
+        end,
+
+        thinkTime = 0.5,
+        think = function(element)
+            if element.selfStyle.width ~= container.width then
+                element.selfStyle.width = container.width
+            end
+
+            if element.selfStyle.height ~= container.height then
+                element.selfStyle.height = container.height
+            end
+
+            --one-shot upgrade from the fallback styles to the real theme
+            --once DefaultStyles has registered it (game entry); see
+            --ResolveTitleBarStyles.
+            if (not m_themed) and #ThemeEngine.ListThemes() > 0 then
+                m_themed = true
+                element.styles = ThemeEngine.MergeStyles(titleBarStyleExtras)
+                themeRefreshTick = not themeRefreshTick
+                element:SetClassTree("themeRefreshTick", themeRefreshTick)
+            end
+        end,
+
+        styles = ResolveTitleBarStyles(),
+
+        menuBar,
+    }
+
+    -- Force a re-cascade once the engine signals the game is fully loaded
+    -- (and therefore every mod's color schemes are registered). The cascade
+    -- computed at construction time may resolve before custom-scheme mods
+    -- have finished registering, leaving the bar painted with the wrong
+    -- scheme until something else invalidates the tree.
+    dmhub.RegisterEventHandler("EnterGame", function()
+        if topBarPanel and topBarPanel.valid then
+            topBarPanel.styles = ThemeEngine.MergeStyles(titleBarStyleExtras)
+            themeRefreshTick = not themeRefreshTick
+            topBarPanel:SetClassTree("themeRefreshTick", themeRefreshTick)
+        end
+    end)
+
+    -- Subscribe to theme changes so the bar repaints live when the user
+    -- switches scheme via Settings instead of waiting for the next reload.
+    ThemeEngine.OnThemeChanged(mod, function()
+        if topBarPanel and topBarPanel.valid then
+            topBarPanel.styles = ThemeEngine.MergeStyles(titleBarStyleExtras)
+            themeRefreshTick = not themeRefreshTick
+            topBarPanel:SetClassTree("themeRefreshTick", themeRefreshTick)
+        end
+    end)
+
+    return topBarPanel
+end
+
+--Mount immediately, engine permitting. The container arrived after the
+--0.526 engine this repo's stubs describe, so probe under pcall: on an
+--older engine the bar simply does not exist and the hud keeps its default
+--menus. The mount must NOT wait for anything else to load: at the
+--cold-boot lobby this module is the only one the engine loads, so any
+--"wait for X" gate here waits forever (the styling handles the missing
+--theme registry via fallbackStyles in CreateTopBar).
+local ok, container = pcall(function() return dmhub.titleBarContainer end)
+if ok and container ~= nil then
+    container.sheet = CreateTopBar(container)
+    g_mounted = true
+    print("TitleBar:: mounted into the engine's titleBarContainer")
+else
+    print("TitleBar:: dmhub.titleBarContainer not available on this engine build; title bar disabled")
+end

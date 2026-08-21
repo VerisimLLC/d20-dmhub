@@ -45,6 +45,7 @@ end
 
 LaunchablePanel.Register{
 	name = "Measuring Tool",
+	menu = "tools",
 	icon = "icons/icon_tool/icon_tool_101.png",
 	halign = "right",
 	valign = "top",

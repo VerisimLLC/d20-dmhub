@@ -1,8 +1,12 @@
 local mod = dmhub.GetModLoading()
 
 
+--menu = "tools" lists a command in the title bar's Tools menu. Commands
+--with no menu land in the DMHub menu instead (the registry's default
+--menu key, historically named "codex").
 Commands.Register{
     name = "Zoom In",
+    menu = "tools",
     icon = "icons/icon_tool/icon_tool_40.png",
     group = "zoom",
     command = "zoomin",
@@ -10,6 +14,7 @@ Commands.Register{
 
 Commands.Register{
     name = "Zoom Out",
+    menu = "tools",
     icon = "icons/icon_tool/icon_tool_41.png",
     group = "zoom",
     command = "zoomout",
@@ -17,6 +22,7 @@ Commands.Register{
 
 Commands.Register{
     name = "Undo",
+    menu = "tools",
     icon = "panels/hud/anticlockwise-rotation.png",
     group = "undo",
     ord = 1,
@@ -43,6 +49,7 @@ Commands.Register{
 
 Commands.Register{
     name = "Redo",
+    menu = "tools",
     icon = "panels/hud/clockwise-rotation.png",
     group = "undo",
     command = "redo",
@@ -69,12 +76,14 @@ Commands.Register{
 
 Commands.Register{
     name = "Show Grid",
+    menu = "tools",
     icon = "icons/icon_common/icon_common_51.png",
     setting = "showgrid",
 }
 
 Commands.Register{
     name = "Snap Edits to Grid",
+    menu = "tools",
     icon = mod.images.snapToGridIcon,
     setting = "editor:snaptogrid",
     dmonly = true,
@@ -83,6 +92,7 @@ Commands.Register{
 
 Commands.Register{
     name = "GM Darkvision",
+    menu = "tools",
     icon = "icons/icon_device/icon_device_57.png",
     group = "gm",
     setting = "dmillumination",
@@ -91,6 +101,7 @@ Commands.Register{
 
 Commands.Register{
     name = "Player Vision Overlay",
+    menu = "tools",
     icon = "icons/icon_game/icon_game_193.png",
     setting = "showplayervision",
     group = "gm",
@@ -104,6 +115,18 @@ Commands.Register{
     ord = 2,
     execute = function()
         dmhub.LeaveGame()
+    end,
+}
+
+--no menu, so this lands in the title bar's in-game DMHub menu alongside
+--Leave Game and Settings.
+Commands.Register{
+    name = "Quit to Desktop",
+    icon = "game-icons/power-button.png",
+    group = 'zzz',
+    ord = 3,
+    execute = function()
+        dmhub.QuitApplication()
     end,
 }
 

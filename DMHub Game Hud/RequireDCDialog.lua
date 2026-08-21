@@ -1617,6 +1617,7 @@ end
 
 LaunchablePanel.Register{
 	name = "Request Rolls",
+	menu = "game",
 	icon = "game-icons/dice-twenty-faces-twenty.png",
 	halign = "center",
 	valign = "center",

@@ -6575,6 +6575,41 @@ setting{
     default = {},
 }
 
+--The Views system's stores. The Views UI itself is not ported (its
+--functions are rawget-guarded wherever this file calls them), but this
+--file reads and migrates its stores unconditionally, and the engine
+--warns on any get/set of an undeclared setting -- so declare them here.
+
+--The id of the view currently applied in this game ("" = none/Custom).
+setting{
+    id = "viewsactive",
+    storage = "pergamepreference",
+    default = "",
+}
+
+--This game's per-view working stashes: { [viewId] = <layout> }.
+setting{
+    id = "viewsstash",
+    storage = "pergamepreference",
+    default = {},
+}
+
+--Built-in view baselines, compared on entry to detect stock-layout
+--updates: { [viewId] = { version = ..., layout = <layout> } }.
+setting{
+    id = "viewsbuiltinversion",
+    storage = "pergamepreference",
+    default = {},
+}
+
+--The account-wide view library (personal overlays and custom views),
+--which follows the user into every game.
+setting{
+    id = "viewslibrary",
+    storage = "preference",
+    default = {},
+}
+
 --g_iconRailPanels (the curated panel list) is declared above the
 --PanelDocument interface.
 

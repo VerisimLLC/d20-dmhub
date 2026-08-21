@@ -4,6 +4,7 @@ local CreateMapDialog
 
 LaunchablePanel.Register{
 	name = "Maps",
+	menu = "game",
 	icon = "panels/hud/56_map.png",
 	halign = "left",
 	valign = "top",
