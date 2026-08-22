@@ -312,10 +312,14 @@ local function ShowFloorSettings(floor)
 end
 
 
+--Children of the floors list must be valign = "top", or the engine spreads
+--them out to fill the list's fixed height. The gaps that creates also break
+--drag-reordering, which assumes rows sit directly against each other.
 local CreateDragTarget = function(index, belowGround, layerType)
 	layerType = layerType or "floor"
 	return gui.Panel{
 		classes = {"floorOrLayerDragTarget", string.format('%sDragTarget', layerType)},
+		valign = "top",
 		dragTarget = true,
 		data = {
 			index = index,
@@ -340,6 +344,7 @@ CreateLayersPanel = function()
 		width = "100%",
 		height = "auto",
 		halign = "left",
+		valign = "top",
 		gui.AddButton{
 			halign = 'center',
 			valign = 'top',
@@ -401,6 +406,7 @@ CreateLayersPanel = function()
 					flow = 'none',
 					height = 12,
 					width = '100%',
+					valign = "top",
 
 					draggable = true,
 					canDragOnto = function(element, target)
@@ -708,6 +714,7 @@ CreateLayersPanel = function()
 						local layersPanel = gui.Panel{
 							width = "90%",
 							height = "auto",
+							valign = "top",
 							flow = "vertical",
 							expanded = function(element, expanded)
 								if not expanded then
@@ -741,6 +748,7 @@ CreateLayersPanel = function()
 						floorPanel = gui.Panel{
 							bgimage = 'panels/square.png',
 							classes = {'floorPanel'},
+							valign = "top",
 							monitorGame = '/mapFloors/' .. floor.floorid .. '/description',
 							draggable = true,
 							dragBounds = { x1 = 0, x2 = 0, y1 = -1000, y2 = 1000},
