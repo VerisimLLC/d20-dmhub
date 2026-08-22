@@ -64,12 +64,20 @@ CreateClipboard = function(options)
         width = "100%",
         height = "auto",
 
+        --focus events can fire while this panel isn't parented inside a
+        --dockablePanel, so the parent lookup may come back nil.
         childfocus = function(element)
-            element:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", true)
+            local dockPanel = element:FindParentWithClass("dockablePanel")
+            if dockPanel ~= nil then
+                dockPanel:SetClass("highlightPanel", true)
+            end
         end,
 
         childdefocus = function(element, focusInfo)
-            element:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", false)
+            local dockPanel = element:FindParentWithClass("dockablePanel")
+            if dockPanel ~= nil then
+                dockPanel:SetClass("highlightPanel", false)
+            end
             dmhub.SetSettingValue("selectiontool", "none")
         end,
 
