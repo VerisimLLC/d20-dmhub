@@ -947,7 +947,11 @@ CreateFolderContentsPanel = function(journalPanel, folderid)
         --lmargin indent and shifted each level LEFT, collapsing the
         --ladder so nested rows drew left of root headers. Left-aligned
         --with a contained width, both hosts lay out identically.
+        --valign for the same reason: without it the rail host centers
+        --the tree vertically in the scroll area, leaving a dead gap
+        --above the first folder.
         halign = "left",
+        valign = "top",
         width = "100%-" .. indent,
         height = "auto",
         flow = "vertical",
@@ -1904,8 +1908,12 @@ CreateJournalPanel = function(options)
     --Like the floors list, the journal's children must be valign = "top" or
     --the engine spreads them out to fill the panel's fixed height, leaving
     --big gaps between the search bar, tree and buttons.
+    --A campaign with no recent documents also gets the zero-height
+    --placeholder: the cards are only built for docs that exist here, so
+    --the strip would otherwise sit as 130px of dead space above the
+    --search bar.
     local recentDocumentsPanel
-    if options.embedded then
+    if options.embedded or GetRecentDocuments()[1] == nil then
         recentDocumentsPanel = gui.Panel {
             width = "100%",
             height = 0,
@@ -2008,6 +2016,7 @@ CreateJournalPanel = function(options)
                 selectors = { "searchResultRow" },
                 width = "100%",
                 height = 20,
+                valign = "top",
                 bgimage = "panels/square.png",
                 bgcolor = "clear",
                 flow = "horizontal",
@@ -2107,6 +2116,7 @@ CreateJournalPanel = function(options)
                     width = "auto",
                     height = "auto",
                     halign = "center",
+                    valign = "top",
                     tmargin = 12,
                     text = "No matching documents",
                 }

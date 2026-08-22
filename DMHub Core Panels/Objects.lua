@@ -1169,10 +1169,9 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 					end,
 				},
 				selfStyle = {
-					--Must be absolute. A percent here would multiply the theme's
-					--14pt label size, giving unreadable ~10pt text. 24 is the
-					--old size (engine default 36 x 70%).
-					fontSize = 24,
+					--No fontSize here: inherit the editor's label rule (14, same
+					--as the theme). A percent would multiply that 14 into
+					--unreadable ~10pt text, so any override must be absolute.
 					width = 'auto',
 					height = 'auto',
 					halign = 'left',
@@ -2010,7 +2009,7 @@ mod.shared.CreateObjectEditor = function(options)
 		styles = {
 			{
 				selectors = {"label"},
-				fontSize = 18,
+				fontSize = 14,
 				color = Styles.textColor,
 			},
 			{
