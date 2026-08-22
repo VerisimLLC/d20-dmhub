@@ -1169,7 +1169,10 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 					end,
 				},
 				selfStyle = {
-					fontSize = "70%",
+					--Must be absolute. A percent here would multiply the theme's
+					--14pt label size, giving unreadable ~10pt text. 24 is the
+					--old size (engine default 36 x 70%).
+					fontSize = 24,
 					width = 'auto',
 					height = 'auto',
 					halign = 'left',
