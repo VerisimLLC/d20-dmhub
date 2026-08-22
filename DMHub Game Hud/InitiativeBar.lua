@@ -191,15 +191,20 @@ function GameHud.CreateInitiativeBar(self, info)
 		},
 
 		children = {
-			--background shadow
+			--A soft shadow sitting behind the "Initiative / Round N" title to keep it
+			--readable against bright maps. This uses the same shadow texture the bar
+			--always used, but sized to hug the title instead of stretching a large
+			--dark cloud over the battle map. The entry cards and End Turn button
+			--carry their own backgrounds, so they don't need any extra backing.
 			gui.Panel{
 				id = "initiativeShadow",
 				interactable = false,
 				bgimage = 'panels/initiative/shadow.png',
-				width = "160%",
-				height = 400,
+				width = 440,
+				height = 170,
 				valign = "top",
 				halign = "center",
+				y = -20,
 			},
 
 			--text at the top saying initiative.
