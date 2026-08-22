@@ -3,6 +3,7 @@ local mod = dmhub.GetModLoading()
 --- @class ModalDialogArgs:PanelArgs
 --- @param title string
 --- @param buttons {text: string, click: nil|function, escapeActivates: boolean}[]
+--- @param buttonsHalign nil|"left"|"center"|"right" alignment of the button row (default "right")
 --- @param classes: nil|string[]
 
 --- Create a modal dialog
@@ -85,6 +86,13 @@ function GameHud:ModalDialog(options)
 	local buttons = options.buttons or { { text = "Close" } }
 	options.buttons = nil
 
+	--in a horizontal flow the engine groups children by their halign, so
+	--aligning the row means aligning every button. Consume the option here:
+	--anything left in options goes straight to gui.Panel below, and the
+	--engine logs a warning for panel properties it doesn't know.
+	local buttonsHalign = options.buttonsHalign or 'right'
+	options.buttonsHalign = nil
+
 	for _,button in ipairs(buttons) do
 		buttonElements[#buttonElements+1] =
 			gui.PrettyButton{
@@ -93,7 +101,7 @@ function GameHud:ModalDialog(options)
 				escapePriority = EscapePriority.EXIT_MODAL_DIALOG,
 				width = 200,
 				height = 50,
-				halign = 'right',
+				halign = buttonsHalign,
 				hmargin = 8,
 				events = {
 					click = function(element)
