@@ -808,7 +808,13 @@ GameSystem.RegisterConditionRule{
 	conditions = {"Unconscious", "Incapacitated", "Prone"},
 
 	rule = function(targetCreature, modifiers)
-		return targetCreature:MaxHitpoints(modifiers) <= targetCreature.damage_taken
+		local maxHitpoints = targetCreature:MaxHitpoints(modifiers)
+		if type(maxHitpoints) ~= "number" then
+			--a broken modifier can make MaxHitpoints return nil; don't let that
+			--crash condition calculation for the whole creature.
+			return false
+		end
+		return maxHitpoints <= targetCreature.damage_taken
 	end,
 }
 

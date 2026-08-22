@@ -2769,8 +2769,10 @@ end
 function CharacterModifier:Modify(modContext, creature, attribute, currentValue)
 	local typeInfo = CharacterModifier.TypeInfo[self.behavior]
 	if typeInfo == nil then
-		print("No modify function for behavior: " .. self.behavior .. " in behavior " .. json(self))
-            return
+		print("No modify function for behavior: " .. tostring(self.behavior) .. " in behavior " .. json(self))
+		--leave the attribute unchanged; returning nil here would poison calculations
+		--like MaxHitpoints that fold each modifier into a running number.
+		return currentValue
 	end
 	local modify = typeInfo.modify
 	if modify then
