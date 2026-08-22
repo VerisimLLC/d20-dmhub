@@ -8965,7 +8965,7 @@ local function IconRailStyles()
             bgcolor = "clear",
             border = 0,
             color = "@fgStrong",
-            fontSize = 12,
+            fontSize = 16,
             bold = true,
             transitionTime = 0.15,
         },
@@ -8997,7 +8997,7 @@ local function IconRailStyles()
         {
             selectors = {"label", "iconRailStripLabel"},
             color = "@fgStrong",
-            fontSize = 12,
+            fontSize = 16,
             bold = true,
         },
         --Close hint: hovering a button whose panel is open means a click
@@ -10674,8 +10674,8 @@ ShowToolkitStrip = function(id, anchorX, anchorY)
                 gui.Panel{
                     classes = {"iconRailIcon"},
                     bgimage = itemIcon,
-                    width = 20,
-                    height = 20,
+                    width = 26,
+                    height = 26,
                     halign = "center",
                     valign = "center",
                     interactable = false,
@@ -10687,8 +10687,8 @@ ShowToolkitStrip = function(id, anchorX, anchorY)
                     classes = {"iconRailCloseHint"},
                     floating = true,
                     bgimage = "phosphor/x-bold.png",
-                    width = 16,
-                    height = 16,
+                    width = 21,
+                    height = 21,
                     halign = "center",
                     valign = "center",
                     interactable = false,
@@ -10778,8 +10778,8 @@ ShowToolkitStrip = function(id, anchorX, anchorY)
                 gui.Panel{
                     classes = {"iconRailIcon"},
                     bgimage = item.icon or "phosphor/lightning.png",
-                    width = 20,
-                    height = 20,
+                    width = 26,
+                    height = 26,
                     halign = "center",
                     valign = "center",
                     interactable = false,
@@ -10818,8 +10818,8 @@ ShowToolkitStrip = function(id, anchorX, anchorY)
         gui.Panel{
             classes = {"iconRailIcon"},
             bgimage = "phosphor/plus-bold.png",
-            width = 16,
-            height = 16,
+            width = 21,
+            height = 21,
             halign = "center",
             valign = "center",
             interactable = false,
@@ -12020,8 +12020,8 @@ local function CreateRailAddButton(side)
         gui.Panel{
             classes = {"iconRailIcon", "iconRailAddIcon"},
             bgimage = "phosphor/plus-bold.png",
-            width = 18,
-            height = 18,
+            width = 23,
+            height = 23,
             halign = "center",
             valign = "center",
             interactable = false,
@@ -12037,8 +12037,8 @@ local function CreateRailAddButton(side)
             classes = {"iconRailCloseHint", "iconRailAddCloseHint"},
             floating = true,
             bgimage = "phosphor/x-bold.png",
-            width = 16,
-            height = 16,
+            width = 21,
+            height = 21,
             halign = "center",
             valign = "center",
             interactable = false,
@@ -12106,8 +12106,8 @@ local function CreateIconRail(side, entries)
             gui.Panel{
                 classes = {"iconRailStopIcon"},
                 bgimage = "phosphor/x-bold.png",
-                width = 20,
-                height = 20,
+                width = 26,
+                height = 26,
                 halign = "center",
                 valign = "center",
             },
@@ -12588,8 +12588,8 @@ local function CreateIconRail(side, entries)
                     gui.Panel{
                         classes = {"iconRailIcon"},
                         bgimage = memberIcon,
-                        width = 20,
-                        height = 20,
+                        width = 26,
+                        height = 26,
                         halign = "center",
                         valign = "center",
                         interactable = false,
@@ -12603,8 +12603,8 @@ local function CreateIconRail(side, entries)
                         classes = {"iconRailCloseHint"},
                         floating = true,
                         bgimage = "phosphor/x-bold.png",
-                        width = 16,
-                        height = 16,
+                        width = 21,
+                        height = 21,
                         halign = "center",
                         valign = "center",
                         interactable = false,
@@ -12800,8 +12800,8 @@ local function CreateIconRail(side, entries)
                 cutoutChildren[#cutoutChildren + 1] = gui.Panel{
                     classes = {"iconRailGroupCutoutPlus"},
                     bgimage = "phosphor/plus-bold.png",
-                    width = 16,
-                    height = 16,
+                    width = 21,
+                    height = 21,
                     halign = "center",
                     valign = "center",
                     interactable = false,
@@ -12864,8 +12864,8 @@ local function CreateIconRail(side, entries)
             --FIXED width, sized for the longest name in the group: the
             --flyout is width-auto, so a name slot that resized with its
             --text shifted the whole open strip sideways whenever the
-            --pointer moved between owner and members. ~8px per character
-            --of the 12px small-caps font, with a little slack -- a
+            --pointer moved between owner and members. ~11px per character
+            --of the 16px small-caps font, with a little slack -- a
             --slightly roomy slot beats a moving strip.
             local nameSlotChars = #HoverLabelText()
             for _, t in ipairs(memberLabelTexts) do
@@ -12877,7 +12877,7 @@ local function CreateIconRail(side, entries)
                 classes = {"iconRailStripLabel"},
                 text = HoverLabelText(),
                 interactable = false,
-                width = nameSlotChars * 8 + 12,
+                width = nameSlotChars * 11 + 12,
                 height = "auto",
                 valign = "center",
                 textAlignment = "left",
@@ -13008,8 +13008,8 @@ local function CreateIconRail(side, entries)
             buttonContent = gui.Panel{
                 classes = {"iconRailIcon"},
                 bgimage = buttonIcon,
-                width = 20,
-                height = 20,
+                width = 26,
+                height = 26,
                 halign = "center",
                 valign = "center",
                 create = function(element)
@@ -13305,7 +13305,7 @@ local function CreateIconRail(side, entries)
                 --Width covers the member slots plus the name slot (a
                 --generous allowance; erring toward the card near an edge
                 --beats loose buttons over a window).
-                local stripWidth = #groupMembers * (ICON_RAIL_BUTTON + 8) + 160
+                local stripWidth = #groupMembers * (ICON_RAIL_BUTTON + 8) + 220
                 local sy = ICON_RAIL_TOP + buttonTop
                 local sx1
                 if side == "left" then
@@ -13427,8 +13427,8 @@ local function CreateIconRail(side, entries)
                 classes = {"iconRailCloseHint"},
                 floating = true,
                 bgimage = "phosphor/x-bold.png",
-                width = 16,
-                height = 16,
+                width = 21,
+                height = 21,
                 halign = "center",
                 valign = "center",
                 interactable = false,
