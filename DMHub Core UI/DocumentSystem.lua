@@ -6462,7 +6462,7 @@ end
 ----------------------------------------------------------------------
 -- Panel icon rail
 -- ---------------
--- Experimental alternative host for the dockable panels: translucent
+-- The default host for the dockable panels: translucent
 -- icon rails down the left and right edges of the screen. Clicking an
 -- icon opens the panel in a document window beside the rail (one such
 -- "transient" window at a time); dragging a window makes it stick where
@@ -6475,11 +6475,12 @@ end
 -- rail button's context menu): a pinned window is locked in place -- no
 -- close, no drag, no resize -- and always comes back with the rails.
 --
--- Off by default; opted into per-user from Settings > General ("New
--- Experimental UI"), or via /toggle iconrail. The dock system is
--- untouched while the rail is off; while it is on, each side's dock is
--- slid away and its handle tab hidden, so the rails are the way panels
--- are reached (the Panels menu still toggles the docks).
+-- On by default; users can opt back into the classic dock UI per-user
+-- from Settings > General ("Classic UI"), or via /toggle classicui.
+-- The dock system is untouched while the rail is off; while it is on,
+-- each side's dock is slid away and its handle tab hidden, so the rails
+-- are the way panels are reached (the Panels menu still toggles the
+-- docks).
 ----------------------------------------------------------------------
 
 --forward-declared (defined next to SyncDockHandles): slides the docks
@@ -6487,10 +6488,15 @@ end
 --turns off.
 local SyncDocksToRailMode
 
+--The rail UI is the default, so the user-facing switch is phrased the
+--other way around: ticking "Classic UI" turns the rails OFF. (The rail
+--was originally an opt-in trial behind a "New Experimental UI" checkbox
+--stored as `iconrail`; the id changed when the default flipped, so
+--everyone starts on the new UI regardless of any old stored value.)
 setting{
-    id = "iconrail",
-    description = "New Experimental UI",
-    help = "Experimental: replace the side docks with icon rails on the screen edges, and summon panels as floating windows from them.",
+    id = "classicui",
+    description = "Classic UI",
+    help = "Use the classic side-dock UI instead of the icon rails and floating panel windows.",
     storage = "preference",
     --5e's settings dialog lists any setting with a section field.
     section = "General",
@@ -6508,6 +6514,18 @@ setting{
         end
         EnsureIconRail()
     end,
+}
+
+--One-shot flag for the rail-by-default rollout. Sliding the docks off
+--screen only ever happened from the opt-in checkbox's onchange, so a
+--user who lands in rail mode without touching any checkbox would get
+--rails AND docks together. The EnterGame handler at the bottom of this
+--file syncs the docks once per user and sets this so it never forces
+--them again.
+setting{
+    id = "classicuidockssynced",
+    storage = "preference",
+    default = false,
 }
 
 --Which rail windows are open and where, for this game:
@@ -7989,7 +8007,8 @@ end
 
 --Toggling the rail moves the docks with it: rail ON slides both docks
 --off screen (the rail replaces them); rail OFF slides both back in.
---Called ONLY from the iconrail setting's onchange -- EnsureIconRail
+--Called from the classicui setting's onchange, plus a once-per-user
+--sync at EnterGame (the rail-by-default rollout) -- EnsureIconRail
 --also runs at EnterGame and after a Lua reload, where forcing the
 --docks would trample a dock the user deliberately re-opened from the
 --Panels menu while in rail mode.
@@ -9594,12 +9613,12 @@ local function RailAddPanel(name, side)
 end
 
 --Rail mode gate, exported so other surfaces (the Panels menu, the
---journal) can ask without repeating the setting lookup. The mode is
---opt-in per user from Settings > General ("New Experimental UI"); it
---used to additionally require devmode() while the rail was a dev-only
---trial.
+--journal) can ask without repeating the setting lookup. The rail UI is
+--the default; users opt back into the classic dock UI per-user from
+--Settings > General ("Classic UI"). (The rail started as an opt-in,
+--devmode-gated trial before becoming the default.)
 function RailModeActive()
-    return dmhub.GetSettingValue("iconrail") == true
+    return dmhub.GetSettingValue("classicui") ~= true
 end
 
 --How deeply floating rail panel windows currently intrude into the
@@ -14606,10 +14625,10 @@ end)
 --Create or destroy the rails to match the setting; restore pinned windows
 --when they come up. Safe to call any time.
 function EnsureIconRail()
-    --OPT-IN trial: the rail (and everything riding it -- Views, doc
-    --shortcuts, dock handoff) activates only for users who tick "New
-    --Experimental UI" in Settings > General. (It was additionally
-    --devmode-gated while the rail was a dev-only trial.)
+    --The rail (and everything riding it -- Views, doc shortcuts, dock
+    --handoff) is the default UI; it deactivates only for users who tick
+    --"Classic UI" in Settings > General. (It began as an opt-in,
+    --devmode-gated trial before becoming the default.)
     local enabled = RailModeActive()
 
     if not enabled then
@@ -14814,6 +14833,20 @@ dmhub.RegisterEventHandler("EnterGame", function()
         end
 
         EnsureIconRail()
+
+        --Once-per-user dock handoff for the rail-by-default rollout:
+        --sliding the docks away used to happen only from the opt-in
+        --checkbox's onchange, so a user who starts in rail mode without
+        --ever flipping a checkbox would get rails AND docks together.
+        --Guarded by a stored flag rather than run every entry: EnterGame
+        --must not keep forcing the docks, or it would trample a dock the
+        --user deliberately re-opened from the Panels menu in rail mode.
+        if RailModeActive() and not dmhub.GetSettingValue("classicuidockssynced") then
+            dmhub.SetSettingValue("classicuidockssynced", true)
+            if SyncDocksToRailMode ~= nil then
+                SyncDocksToRailMode()
+            end
+        end
 
         --A retired built-in (Map Maker, 2026-08-08) can still be named as
         --the active view in a game that used it. Its arrangement is

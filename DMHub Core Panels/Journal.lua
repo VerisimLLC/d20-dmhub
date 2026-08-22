@@ -406,10 +406,10 @@ end
 --non-drag path for the shortcut feature). Returns a list to APPEND to
 --the document row's normal context menu -- never a menu of its own,
 --which would shadow the standard verbs (Share to Chat, Rename, ...).
---Empty when the rail trial mode is off (opt-in per user from
---Settings > General, "New Experimental UI").
+--Empty when the user has opted back into the classic dock UI
+--(Settings > General, "Classic UI"; the rail is otherwise the default).
 local function RailAvailable()
-    return dmhub.GetSettingValue("iconrail") == true
+    return dmhub.GetSettingValue("classicui") ~= true
 end
 
 local function RailAddMenuEntries(element, doc)
@@ -1901,11 +1901,15 @@ CreateJournalPanel = function(options)
     --the cards and leave them parentless. An empty placeholder rather than
     --nil, because a nil hole in the positional child list truncates it and
     --would drop the tree panel that follows.
+    --Like the floors list, the journal's children must be valign = "top" or
+    --the engine spreads them out to fill the panel's fixed height, leaving
+    --big gaps between the search bar, tree and buttons.
     local recentDocumentsPanel
     if options.embedded then
         recentDocumentsPanel = gui.Panel {
             width = "100%",
             height = 0,
+            valign = "top",
         }
     else
         recentDocumentsPanel = gui.Panel {
@@ -1913,6 +1917,7 @@ CreateJournalPanel = function(options)
             bgcolor = "clear",
             width = "100%",
             height = 130,
+            valign = "top",
 
             MakeRecentDocumentPanel(1),
             MakeRecentDocumentPanel(2),
@@ -1996,6 +2001,7 @@ CreateJournalPanel = function(options)
         flow = "vertical",
         width = "100%",
         height = "100% available",
+        valign = "top",
 
         styles = ThemeEngine.MergeTokens({
             {
@@ -2118,6 +2124,7 @@ CreateJournalPanel = function(options)
         width = "100%-16",
         height = 24,
         halign = "center",
+        valign = "top",
         tmargin = 4,
         bmargin = 4,
         fontSize = 13,
@@ -2167,6 +2174,7 @@ CreateJournalPanel = function(options)
             flow = "vertical",
             width = "100%",
             height = "100% available",
+            valign = "top",
 
             --TREE LAYOUT MODEL: a classic ladder. Indentation comes from
             --exactly one place: each folder's contents panel (see
@@ -2505,6 +2513,7 @@ CreateJournalPanel = function(options)
             width = "auto",
             height = 32,
             halign = "right",
+            valign = "top",
             hmargin = 12,
             flow = "horizontal",
 
