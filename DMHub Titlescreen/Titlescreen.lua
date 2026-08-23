@@ -26,6 +26,23 @@ local g_gamePageSetting = setting{
 	default = 1,
 }
 
+local STORAGE_FIREBASE = 0
+local STORAGE_DURABLE_OBJECTS = 1
+local STORAGE_DURABLE_OBJECTS_STAGING = 2
+local STORAGE_LOCAL = 3
+
+local function GetStorageBackendLabel(storage)
+    if storage == STORAGE_DURABLE_OBJECTS then
+        return "Cloudflare"
+    elseif storage == STORAGE_DURABLE_OBJECTS_STAGING then
+        return "Cloudflare (Staging)"
+    elseif storage == STORAGE_LOCAL then
+        return "This Computer"
+    end
+
+    return "Firebase (Deprecated)"
+end
+
 local codeMod5e = "b2f58995-4b34-40ab-9dba-5ae0ec387c33"
 
 local AvailableGameSystems = {
@@ -174,6 +191,158 @@ local CreateGameScreen = function(titlescreen)
 
     local m_currentGame = nil
 
+    local function ShowPromoteLocalGameDialog(gameInfo)
+        if gameInfo == nil or gameInfo.storage ~= STORAGE_LOCAL or not gameInfo.hasLocalData then
+            return
+        end
+
+        local useStaging = false
+        local modal
+
+        local statusLabel = gui.Label{
+            classes = {"dialogMessage", "hidden"},
+            text = "Preparing...",
+        }
+
+        local progressBar = gui.ProgressBar{
+            classes = {"hidden"},
+            width = "80%",
+            height = 24,
+            halign = "center",
+            valign = "center",
+            value = 0,
+        }
+
+        local closeButton = gui.Button{
+            classes = {"dialogButton", "hidden"},
+            text = "Close",
+            halign = "center",
+            valign = "bottom",
+            vmargin = 16,
+            click = function(element)
+                modal:DestroySelf()
+            end,
+        }
+
+        local backendPanel = gui.Panel{
+            classes = cond(dmhub.GetSettingValue("dev"), {}, {"hidden"}),
+            width = "80%",
+            height = 36,
+            halign = "center",
+            flow = "horizontal",
+
+            gui.Label{
+                text = "Deploy To:",
+                width = "auto",
+                height = "auto",
+                fontSize = 16,
+                valign = "center",
+                rmargin = 8,
+            },
+
+            gui.Dropdown{
+                width = 240,
+                height = 28,
+                fontSize = 16,
+                valign = "center",
+                options = {
+                    {id = "release", text = "Cloudflare"},
+                    {id = "staging", text = "Cloudflare (Staging)"},
+                },
+                idChosen = "release",
+                change = function(element)
+                    useStaging = element.idChosen == "staging"
+                end,
+            },
+        }
+
+        local actionPanel
+        local function startDeployment()
+            actionPanel:SetClass("hidden", true)
+            backendPanel:SetClass("hidden", true)
+            statusLabel:SetClass("hidden", false)
+            progressBar:SetClass("hidden", false)
+
+            lobby:PromoteLocalGame{
+                gameid = gameInfo.gameid,
+                staging = useStaging,
+                progress = function(status, progress)
+                    if modal == nil or not modal.valid then
+                        return
+                    end
+
+                    statusLabel.text = status or "Deploying..."
+                    progressBar:SetValue(progress or 0)
+                end,
+                complete = function(success, newGameid, errorMessage)
+                    if modal == nil or not modal.valid then
+                        return
+                    end
+
+                    if success then
+                        statusLabel.text = string.format("Game deployed. Invite code: %s", newGameid)
+                        progressBar:SetValue(1)
+                        titlescreen:RefreshLobby()
+                        dmhub.Schedule(1, function()
+                            if modal ~= nil and modal.valid then
+                                modal:DestroySelf()
+                            end
+                        end)
+                    else
+                        statusLabel.text = "Deployment failed: " .. (errorMessage or "Unknown error")
+                        statusLabel.selfStyle.color = "red"
+                        progressBar:SetClass("hidden", true)
+                        closeButton:SetClass("hidden", false)
+                    end
+                end,
+            }
+        end
+
+        actionPanel = gui.Panel{
+            classes = {"dialogButtonsPanel"},
+
+            gui.Button{
+                classes = {"dialogButton"},
+                text = "Deploy Online",
+                click = function(element)
+                    startDeployment()
+                end,
+            },
+
+            gui.Button{
+                classes = {"dialogButton"},
+                text = "Cancel",
+                escapeActivates = true,
+                click = function(element)
+                    modal:DestroySelf()
+                end,
+            },
+        }
+
+        modal = titlescreen:ShowModal{
+            width = 650,
+            height = 500,
+
+            gui.Label{
+                classes = {"title"},
+                text = "Invite Players",
+            },
+
+            gui.Label{
+                classes = {"dialogMessage"},
+                text = "This game is currently stored only on this computer. " ..
+                    "Deploying it online creates a new invite code and copies the game to Cloudflare. " ..
+                    "The local copy is removed only after the online copy is verified.",
+            },
+
+            backendPanel,
+            statusLabel,
+            progressBar,
+            actionPanel,
+            closeButton,
+        }
+    end
+
     local m_messagePanel = gui.Label{
         classes = {"collapsed"},
         width = "80%",
@@ -249,6 +418,24 @@ local CreateGameScreen = function(titlescreen)
                 end
 
                 element.text = systemInfo.playerText or systemInfo.text
+            end,
+        },
+
+        gui.Label{
+            opacity = 0.6,
+            width = "80%",
+            height = 24,
+            halign = "center",
+            fontSize = 16,
+            textAlignment = "center",
+
+            refreshLobby = function(element)
+                if m_currentGame == nil then
+                    element.text = ""
+                    return
+                end
+
+                element.text = "Storage: " .. GetStorageBackendLabel(m_currentGame.storage)
             end,
         },
 
@@ -361,6 +548,9 @@ local CreateGameScreen = function(titlescreen)
                 width = "100%",
                 halign = "center",
                 vmargin = 8,
+                refreshLobby = function(element)
+                    element:SetClass("collapsed", m_currentGame == nil or m_currentGame.storage == STORAGE_LOCAL)
+                end,
                 click = function(element)
                     local tooltip = gui.Tooltip{text = "Copied to Clipboard", valign = "top", borderWidth = 0}(element)
                     dmhub.CopyToClipboard(m_selectedGameId)
@@ -406,8 +596,51 @@ local CreateGameScreen = function(titlescreen)
                 cornerRadius = 30,
                 halign = "center",
 
+                refreshLobby = function(element)
+                    element:SetClass("collapsed", m_currentGame ~= nil and
+                        m_currentGame.storage == STORAGE_LOCAL and not m_currentGame.hasLocalData)
+                end,
+
                 click = function(element)
                     lobby:EnterGame(m_selectedGameId)
+                end,
+            },
+
+            gui.Button{
+                classes = {"gradient", "collapsed"},
+                text = "Invite Players",
+                fontSize = 24,
+                fontWeight = "light",
+                width = "80%",
+                height = 52,
+                cornerRadius = 26,
+                halign = "center",
+                vmargin = 6,
+
+                refreshLobby = function(element)
+                    local show = m_currentGame ~= nil and m_currentGame.storage == STORAGE_LOCAL and
+                        m_currentGame.hasLocalData and m_currentGame:IsOwner()
+                    element:SetClass("collapsed", not show)
+                end,
+
+                click = function(element)
+                    ShowPromoteLocalGameDialog(m_currentGame)
+                end,
+            },
+
+            gui.Label{
+                classes = {"collapsed"},
+                width = "90%",
+                height = "auto",
+                halign = "center",
+                fontSize = 15,
+                textAlignment = "center",
+                text = "This offline game was created on another computer. Open it there and choose Invite Players to deploy it online.",
+
+                refreshLobby = function(element)
+                    local show = m_currentGame ~= nil and m_currentGame.storage == STORAGE_LOCAL and
+                        not m_currentGame.hasLocalData
+                    element:SetClass("collapsed", not show)
                 end,
             },
         },
@@ -630,6 +863,9 @@ local CreateGameScreen = function(titlescreen)
         gui.Label{
             classes = {"fieldLabel"},
             text = "Invite Code:",
+            refreshLobby = function(element)
+                element:SetClass("collapsed", m_currentGame == nil or m_currentGame.storage == STORAGE_LOCAL)
+            end,
         },
 
         gui.Panel{
@@ -638,6 +874,9 @@ local CreateGameScreen = function(titlescreen)
             width = "80%",
             halign = "center",
             vmargin = 0,
+            refreshLobby = function(element)
+                element:SetClass("collapsed", m_currentGame == nil or m_currentGame.storage == STORAGE_LOCAL)
+            end,
             click = function(element)
                 local tooltip = gui.Tooltip{text = "Copied to Clipboard", valign = "top", borderWidth = 0}(element)
                 dmhub.CopyToClipboard(m_selectedGameId)
@@ -674,12 +913,19 @@ local CreateGameScreen = function(titlescreen)
         gui.Label{
             classes = {"fieldLabel"},
             text = "Password:",
+            refreshLobby = function(element)
+                element:SetClass("collapsed", m_currentGame == nil or m_currentGame.storage == STORAGE_LOCAL)
+            end,
         },
 
         gui.Input{
             characterLimit = lobby.maxGamePasswordLength,
             placeholderText = "(Optional) Enter a password here...",
             password = true,
+
+            refreshLobby = function(element)
+                element:SetClass("collapsed", m_currentGame == nil or m_currentGame.storage == STORAGE_LOCAL)
+            end,
 
             change = function(element)
                 m_currentGame.password = element.text
@@ -854,6 +1100,7 @@ local CreateGameScreen = function(titlescreen)
     }
 
     local m_joinGamePanel
+    local m_newGameBackend = "local"
     m_joinGamePanel = gui.Panel{
         classes = {"collapsed"},
         width = "100%",
@@ -1013,17 +1260,63 @@ local CreateGameScreen = function(titlescreen)
             classes = {"title"},
             halign = "center",
             valign = "bottom",
-            text = "Host New Game",
+            text = "Create New Game",
         },
         gui.Divider{
             valign = "bottom",
         },
+
+        gui.Label{
+            width = "80%",
+            height = "auto",
+            halign = "center",
+            valign = "bottom",
+            textAlignment = "center",
+            fontSize = 15,
+            text = "New games start on this computer. Use Invite Players when you are ready to deploy the game online.",
+        },
+
+        gui.Panel{
+            hidden = not dmhub.GetSettingValue("dev"),
+            width = "80%",
+            height = 36,
+            halign = "center",
+            valign = "bottom",
+            flow = "horizontal",
+
+            gui.Label{
+                text = "Storage:",
+                width = "auto",
+                height = "auto",
+                fontSize = 15,
+                valign = "center",
+                rmargin = 8,
+            },
+
+            gui.Dropdown{
+                width = 260,
+                height = 28,
+                fontSize = 15,
+                valign = "center",
+                options = {
+                    {id = "local", text = "This Computer (Default)"},
+                    {id = "durableobjects", text = "Cloudflare"},
+                    {id = "durableobjects-staging", text = "Cloudflare (Staging)"},
+                    {id = "firebase", text = "Firebase (Deprecated)"},
+                },
+                idChosen = "local",
+                change = function(element)
+                    m_newGameBackend = element.idChosen
+                end,
+            },
+        },
+
         gui.Button{
             data = {
 
             },
             classes = {"gradient"},
-            text = "Host Game",
+            text = "Create Game",
             fontSize = 28,
             fontWeight = "light",
 
@@ -1036,7 +1329,12 @@ local CreateGameScreen = function(titlescreen)
 
             click = function(element)
                 m_gamescreen:FireEventTree("showGameMessage", "Creating Game...")
-                lobby:CreateGame()
+                lobby:CreateGame{
+                    backend = m_newGameBackend,
+                    error = function(message)
+                        m_gamescreen:FireEventTree("error", message or "The game could not be created.")
+                    end,
+                }
             end,
         },
     }
@@ -1422,8 +1720,10 @@ local CreateGameScreen = function(titlescreen)
 
     m_gamescreen = gui.Panel{
         idprefix = "gamescreen",
-        width = "100%",
-        height = "100%",
+        width = titlescreen.dialog.width,
+        height = titlescreen.dialog.height,
+        halign = "center",
+        valign = "center",
 
         styles = {
             Styles.Default,

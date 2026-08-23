@@ -1,4 +1,6 @@
 --- @class LuaGameInfo 
+--- @field storage number 0=Firebase, 1=Cloudflare, 2=Cloudflare staging, 3=local.
+--- @field hasLocalData boolean True when this machine has the data for a local game.
 --- @field gameSystem any 
 --- @field description any 
 --- @field descriptionDetails any 
