@@ -11,6 +11,12 @@ function SheetContainer:Close()
 	-- dummy implementation for documentation purposes only
 end
 
+--- DestroySelf
+--- @return nil
+function SheetContainer:DestroySelf()
+	-- dummy implementation for documentation purposes only
+end
+
 --- Destroy
 --- @return nil
 function SheetContainer:Destroy()

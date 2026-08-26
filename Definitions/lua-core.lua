@@ -15,8 +15,11 @@ if math.tointeger == nil then
 end
 
 function tostring(s)
-	if type(s) == "number" and math.floor(s) == s then
-		return string.format("%d", math.tointeger(s))
+	if type(s) == "number" then
+		local i = math.tointeger(s)
+		if i ~= nil then
+			return string.format("%d", i)
+		end
 	end
 
 	if type(s) == "table" then
@@ -201,7 +204,28 @@ end
 
 allowUnsafeReads = false
 
+function unsafe_reads(f)
+	local oldValue = allowUnsafeReads
+	allowUnsafeReads = true
+	pcall(f)
+	allowUnsafeReads = oldValue
+end
+
 local g_registerGameTypes = {}
+
+local IsDerivedFrom
+IsDerivedFrom = function(a,b)
+	if a == nil or b == nil then
+		return false
+	end
+
+	if a == b then
+		return true
+	end
+
+	local info = g_registerGameTypes[a]
+	return IsDerivedFrom(info ~= nil and info.base, b)
+end
 
 ---@param typeName string
 ---@param baseTypeName string|nil
@@ -221,6 +245,8 @@ function RegisterGameType(typeName, baseTypeName)
 		existingType = _G[typeName]
 	end
 
+	local m_aliases = {}
+	
 	local newType = {
 		new = function(o)
 			o = o or {}
@@ -257,7 +283,26 @@ function RegisterGameType(typeName, baseTypeName)
 		end,
 
 		typeName = typeName,
+
+		IsDerivedFrom = function(t)
+			return IsDerivedFrom(typeName, t)
+		end,
+
+		AddAlias = function(a, b)
+			m_aliases = m_aliases or {}
+			m_aliases[a] = b
+		end,
 	}
+
+	if baseTypeName ~= nil then
+		local entry = g_registerGameTypes[baseTypeName]
+		if entry and entry.GetAliases() then
+			m_aliases = {}
+			for k,v in pairs(entry.GetAliases()) do
+				m_aliases[k] = v
+			end
+		end
+	end
 
 	if existingType ~= nil then
 		for k,v in pairs(newType) do
@@ -269,16 +314,54 @@ function RegisterGameType(typeName, baseTypeName)
 
 	if baseTypeName ~= nil then
 		setmetatable(newType, {
-			__index = _G[baseTypeName]
+			__index = function(t, n)
+				if m_aliases ~= nil then
+					local alias = m_aliases[n]
+					if alias ~= nil then
+						return t[alias]
+					end
+				end
+
+				return _G[baseTypeName][n]
+			end,
+
+			__newindex = function(t, k, v)
+				if m_aliases ~= nil then
+					local alias = m_aliases[k]
+					if alias ~= nil then
+						t[alias] = v
+						return
+					end
+				end
+
+				rawset(t, k, v)
+			end,
 		})
 	else
 		setmetatable(newType, {
 			__index = function(t, n)
+				local alias = m_aliases[n]
+				if alias ~= nil then
+					return t[alias]
+				end
+
 				if allowUnsafeReads then
 					return nil
 				else
 					error("Attempt to read unknown field " .. n .. " in type " .. t.typeName .. " at " .. debug.traceback(), 2)
 				end
+			end,
+
+			__newindex = function(t, k, v)
+				if m_aliases ~= nil then
+					local alias = m_aliases[k]
+					if alias ~= nil then
+						t[alias] = v
+						return
+					end
+				end
+
+				rawset(t, k, v)
 			end,
 
 			__tostring = function(self)
@@ -287,11 +370,35 @@ function RegisterGameType(typeName, baseTypeName)
 		})
 	end
 
-	newType.mt = { __index = newType, typeName = typeName, baseTypeName = baseTypeName }
+	--this is the actual metatable that gets set on instances.
+	newType.mt = {
+		__index = function(t,k)
+			if m_aliases ~= nil then
+				local alias = m_aliases[k]
+				if alias ~= nil then
+					return t[alias]
+				end
+			end
+
+			return newType[k]
+		end,
+		__newindex = function(t, k, v)
+			if m_aliases ~= nil then
+				local alias = m_aliases[k]
+				if alias ~= nil then
+					t[alias] = v
+					return
+				end
+			end
+			rawset(t, k, v)
+		end,
+		typeName = typeName,
+		baseTypeName = baseTypeName
+	}
 
 	_G[typeName] = newType
 
-	g_registerGameTypes[typeName] = { base = baseTypeName }
+	g_registerGameTypes[typeName] = { base = baseTypeName, GetAliases = function() return m_aliases end }
 	return _G[typeName]
 end
 
@@ -586,6 +693,46 @@ function GoblinScriptTrue(val)
 		return false
 	end
 end
+
+local function unpack_with_nil(t, i)
+	i = i or 1
+	if i <= #t then
+		if t[i] == dmhub.PlaceholderNil then
+			return nil, unpack_with_nil(t, i+1)
+		else
+			return t[i], unpack_with_nil(t, i+1)
+		end
+	end
+end
+
+--this is a wrapper for use with CharacterToken.ModifyProperties to 
+--allow it to be called while any synchronous coroutine calls are saved up
+--and then executed synchronously.
+function ModifyTokenProperties(token, options)
+	if token == nil or not token.valid then
+		return
+	end
+
+	if dmhub.inCoroutine then
+		dmhub.PushNativeCCallCoroutineContext()
+	end
+
+	token:ModifyPropertiesInternal(options)
+
+	--now executed any synchronous coroutines that were called while we
+	--were modifying the token properties.
+	if dmhub.inCoroutine then
+		local context = dmhub.PopNativeCCallCoroutineContext()
+		if context ~= nil then
+			while #context > 0 do
+				local entry = context[1]
+				table.remove(context, 1)
+				entry[1](unpack_with_nil(entry[2]))
+			end
+		end
+	end
+end
+
 
 --core types.
 

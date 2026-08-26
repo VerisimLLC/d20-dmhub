@@ -1,4 +1,8 @@
 --- @class CodeModLua 
+--- @field isUsingGit boolean 
+--- @field gitFolderPath nil|string The absolute path of this mod's folder in the git working copy, or nil if the mod is not git-mapped.
+--- @field unmanagedGitFiles any 
+--- @field filesMissingFromGit any 
 --- @field dependencies any 
 --- @field valid boolean 
 --- @field canWrite boolean 
@@ -11,10 +15,24 @@
 --- @field patches any 
 --- @field changelists any 
 --- @field checkedout boolean 
+--- @field isModified boolean 
 --- @field filesThatMayRequireMerge nil|CodeModFileLua[] 
 --- @field localChangeEvent any 
 --- @field hasLocalChanges boolean 
 CodeModLua = {}
+
+--- ReplicateToGit
+--- @return nil
+function CodeModLua:ReplicateToGit()
+	-- dummy implementation for documentation purposes only
+end
+
+--- ReplicateFileToGit
+--- @param fname string
+--- @return boolean
+function CodeModLua:ReplicateFileToGit(fname)
+	-- dummy implementation for documentation purposes only
+end
 
 --- AddResource
 --- @param p any
@@ -32,8 +50,9 @@ function CodeModLua:ReorderFiles(a, b)
 end
 
 --- AddFile
+--- @param fname any
 --- @return nil
-function CodeModLua:AddFile()
+function CodeModLua:AddFile(fname)
 	-- dummy implementation for documentation purposes only
 end
 
@@ -44,8 +63,14 @@ function CodeModLua:Upload()
 end
 
 --- RepairLocal
---- @return nil
+--- @return boolean
 function CodeModLua:RepairLocal()
+	-- dummy implementation for documentation purposes only
+end
+
+--- ImportLocal
+--- @return nil
+function CodeModLua:ImportLocal()
 	-- dummy implementation for documentation purposes only
 end
 
@@ -57,8 +82,29 @@ end
 
 --- OpenFile
 --- @param file any
---- @return nil
+--- @return boolean
 function CodeModLua:OpenFile(file)
+	-- dummy implementation for documentation purposes only
+end
+
+--- OpenFileMerge
+--- @param file any
+--- @return boolean
+function CodeModLua:OpenFileMerge(file)
+	-- dummy implementation for documentation purposes only
+end
+
+--- AcceptFileMerge
+--- @param file any
+--- @return nil
+function CodeModLua:AcceptFileMerge(file)
+	-- dummy implementation for documentation purposes only
+end
+
+--- AutoMergeFile
+--- @param file any
+--- @return boolean
+function CodeModLua:AutoMergeFile(file)
 	-- dummy implementation for documentation purposes only
 end
 

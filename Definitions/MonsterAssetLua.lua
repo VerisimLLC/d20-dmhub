@@ -1,4 +1,5 @@
 --- @class MonsterAssetLua 
+--- @field ctime number 
 --- @field hidden boolean 
 --- @field info any 
 --- @field canRotate any 
@@ -53,5 +54,18 @@ end
 --- ObliterateGameChanges
 --- @return nil
 function MonsterAssetLua:ObliterateGameChanges()
+	-- dummy implementation for documentation purposes only
+end
+
+--- Backup
+--- @return string
+function MonsterAssetLua:Backup()
+	-- dummy implementation for documentation purposes only
+end
+
+--- Restore
+--- @param s string
+--- @return nil
+function MonsterAssetLua:Restore(s)
 	-- dummy implementation for documentation purposes only
 end

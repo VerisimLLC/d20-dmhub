@@ -2,8 +2,7 @@
 Gradient = {}
 
 --- Sample
---- @param val any
---- @return any
-function Gradient:Sample(val)
+--- @return number
+function Gradient.Sample()
 	-- dummy implementation for documentation purposes only
 end

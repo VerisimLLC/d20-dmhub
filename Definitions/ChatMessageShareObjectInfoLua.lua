@@ -4,3 +4,10 @@
 --- @field tableid string 
 --- @field objectid string 
 ChatMessageShareObjectInfoLua = {}
+
+--- SetInfo
+--- @param info any
+--- @return boolean
+function ChatMessageShareObjectInfoLua:SetInfo(info)
+	-- dummy implementation for documentation purposes only
+end

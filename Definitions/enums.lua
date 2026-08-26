@@ -34,6 +34,7 @@
 --- | "redo"
 --- | "enter"
 --- | "find"
+--- | "save"
 
 --- @alias Easing
 --- | "EaseInQuad"
@@ -138,6 +139,8 @@
 --- | "RadiusFromIntersection"
 --- | "RadiusFromCreature"
 --- | "Map"
+--- | "AreaTemplate"
+--- | "Locations"
 
 --- @alias AttackOutcome
 --- | "Hit"
@@ -280,12 +283,12 @@
 --- | "LeftControl"
 --- | "RightAlt"
 --- | "LeftAlt"
+--- | "RightApple"
 --- | "RightMeta"
 --- | "RightCommand"
---- | "RightApple"
---- | "LeftMeta"
 --- | "LeftCommand"
 --- | "LeftApple"
+--- | "LeftMeta"
 --- | "LeftWindows"
 --- | "RightWindows"
 --- | "AltGr"
@@ -481,6 +484,15 @@
 --- | "Joystick8Button17"
 --- | "Joystick8Button18"
 --- | "Joystick8Button19"
+--- | "F16"
+--- | "F17"
+--- | "F18"
+--- | "F19"
+--- | "F20"
+--- | "F21"
+--- | "F22"
+--- | "F23"
+--- | "F24"
 
 --- @alias SettingStorage
 --- | "Preference"
@@ -494,8 +506,13 @@
 --- @alias MovementType
 --- | "Walk"
 --- | "Fly"
+--- | "Burrow"
+--- | "Swim"
+--- | "Climb"
 --- | "Pushed"
 --- | "Shift"
+--- | "Teleport"
+--- | "Jump"
 
 --- @alias InitiativeStatus
 --- | "None"
@@ -533,6 +550,7 @@
 --- | "default"
 --- | "wait"
 --- | "diagonal-expand"
+--- | "diagonal-expand-mirror"
 --- | "erase"
 --- | "eyedropper"
 --- | "hand"
@@ -567,4 +585,6 @@
 --- | "Genos"
 --- | "Inter"
 --- | "Courier"
+--- | "Tengwar"
+--- | "LiberationSans"
 

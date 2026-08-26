@@ -2,7 +2,21 @@
 --- @field isowner boolean 
 --- @field canedit boolean 
 --- @field modid string 
+--- @field unloaded boolean 
 CodeModInterface = {}
+
+--- GetMod
+--- @return any
+function CodeModInterface:GetMod()
+	-- dummy implementation for documentation purposes only
+end
+
+--- RegisterDocumentForCheckpointBackups
+--- @param id string
+--- @return nil
+function CodeModInterface:RegisterDocumentForCheckpointBackups(id)
+	-- dummy implementation for documentation purposes only
+end
 
 --- GetDocumentPath
 --- @param id string
@@ -12,9 +26,8 @@ function CodeModInterface:GetDocumentPath(id)
 end
 
 --- GetDocumentSnapshot
---- @param id string
---- @return any
-function CodeModInterface:GetDocumentSnapshot(id)
+--- @return number
+function CodeModInterface.GetDocumentSnapshot()
 	-- dummy implementation for documentation purposes only
 end
 

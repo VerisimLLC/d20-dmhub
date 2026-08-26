@@ -21,6 +21,8 @@
 --- @field forcedResult boolean 
 --- @field autosuccess boolean 
 --- @field autofailure boolean 
+--- @field nottierone boolean 
+--- @field nottierthree boolean 
 --- @field nat20 boolean 
 --- @field autocrit boolean 
 --- @field playerName string 
@@ -29,3 +31,10 @@
 --- @field rollStr any 
 --- @field result string 
 ChatMessageDiceRollInfoLua = {}
+
+--- SetInfo
+--- @param info any
+--- @return boolean
+function ChatMessageDiceRollInfoLua:SetInfo(info)
+	-- dummy implementation for documentation purposes only
+end

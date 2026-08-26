@@ -1,4 +1,5 @@
 --- @class CodeModFileLua 
+--- @field usingGit boolean 
 --- @field hasMerge boolean 
 --- @field valid boolean 
 --- @field hasLocalChanges boolean 
@@ -14,12 +15,6 @@ CodeModFileLua = {}
 --- @param options any
 --- @return boolean
 function CodeModFileLua:MatchesSearch(search, options)
-	-- dummy implementation for documentation purposes only
-end
-
---- MergeLocal
---- @return boolean
-function CodeModFileLua:MergeLocal()
 	-- dummy implementation for documentation purposes only
 end
 

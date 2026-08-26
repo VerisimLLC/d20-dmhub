@@ -17,6 +17,13 @@
 --- @field gmonly boolean 
 ChatMessageInfoLua = {}
 
+--- SetInfo
+--- @param info any
+--- @return boolean
+function ChatMessageInfoLua:SetInfo(info)
+	-- dummy implementation for documentation purposes only
+end
+
 --- UploadRealtimeInteraction
 --- @param userid string
 --- @param info any

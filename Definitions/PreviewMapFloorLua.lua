@@ -4,6 +4,7 @@
 --- @field cameraSize any 
 --- @field cameraWidth any 
 --- @field cameraHeight any 
+--- @field lighting any 
 PreviewMapFloorLua = {}
 
 --- ExecuteRectangleOperation

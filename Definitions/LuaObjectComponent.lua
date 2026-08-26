@@ -15,6 +15,7 @@
 --- @field deletable boolean 
 --- @field properties any 
 --- @field objectInstance any 
+--- @field levelObject any 
 LuaObjectComponent = {}
 
 --- SetProperty
@@ -50,6 +51,13 @@ end
 --- @param fieldName string
 --- @return any
 function LuaObjectComponent:GetFieldDisplayInfo(obj, fieldName)
+	-- dummy implementation for documentation purposes only
+end
+
+--- Randomize
+--- @param options any
+--- @return nil
+function LuaObjectComponent:Randomize(options)
 	-- dummy implementation for documentation purposes only
 end
 
@@ -95,5 +103,12 @@ end
 --- CreateCustomEditor
 --- @return any
 function LuaObjectComponent:CreateCustomEditor()
+	-- dummy implementation for documentation purposes only
+end
+
+--- CreateMultiCustomEditor
+--- @param components any
+--- @return any
+function LuaObjectComponent:CreateMultiCustomEditor(components)
 	-- dummy implementation for documentation purposes only
 end

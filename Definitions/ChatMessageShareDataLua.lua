@@ -3,3 +3,10 @@
 --- @field messageType any 
 --- @field formattedText any 
 ChatMessageShareDataLua = {}
+
+--- SetInfo
+--- @param info any
+--- @return boolean
+function ChatMessageShareDataLua:SetInfo(info)
+	-- dummy implementation for documentation purposes only
+end
