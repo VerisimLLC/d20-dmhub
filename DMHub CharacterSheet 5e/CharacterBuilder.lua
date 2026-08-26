@@ -11,6 +11,14 @@ local g_levelChoices
 
 local g_creature
 
+--Only compendium table changes should force the builder panels to be rebuilt.
+--dmhub.tablesUpdateId is the global asset sequence, so character uploads also
+--change it and would otherwise discard the builder UI after ordinary choices.
+local g_builderTablesGeneration = 0
+dmhub.RegisterEventHandler("refreshTables", function()
+	g_builderTablesGeneration = g_builderTablesGeneration + 1
+end)
+
 	
 CharSheet.DiceStyles = {
 				{
@@ -2089,7 +2097,7 @@ function CharSheet.BuilderPanel()
 	local resultPanel
 
 	local panels = {}
-	local tabs = {}
+	local selectedTabId
 
 	local tabsPanel = gui.Panel{
 		classes = {"tabContainer"},
@@ -2106,11 +2114,14 @@ function CharSheet.BuilderPanel()
 		}
 
 		panel.data.alertIcon = alertIcon
+		panel.data.tabid = tabid
 
 		panel.data.tab = gui.Label{
 			id = string.format("tab-%s", tabid),
 			classes = {"tab"},
 			press = function(element)
+				selectedTabId = tabid
+
 				for i,p in ipairs(panel.parent.children) do
 					p:SetClass("collapsed", p ~= panel)
 				end
@@ -2174,13 +2185,12 @@ function CharSheet.BuilderPanel()
 				flow = "vertical",
 				vscroll = true,
 				data = {
-					tablesUpdateId = 0,
+					tablesGeneration = -1,
 				},
 				refreshBuilder = function(element)
-					if element.data.tablesUpdateId ~= dmhub.tablesUpdateId then
+					if element.data.tablesGeneration ~= g_builderTablesGeneration then
 						--rebuild all panels if there has been a table update.
 						panels = {}
-						tabs = {}
 					end
 
 					local children = {}
@@ -2222,15 +2232,16 @@ function CharSheet.BuilderPanel()
 					tabsPanel.children = tabs
 
 					local selectedIndex = 1
-					for i,tab in ipairs(tabs) do
-						if tab:HasClass("selected") then
+					for i,child in ipairs(children) do
+						if child.data.tabid == selectedTabId then
 							selectedIndex = i
+							break
 						end
 					end
 
 					tabs[selectedIndex]:FireEvent("press")
 
-					element.data.tablesUpdateId = dmhub.tablesUpdateId
+					element.data.tablesGeneration = g_builderTablesGeneration
 				end,
 			},
 		}
