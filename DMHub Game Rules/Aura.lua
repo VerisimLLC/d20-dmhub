@@ -84,6 +84,29 @@ function Aura.Create(options)
 	return result
 end
 
+-- Returns true when the creature passes this aura's optional GoblinScript
+-- filter. Map Markup zone types use this to restrict both modifiers and the
+-- engine-side terrain rules to matching creatures.
+function Aura:CreaturePassesFilter(c, auraInstance)
+	local filter = self:try_get("creatureFilter", "")
+	if type(filter) ~= "string" or filter == "" then
+		return true
+	end
+
+	local caster = nil
+	if auraInstance ~= nil and rawget(auraInstance, "casterid") ~= nil then
+		local casterToken = dmhub.GetTokenById(auraInstance.casterid)
+		if casterToken ~= nil then
+			caster = casterToken.properties
+		end
+	end
+
+	local result = ExecuteGoblinScript(filter,
+		c:LookupSymbol{caster = caster, target = c, aura = auraInstance},
+		true, "Aura Creature Filter")
+	return GoblinScriptTrue(result)
+end
+
 --area: the area of the aura, a Shape type object.
 RegisterGameType("AuraInstance")
 
@@ -553,6 +576,107 @@ end
 
 function AuraInstance:GetDifficultTerrain()
 	return self.aura:try_get("difficult_terrain", false)
+end
+
+function AuraInstance:GetFlags()
+	return self.aura:try_get("flags")
+end
+
+function AuraInstance:GetConcealment()
+	return self.aura:try_get("concealment", false)
+end
+
+function AuraInstance:GetCreatureFilter()
+	local filter = self.aura:try_get("creatureFilter", "")
+	if type(filter) ~= "string" then
+		return ""
+	end
+	return filter
+end
+
+function AuraInstance:CreaturePassesFilterForToken(token)
+	if token == nil or token.properties == nil then
+		return true
+	end
+	return self.aura:CreaturePassesFilter(token.properties, self)
+end
+
+function AuraInstance:GetCover()
+	if self.aura:try_get("blocks_line_of_effect", false) then
+		return 1
+	end
+	return 0
+end
+
+function AuraInstance:GetBlockMovement()
+	return self.aura:try_get("blocks_movement", false)
+end
+
+function AuraInstance:GetWater()
+	return self.aura:try_get("water", false)
+end
+
+function AuraInstance:GetSurfaceType()
+	return self.aura:try_get("surfaceType")
+end
+
+function AuraInstance:GetClimbable()
+	if self.aura:try_get("climbable", false) ~= true then
+		return nil
+	end
+	return {climbersOnly = self.aura:try_get("climbersOnly", false) == true}
+end
+
+function AuraInstance:GetHole()
+	return self.aura:try_get("hole", false) == true
+end
+
+function AuraInstance:GetHolePolygons()
+	return self:try_get("holePolygons")
+end
+
+function AuraInstance:GetAppearance()
+	return self:try_get("appearance")
+end
+
+function AuraInstance:GetIncludeAdjacent()
+	return self.aura:try_get("includeAdjacent", false) == true
+end
+
+function AuraInstance:GetHeight()
+	return self.aura:try_get("auraHeight")
+end
+
+function AuraInstance:GetAltitude()
+	return self.aura:try_get("auraAltitude")
+end
+
+function AuraInstance:GetGroundRelative()
+	return self.aura:try_get("auraGroundRelative", false) == true
+end
+
+function AuraInstance:GetVerticalRadius()
+	if self.aura:try_get("unlimitedHeight", false) == true then
+		return nil
+	end
+	return self:try_get("verticalRadius")
+end
+
+function AuraInstance:GetDamageInfo()
+	local movedamage = self.aura:try_get("movedamage", "none")
+	if movedamage == nil or movedamage == "none" then
+		return nil
+	end
+
+	local filter = self.aura:try_get("movementDamageFilter")
+	if filter == nil then
+		filter = cond(self.aura:try_get("shiftAvoidsDamage", false), "nonshift", "all")
+	end
+	return {
+		damage = self.aura:try_get("damage", 0),
+		type = movedamage,
+		movementDamageFilter = filter,
+	}
 end
 
 function AuraInstance:FillActivatedAbilities(creature, resultAbilities)

@@ -29,6 +29,7 @@ last 4 hex digits of its mod id:
 | `DMHub Import Framework/` | `DMHub_Import_Framework_6cc3` |
 | `DMHub 5e System/` | `DMHub_5e_System_7c33` |
 | `5eTools Importer/` | `5eTools_Importer_14f9` |
+| `DMHub Map Markup/` | `DMHub_Map_Markup_a49b` |
 
 Other items:
 

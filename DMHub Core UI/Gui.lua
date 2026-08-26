@@ -89,6 +89,81 @@ function gui.ChildHasFocus(panel)
 	return panel ~= nil and panel.valid and panel.enabled and m_focus ~= nil and m_focus.valid and m_focus:IsDescendantOf(panel)
 end
 
+--- If this panel, or anything below it, currently owns an open popup.
+---
+--- Popups are not children - they live in the overlay layer and are reachable
+--- only through their owner's .popup - so this walks the subtree looking for
+--- owners rather than looking at the popup layer.
+--- @param panel nil|Panel
+--- @return boolean
+function gui.SubtreeHasPopup(panel)
+	if panel == nil or panel.valid == false then
+		return false
+	end
+
+	if panel.popup ~= nil then
+		return true
+	end
+
+	for _,child in ipairs(panel.children) do
+		if gui.SubtreeHasPopup(child) then
+			return true
+		end
+	end
+
+	return false
+end
+
+--- Run rebuild(panel) now, unless a popup is open somewhere beneath panel - in
+--- which case park the rebuild and replay it once the popup closes.
+---
+--- Lists that rebuild their children wholesale from a monitor have a hazard:
+--- destroying a panel destroys any popup it owns, and a monitor fires on the
+--- round trip of OUR OWN write as readily as on another client's edit. So a
+--- refresh can land while the user has a context menu or popout open and yank
+--- it out from under the cursor - the popup appears to open and immediately
+--- close again. Guarding the rebuild with this leaves the list momentarily
+--- stale, but stale-and-matching-the-popup beats correct-and-gone.
+---
+--- The parked rebuild re-reads state when it finally runs, so a second park
+--- simply replaces the first: several coalesced updates cost one rebuild.
+---
+--- Panels using this must declare a `data` table and route their 'think' event
+--- to gui.ThinkDeferredRebuild. thinkTime is armed only while a rebuild is
+--- parked, so a panel with nothing parked costs nothing.
+--- @param panel Panel
+--- @param rebuild fun(panel:Panel):nil
+function gui.RebuildDeferringPopups(panel, rebuild)
+	if gui.SubtreeHasPopup(panel) then
+		panel.data.deferredRebuild = rebuild
+		panel.thinkTime = 0.25
+		return
+	end
+
+	panel.data.deferredRebuild = nil
+	panel.thinkTime = nil
+	rebuild(panel)
+end
+
+--- The 'think' half of gui.RebuildDeferringPopups: replays the parked rebuild
+--- as soon as the popup that blocked it is gone, and disarms the poll.
+--- @param panel Panel
+function gui.ThinkDeferredRebuild(panel)
+	local rebuild = panel.data.deferredRebuild
+	if rebuild == nil then
+		panel.thinkTime = nil
+		return
+	end
+
+	if gui.SubtreeHasPopup(panel) then
+		return
+	end
+
+	panel.data.deferredRebuild = nil
+	panel.thinkTime = nil
+	rebuild(panel)
+end
+
 --- Get the main dialog panel which dialogs can be parented to.
 --- @return Panel
 function gui.DialogPanel()
@@ -138,20 +213,29 @@ end
 
 --- Show a modal dialog.
 --- @param panel Panel
---- @options {nofade: nil|boolean}
+--- @param options nil|{nofade: nil|boolean, owner: nil|Panel|string}
+--- @return string layer The layer the modal is displayed in. Can be passed to gui.CloseModalInLayer()
 function gui.ShowModal(panel, options)
-	gamehud:ShowModal(panel, options)
+	return gamehud:ShowModal(panel, options)
 end
 
---- Close the modal dialog that is currently displayed.
-function gui.CloseModal()
-	gamehud:CloseModal()
+--- Close the current modal dialog in the given layer.
+--- @param layer string
+function gui.CloseModalInLayer(layer)
+	gamehud:CloseModalInLayer(layer)
 end
 
---- Get the currently displayed modal dialog.
---- @return nil|Panel
-function gui.GetModal()
-	return gamehud:GetModal()
+--- Close the current modal dialog.
+--- @param owner nil|Panel|string The owner of the modal. If nil, will close the current modal in the main game HUD.
+function gui.CloseModal(owner)
+	gamehud:CloseModal(owner)
+end
+
+--- Get the current modal dialog.
+--- @param owner nil|Panel|string The owner of the modal. If nil, will get the current modal in the main game HUD.
+--- @return Panel
+function gui.GetModal(owner)
+	return gamehud:GetModal(owner)
 end
 
 --- Display a modal message dialog.

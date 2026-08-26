@@ -792,6 +792,10 @@ mod.shared.BrushEditorPanel = function(settingid)
 	return resultPanel
 end
 
+--Cross-module export used by Map Markup's Elevation tab. mod.shared is
+--private to this code mod, so the standalone panel cannot read it directly.
+BrushEditorPanel = mod.shared.BrushEditorPanel
+
 
 --a full brush editor dialog.
 mod.shared.ShowBrushEditor = function(brushid, startingValues)

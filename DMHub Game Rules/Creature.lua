@@ -404,6 +404,46 @@ function creature:CanTeleport()
     return false
 end
 
+--- Whether the creature can use a wall or zone marked climbable. D&D 5e
+--- allows climbing without a climb speed (at extra movement cost); a creature
+--- with no usable walking or climbing movement cannot start a climb.
+--- @return boolean
+function creature:CanClimb()
+	local prone = false
+	local adapter = rawget(_G, "DMHubMapMarkupD20")
+	if adapter ~= nil and adapter.IsProne ~= nil then
+		prone = adapter.IsProne(self)
+	else
+		pcall(function() prone = self:IsDown() end)
+	end
+	return not prone and (self:WalkingSpeed() > 0 or self:GetSpeed("climb") > 0)
+end
+
+--- Whether the creature has a climb speed at least as fast as its walking
+--- speed. The engine uses this for "Climbers Only" markup walls and zones.
+--- @return boolean
+function creature:IsClimber()
+	local climbSpeed = self:GetSpeed("climb")
+	return climbSpeed > 0 and climbSpeed >= self:WalkingSpeed()
+end
+
+--- Movement cost, in map squares, for a vertical climb. A one-square rise is
+--- treated as a step/slope by the engine; taller ascents and all descents use
+--- normal 5e climbing cost (double without a sufficient climb speed).
+--- @param heightDifference number
+--- @return number
+function creature:CostToClimb(heightDifference)
+	heightDifference = heightDifference or 0
+	if heightDifference >= 0 and heightDifference <= 1 then
+		return 0
+	end
+	local distance = math.abs(heightDifference)
+	if self:IsClimber() then
+		return distance
+	end
+	return distance*2
+end
+
 --- Get speed with this movement type.
 --- @param movementType string
 --- @return number
@@ -8438,4 +8478,56 @@ end
 --- @return number
 function creature:ForcedMoveResistance()
     return 0
+end
+
+-- Map Markup footsteps: the engine calls this after an on-feet landing.
+-- Painted surfaces and the map default use the same precedence as the
+-- per-frame movement callback installed by DMHub Map Markup.
+function creature:PlayLandingFootstep(surfaceType)
+    local soundName = "Foot.Generic_Generic"
+    local registry = rawget(_G, "AudioSurfaceTypes")
+    if registry ~= nil and registry.surfaces ~= nil then
+        local entry = registry.surfaces[surfaceType]
+        local painted = nil
+        pcall(function()
+            local markup = rawget(_G, "MapMarkupFootsteps")
+            local token = dmhub.LookupToken(self)
+            if markup ~= nil and token ~= nil and token.loc ~= nil then
+                painted = markup.GetPaintedSurfaceAt(token.floorid, token.loc.x, token.loc.y)
+            end
+        end)
+        if painted ~= nil and registry.surfaces[painted] ~= nil then
+            entry = registry.surfaces[painted]
+        else
+            local settingsTable = rawget(_G, "Settings")
+            if settingsTable ~= nil and settingsTable["markup:footstepdefault"] ~= nil then
+                local ok, defaultSurface = pcall(function()
+                    return tonumber(dmhub.GetSettingValue("markup:footstepdefault"))
+                end)
+                if ok and defaultSurface ~= nil and registry.surfaces[defaultSurface] ~= nil then
+                    entry = registry.surfaces[defaultSurface]
+                end
+            end
+        end
+        if entry ~= nil and entry.sound ~= nil then
+            soundName = entry.sound
+        end
+    end
+    audio.FireSoundEvent(soundName, { volume = 0.4 })
+end
+
+-- Applies movement damage reported by an Environmental Keyword aura. The
+-- engine batches the number of touched tiles into info.instances.
+function creature:AuraDamage(token, info)
+    if token == nil or info == nil or info.aura == nil then
+        return
+    end
+    token:ModifyProperties{
+        description = info.aura.aura.name,
+        execute = function()
+            for _ = 1,info.instances or 0 do
+                self:InflictDamageInstance(info.amount, info.type, {}, info.aura.aura.name)
+            end
+        end,
+    }
 end

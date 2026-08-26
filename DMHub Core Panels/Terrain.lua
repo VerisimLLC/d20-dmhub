@@ -1,5 +1,32 @@
 local mod = dmhub.GetModLoading()
 
+--Map Markup shares the Building editor's wall-height callback. Keep the
+--height mode and value separate so "To Roof" is distinct from a one-tile
+--wall while retaining the existing engine convention that 0 means no cap.
+setting{
+	id = "building:specifywallheight",
+	description = "Set Wall Height",
+	storage = "preference",
+	editor = "check",
+	default = false,
+}
+
+setting{
+	id = "building:wallheightvalue",
+	description = "Wall Height (tiles)",
+	storage = "preference",
+	editor = "slider",
+	default = 2,
+	min = 1,
+	max = 10,
+	round = true,
+	labelFormat = '%d',
+	monitorVisible = {'building:specifywallheight'},
+	visible = function()
+		return dmhub.GetSettingValue('building:specifywallheight') == true
+	end,
+}
+
 local CreateTerrainEditor
 local CreateBuildingEditor
 
@@ -1114,7 +1141,10 @@ CreateBuildingEditor = function()
         events = {
             monitor = function(element)
                 if wallsOn and not floorsOn then
-                    if selectedWallPanel ~= nil then
+                    --A setting monitor runs a frame after the tool change. Do
+                    --not let this delayed re-press steal focus from Map Markup
+                    --or another panel which actually armed the shared tool.
+                    if selectedWallPanel ~= nil and gui.ChildHasFocus(contentPanel) then
                         selectedWallPanel:FireEvent('press')
                     end
                 end
@@ -1131,7 +1161,22 @@ CreateBuildingEditor = function()
                 local children = {}
                 local newWallItems = {}
                 local firstTimeItems = {} --items being added for the very first time.
+                --Wall types created as private Map Markup types for another
+                --map stay out of the ordinary Building palette. Engines from
+                --before markupMapId support simply fall through the pcall.
+                local visibleWalls = {}
                 for key,wall in pairs(walls) do
+                    local scopedElsewhere = false
+                    pcall(function()
+                        local mapid = wall.markupMapId
+                        scopedElsewhere = type(mapid) == "string" and mapid ~= "" and mapid ~= game.currentMapId
+                    end)
+                    if not scopedElsewhere then
+                        visibleWalls[key] = wall
+                    end
+                end
+
+                for key,wall in pairs(visibleWalls) do
 
                     newWallItems[key] = wallItems[key] or gui.Panel{
                         bgimage = 'panels/square.png',
@@ -1294,6 +1339,8 @@ CreateBuildingEditor = function()
                 mod.shared.BrushEditorPanel('buildingbrush'),
             },
             CreateSettingsEditor('building:stabilization'),
+            CreateSettingsEditor('building:specifywallheight'),
+            CreateSettingsEditor('building:wallheightvalue', {stacked = true}),
         },
     })
 
@@ -1733,7 +1780,10 @@ dmhub.SelectFloor = function(floorid)
 end
 
 dmhub.GetWallHeight = function()
-    return dmhub.GetSettingValue("building:wallheight")
+    if dmhub.GetSettingValue("building:specifywallheight") then
+        return dmhub.GetSettingValue("building:wallheightvalue")
+    end
+    return 0
 end
 
 dmhub.GetSelectedWall = function()
