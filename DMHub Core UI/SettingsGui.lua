@@ -211,12 +211,21 @@ local SettingsEditors = {
 			}
 		end
 
+		--invert = true shows the box ticked when the stored value is false,
+		--for settings whose user-facing label is the opposite of their id.
+		local function toShown(value)
+			if var.invert then
+				return not value
+			end
+			return value
+		end
+
 		return 
 		gui.Panel{
 			width = "90%",
 			height = "auto",
 			gui.Check{
-				value = dmhub.GetSettingValue(var.id),
+				value = toShown(dmhub.GetSettingValue(var.id)),
 				text = var.description,
 				halign = options.halign or "left",
 				keybinds = keybinds,
@@ -232,11 +241,11 @@ local SettingsEditors = {
 
 				events = {
 					monitor = function(element)
-						element.value = dmhub.GetSettingValue(var.id)
+						element.value = toShown(dmhub.GetSettingValue(var.id))
 					end,
 
 					change = function(element)
-						dmhub.SetSettingValue(var.id, element.value)
+						dmhub.SetSettingValue(var.id, toShown(element.value))
 						if var.onchange then
 							var.onchange()
 						end

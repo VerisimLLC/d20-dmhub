@@ -409,7 +409,7 @@ end
 --Empty when the user has opted back into the classic dock UI
 --(Settings > General, "Classic UI"; the rail is otherwise the default).
 local function RailAvailable()
-    return dmhub.GetSettingValue("classicui") ~= true
+    return dmhub.GetSettingValue("iconrail") == true
 end
 
 local function RailAddMenuEntries(element, doc)

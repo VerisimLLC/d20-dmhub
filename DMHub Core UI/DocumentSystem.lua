@@ -6476,7 +6476,7 @@ end
 -- close, no drag, no resize -- and always comes back with the rails.
 --
 -- On by default; users can opt back into the classic dock UI per-user
--- from Settings > General ("Classic UI"), or via /toggle classicui.
+-- from Settings > General ("Classic UI"), or via /toggle iconrail.
 -- The dock system is untouched while the rail is off; while it is on,
 -- each side's dock is slid away and its handle tab hidden, so the rails
 -- are the way panels are reached (the Panels menu still toggles the
@@ -6489,19 +6489,21 @@ end
 local SyncDocksToRailMode
 
 --The rail UI is the default, so the user-facing switch is phrased the
---other way around: ticking "Classic UI" turns the rails OFF. (The rail
---was originally an opt-in trial behind a "New Experimental UI" checkbox
---stored as `iconrail`; the id changed when the default flipped, so
---everyone starts on the new UI regardless of any old stored value.)
+--other way around: ticking "Classic UI" stores iconrail = false and turns
+--the rails OFF. The id matches the Codex's own (opt-in) "iconrail"
+--setting, so the shared engine code only ever checks one id.
 setting{
-    id = "classicui",
+    id = "iconrail",
     description = "Classic UI",
     help = "Use the classic side-dock UI instead of the icon rails and floating panel windows.",
     storage = "preference",
     --5e's settings dialog lists any setting with a section field.
     section = "General",
     editor = "check",
-    default = false,
+    --the checkbox shows the opposite of the stored value (see the
+    --check editor in SettingsGui.lua).
+    invert = true,
+    default = true,
     onchange = function()
         if mod.unloaded then
             return
@@ -6523,7 +6525,7 @@ setting{
 --file syncs the docks once per user and sets this so it never forces
 --them again.
 setting{
-    id = "classicuidockssynced",
+    id = "iconraildockssynced",
     storage = "preference",
     default = false,
 }
@@ -8007,7 +8009,7 @@ end
 
 --Toggling the rail moves the docks with it: rail ON slides both docks
 --off screen (the rail replaces them); rail OFF slides both back in.
---Called from the classicui setting's onchange, plus a once-per-user
+--Called from the iconrail setting's onchange, plus a once-per-user
 --sync at EnterGame (the rail-by-default rollout) -- EnsureIconRail
 --also runs at EnterGame and after a Lua reload, where forcing the
 --docks would trample a dock the user deliberately re-opened from the
@@ -9618,7 +9620,7 @@ end
 --Settings > General ("Classic UI"). (The rail started as an opt-in,
 --devmode-gated trial before becoming the default.)
 function RailModeActive()
-    return dmhub.GetSettingValue("classicui") ~= true
+    return dmhub.GetSettingValue("iconrail") == true
 end
 
 --How deeply floating rail panel windows currently intrude into the
@@ -14841,8 +14843,8 @@ dmhub.RegisterEventHandler("EnterGame", function()
         --Guarded by a stored flag rather than run every entry: EnterGame
         --must not keep forcing the docks, or it would trample a dock the
         --user deliberately re-opened from the Panels menu in rail mode.
-        if RailModeActive() and not dmhub.GetSettingValue("classicuidockssynced") then
-            dmhub.SetSettingValue("classicuidockssynced", true)
+        if RailModeActive() and not dmhub.GetSettingValue("iconraildockssynced") then
+            dmhub.SetSettingValue("iconraildockssynced", true)
             if SyncDocksToRailMode ~= nil then
                 SyncDocksToRailMode()
             end
