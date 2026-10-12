@@ -2813,6 +2813,286 @@ local function CreateTitleBarMenuItem(args)
     return gui.Panel(resultPanel)
 end
 
+--============================================================================
+--Window controls (merged title bar)
+--
+--On Windows the engine removes the native caption bar, so this bar must
+--provide dragging and the minimize / maximize / close buttons, and send a
+--heartbeat; if the heartbeat stops, the engine restores the native caption.
+--============================================================================
+
+--True on platforms that support the merged title bar (Windows builds, not the editor).
+local g_windowChromeAvailable = nil
+local function WindowChromeBridgeAvailable()
+    if g_windowChromeAvailable == nil then
+        local ok, avail = pcall(function() return dmhub.mergedTitleBarAvailable end)
+        g_windowChromeAvailable = (ok and avail == true)
+    end
+    return g_windowChromeAvailable
+end
+
+local function MergedTitleBarActive()
+    return WindowChromeBridgeAvailable() and dmhub.GetSettingValue("mergedtitlebar") == true
+end
+
+local function ApplyMergedTitleBar()
+    if WindowChromeBridgeAvailable() then
+        dmhub.SetMergedTitleBar(dmhub.GetSettingValue("mergedtitlebar") == true)
+    end
+end
+
+--The engine reads this preference at boot, so the id and default must match its own.
+setting{
+    id = "mergedtitlebar",
+    description = "Merge window title bar",
+    storage = "preference",
+    editor = "check",
+    default = true,
+    onchange = function()
+        ApplyMergedTitleBar()
+    end,
+}
+
+--safe to repeat on a reload.
+ApplyMergedTitleBar()
+
+--The bar's root panel, set when it is created.
+local g_menuBarPanel = nil
+
+--The maximize button. The engine treats it as Windows' own maximize button (for the
+--Snap Layouts flyout), so its clicks arrive via the windowMaxButtonClick event below.
+local m_maximizeControl = nil
+
+--Hides the bar while the window is resizing (maximize, snap) so it doesn't flash
+--half-laid-out; shows it again once the size holds still, or after a timeout.
+local g_transitionToken = 0
+local g_transitionActive = false
+
+local function StartWindowTransitionGuard(stableSamples, timeout)
+    local bar = g_menuBarPanel
+    if bar == nil or not bar.valid or not MergedTitleBarActive() then
+        return
+    end
+
+    stableSamples = stableSamples or 6
+    timeout = timeout or 2.5
+
+    --a newer call replaces one still running.
+    g_transitionToken = g_transitionToken + 1
+    local token = g_transitionToken
+
+    if not g_transitionActive then
+        g_transitionActive = true
+        bar:SetClassTree("windowTransition", true)
+    end
+
+    local dims = dmhub.screenDimensions
+    local lastW, lastH = dims.x, dims.y
+    local stable = 0
+    local started = dmhub.Time()
+
+    local function poll()
+        if mod.unloaded or token ~= g_transitionToken then
+            return
+        end
+        if not bar.valid then
+            g_transitionActive = false
+            return
+        end
+
+        local d = dmhub.screenDimensions
+        if d.x == lastW and d.y == lastH then
+            stable = stable + 1
+        else
+            stable = 0
+            lastW = d.x
+            lastH = d.y
+        end
+
+        if stable >= stableSamples or dmhub.Time() - started > timeout then
+            g_transitionActive = false
+            bar:SetClassTree("windowTransition", false)
+            return
+        end
+
+        dmhub.Schedule(0.05, poll)
+    end
+
+    dmhub.Schedule(0.05, poll)
+end
+
+--Maximize or restore. The bar hides first and the resize follows a beat later.
+local function ToggleMaximize()
+    StartWindowTransitionGuard()
+    dmhub.Schedule(0.05, function()
+        if not mod.unloaded then
+            dmhub.ToggleMaximizeWindow()
+        end
+    end)
+end
+
+--Tells the engine where the bar's buttons are; the rest of the bar acts as the
+--window caption. Re-sent from the bar's think so it follows layout changes.
+local function UpdateTitleBarHitRegions()
+    local bar = g_menuBarPanel
+    if bar == nil or not bar.valid or not MergedTitleBarActive() then
+        return
+    end
+    pcall(function()
+        if dmhub.titleBarChromeMode ~= "nccalcsize" then
+            return
+        end
+        local exclusions = {}
+        for _,child in ipairs(bar.children) do
+            --the drag surface and hidden children are not buttons.
+            if child.valid and child.id ~= "titleBarDragSurface"
+                    and not child:HasClass("collapsed") and not child:HasClass("hidden") then
+                exclusions[#exclusions+1] = child
+            end
+        end
+        --maximize is disabled while fullscreen.
+        local maxControl = nil
+        if m_maximizeControl ~= nil and m_maximizeControl.valid
+                and dmhub.GetSettingValue("fullscreen") ~= true then
+            maxControl = m_maximizeControl
+        end
+        dmhub.SetTitleBarHitRegions{
+            bar = bar,
+            exclusions = exclusions,
+            maximizeButton = maxControl,
+        }
+    end)
+end
+
+--One window button: a full-height hover zone with a centered icon, like the
+--native Windows buttons. The window-chrome/* icons come from the engine.
+local function CreateWindowControl(args)
+    return gui.Panel{
+        classes = {"windowControl", cond(args.danger, "windowControlDanger")},
+        bgimage = true,
+        width = 42,
+        height = "100%",
+        valign = "center",
+        data = { maximized = nil },
+        calculateVisibility = args.calculateVisibility,
+        click = args.click,
+        hover = args.hover,
+
+        gui.Panel{
+            classes = {"windowControlIcon", cond(args.danger, "windowControlIconDanger")},
+            bgimage = args.icon,
+            width = 16,
+            height = 16,
+            halign = "center",
+            valign = "center",
+            interactable = false,
+            setIcon = function(element, icon)
+                element.bgimage = icon
+            end,
+        },
+    }
+end
+
+--Close button. In a game it asks first, since a stray click would end the
+--session; on the main menu it closes right away.
+local m_quitConfirmDialog = nil
+local function ConfirmCloseWindow()
+    if (not dmhub.inGame) or dmhub.isLobbyGame then
+        dmhub.CloseWindow()
+        return
+    end
+
+    --no hud to show the prompt in: just close.
+    local gh = rawget(_G, "gamehud")
+    if gh == nil then
+        dmhub.CloseWindow()
+        return
+    end
+
+    --don't stack prompts on repeated clicks.
+    if m_quitConfirmDialog ~= nil and m_quitConfirmDialog.valid then
+        return
+    end
+
+    m_quitConfirmDialog = gh:ModalDialog{
+        title = "Quit to Desktop?",
+        width = 760,
+        height = 340,
+        buttonsHalign = "center",
+        buttons = {
+            {
+                text = "Cancel",
+                escapeActivates = true,
+                click = function()
+                    m_quitConfirmDialog = nil
+                end,
+            },
+            {
+                text = "Quit",
+                click = function()
+                    m_quitConfirmDialog = nil
+                    dmhub.CloseWindow()
+                end,
+            },
+        },
+
+        gui.Panel{
+            width = 640,
+            height = 120,
+            halign = "center",
+            valign = "center",
+            flow = "vertical",
+
+            gui.Label{
+                classes = {"modalMessage"},
+                text = "You are in a game. Quitting will close DMHub and leave the session.",
+            },
+        },
+    }
+end
+
+--Window button styles. Plain colors, not theme @tokens: the bar also paints at
+--the lobby, before themes are registered. Close turns Windows red on hover.
+local windowControlStyles = {
+    {
+        selectors = {"windowControl"},
+        bgcolor = "clear",
+    },
+    {
+        selectors = {"windowControl", "hover"},
+        bgcolor = "#ffffff1f",
+    },
+    {
+        selectors = {"windowControl", "press"},
+        bgcolor = "#ffffff33",
+    },
+    {
+        selectors = {"windowControlDanger", "hover"},
+        bgcolor = "#c42b1c",
+    },
+    {
+        selectors = {"windowControlDanger", "press"},
+        bgcolor = "#b3271a",
+    },
+    {
+        selectors = {"windowControlIcon"},
+        bgcolor = "#d4d4d4",
+    },
+    {
+        selectors = {"windowControlIconDanger", "parent:hover"},
+        bgcolor = "#ffffff",
+    },
+    --disabled maximize (fullscreen); after the hover rules so it wins.
+    {
+        selectors = {"windowControl", "windowControlDisabled"},
+        bgcolor = "clear",
+    },
+    {
+        selectors = {"windowControlIcon", "parent:windowControlDisabled"},
+        opacity = 0.35,
+    },
+}
+
 --flipped whenever the theme changes; SetClassTree with the new value
 --forces every descendant to re-cascade styles (reassigning .styles alone
 --updates the rule array but does not mark descendants dirty).
@@ -2841,7 +3121,30 @@ local function CreateTopBar(container)
                 selectors = {"ingameOnly", "~ingame"},
                 collapsed = 1,
             },
+            --window buttons only show while the title bar is merged.
+            {
+                selectors = {"windowButtonsOff"},
+                collapsed = 1,
+            },
+            --set by StartWindowTransitionGuard.
+            {
+                selectors = {"windowTransition"},
+                opacity = 0,
+            },
         },
+
+        data = { lastScreenDims = nil },
+
+        create = function(element)
+            g_menuBarPanel = element
+            --the window resizes a few times at startup; stay hidden until it settles.
+            StartWindowTransitionGuard(12, 6)
+        end,
+
+        destroy = function(element)
+            --clear the button rects so the engine doesn't keep using a stale layout.
+            pcall(function() dmhub.SetTitleBarHitRegions(nil) end)
+        end,
 
         thinkTime = 0.2,
         think = function(element)
@@ -2855,7 +3158,65 @@ local function CreateTopBar(container)
                 element:SetClassTree("ingame", m_inGame)
             end
             element:FireEventTree("calculateVisibility")
+
+            if MergedTitleBarActive() then
+                --heartbeat (see the Window controls section). pcall: older engines lack it.
+                pcall(function() dmhub.WindowChromeHeartbeat() end)
+
+                --also hide during resizes we didn't start (edge snap, Win+arrow).
+                local d = dmhub.screenDimensions
+                local prev = element.data.lastScreenDims
+                if prev ~= nil and (d.x ~= prev.x or d.y ~= prev.y) and not g_transitionActive then
+                    StartWindowTransitionGuard()
+                end
+                element.data.lastScreenDims = {x = d.x, y = d.y}
+
+                UpdateTitleBarHitRegions()
+            end
         end,
+
+        --Drag surface: empty bar space drags the window; a second press within
+        --0.4s maximizes. First child, so it sits under everything and only gets
+        --presses on empty bar (a handler on the bar itself would eat button clicks).
+        gui.Panel{
+            --UpdateTitleBarHitRegions looks for this id.
+            id = "titleBarDragSurface",
+            floating = true,
+            width = "100%",
+            height = "100%",
+            bgimage = true,
+            bgcolor = "clear",
+            data = { lastBarPress = nil },
+            press = function(element)
+                if not MergedTitleBarActive() then
+                    return
+                end
+                local now = dmhub.Time()
+                if element.data.lastBarPress ~= nil and now - element.data.lastBarPress < 0.4 then
+                    element.data.lastBarPress = nil
+                    ToggleMaximize()
+                else
+                    element.data.lastBarPress = now
+                    --no drag while maximized: Windows would restore it mid-drag
+                    --and the window ends up at a broken size.
+                    if not dmhub.windowMaximized then
+                        local before = dmhub.screenDimensions
+                        --returns when the user lets go.
+                        dmhub.BeginWindowDrag()
+                        --a snap resizes the window; the new size shows a frame later.
+                        dmhub.Schedule(0.1, function()
+                            if mod.unloaded then
+                                return
+                            end
+                            local after = dmhub.screenDimensions
+                            if after.x ~= before.x or after.y ~= before.y then
+                                StartWindowTransitionGuard()
+                            end
+                        end)
+                    end
+                end
+            end,
+        },
 
         --main-menu variant of the DMHub menu: Settings, Log Out, and Quit
         --to Desktop as hardcoded entries. In-game the equivalents arrive
@@ -3151,6 +3512,72 @@ local function CreateTopBar(container)
                 return menuItems
             end,
         },
+
+        --Window buttons, right-aligned. Hidden when the title bar isn't merged,
+        --since the native caption has its own.
+        gui.Panel{
+            classes = {"windowButtons", "windowButtonsOff"},
+            flow = "horizontal",
+            width = "auto",
+            height = "100%",
+            halign = "right",
+            valign = "center",
+            calculateVisibility = function(element)
+                element:SetClass("windowButtonsOff", not MergedTitleBarActive())
+            end,
+
+            CreateWindowControl{
+                icon = "window-chrome/chrome-minimize.png",
+                click = function()
+                    dmhub.MinimizeWindow()
+                end,
+            },
+
+            --kept in m_maximizeControl for UpdateTitleBarHitRegions.
+            (function()
+                m_maximizeControl = CreateWindowControl{
+                    icon = "window-chrome/chrome-maximize.png",
+                    calculateVisibility = function(element)
+                        --gray out maximize while fullscreen.
+                        local fullscreen = dmhub.GetSettingValue("fullscreen") == true
+                        if fullscreen ~= element.data.fullscreenDisabled then
+                            element.data.fullscreenDisabled = fullscreen
+                            element:SetClass("windowControlDisabled", fullscreen)
+                        end
+                        if not WindowChromeBridgeAvailable() then
+                            return
+                        end
+                        --show the restore icon while maximized.
+                        local maximized = dmhub.windowMaximized
+                        if maximized ~= element.data.maximized then
+                            element.data.maximized = maximized
+                            element:FireEventTree("setIcon", cond(maximized, "window-chrome/chrome-restore.png", "window-chrome/chrome-maximize.png"))
+                        end
+                    end,
+                    hover = function(element)
+                        --gui.Tooltip (Core UI) isn't loaded at the lobby.
+                        if dmhub.GetSettingValue("fullscreen") == true and rawget(gui, "Tooltip") ~= nil then
+                            gui.Tooltip("Fullscreen mode: Press F11 to enter Windowed mode")(element)
+                        end
+                    end,
+                    click = function()
+                        if dmhub.GetSettingValue("fullscreen") == true then
+                            return
+                        end
+                        ToggleMaximize()
+                    end,
+                }
+                return m_maximizeControl
+            end)(),
+
+            CreateWindowControl{
+                danger = true,
+                icon = "window-chrome/chrome-close.png",
+                click = function()
+                    ConfirmCloseWindow()
+                end,
+            },
+        },
     }
 
     local titleBarStyleExtras = {
@@ -3173,7 +3600,7 @@ local function CreateTopBar(container)
     --menuItemIcon values so the bar still paints correctly on the lobby;
     --the think below upgrades to the real merged theme styles the moment
     --the themes register. The surface is plain black rather than the
-    --default scheme's teal barTrack gradient -- neutral against the
+    --default scheme's barTrack gradient -- neutral against the
     --classic titlescreen art.
     local fallbackStyles = {
         {
@@ -3213,6 +3640,12 @@ local function CreateTopBar(container)
             bgcolor = "#161616",
         },
     }
+
+    --window buttons look the same with or without a theme.
+    for _,rule in ipairs(windowControlStyles) do
+        titleBarStyleExtras[#titleBarStyleExtras+1] = rule
+        fallbackStyles[#fallbackStyles+1] = rule
+    end
 
     local function ResolveTitleBarStyles()
         if #ThemeEngine.ListThemes() > 0 then
@@ -3301,3 +3734,38 @@ if ok and container ~= nil then
 else
     print("TitleBar:: dmhub.titleBarContainer not available on this engine build; title bar disabled")
 end
+
+--Windows owns the maximize button's area (see m_maximizeControl), so the engine
+--forwards its hover state and clicks through these two events.
+dmhub.RegisterEventHandler("windowMaxButtonState", function()
+    if mod.unloaded then
+        return
+    end
+    local control = m_maximizeControl
+    if control == nil or not control.valid then
+        return
+    end
+    --disabled while fullscreen.
+    if dmhub.GetSettingValue("fullscreen") == true then
+        control:SetClass("hover", false)
+        control:SetClass("press", false)
+        return
+    end
+    local state = "none"
+    pcall(function() state = dmhub.windowMaxButtonState end)
+    control:SetClass("hover", state == "hover" or state == "pressed")
+    control:SetClass("press", state == "pressed")
+end)
+
+dmhub.RegisterEventHandler("windowMaxButtonClick", function()
+    if mod.unloaded then
+        return
+    end
+    --disabled while fullscreen.
+    if dmhub.GetSettingValue("fullscreen") == true then
+        return true
+    end
+    ToggleMaximize()
+    --true = handled. Otherwise the engine toggles maximize too, undoing ours.
+    return true
+end)
