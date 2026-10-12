@@ -90,14 +90,15 @@ ThemeEngine.RegisterColorScheme{
         },
 
         -- Bars
-        -- Important: This is used in the title bar
-        -- The classic 5e healthGradient teal.
+        -- Important: This is used in the title bar (and nothing else), so it
+        -- follows the scheme's near-black surfaces: bg on the left, bgAlt on
+        -- the right. Schemes without their own barTrack inherit this one.
         barTrack = {
             point_a = {x = -0.02, y = 0},
             point_b = {x = 1.02,  y = 0},
             stops = {
-                {position = 0, color = "#004d52"},
-                {position = 1, color = "#00b8c4"},
+                {position = 0, color = "#161616"},
+                {position = 1, color = "#2A2A2A"},
             },
         },
 
@@ -191,6 +192,16 @@ ThemeEngine.RegisterColorScheme{
                 {position = 0.50,  color = "#1D140E"},
                 {position = 0.75,  color = "#160F0A"},
                 {position = 1.00,  color = "#100A06"},
+            },
+        },
+
+        -- Title-bar track: the scheme's bg warming into bgAlt.
+        barTrack = {
+            point_a = {x = -0.02, y = 0},
+            point_b = {x = 1.02,  y = 0},
+            stops = {
+                {position = 0, color = "#1B1310"},
+                {position = 1, color = "#2A1E15"},
             },
         },
     },
