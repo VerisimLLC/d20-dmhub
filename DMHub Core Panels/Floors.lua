@@ -2,6 +2,13 @@ local mod = dmhub.GetModLoading()
 
 local CreateLayersPanel
 
+--The panel that holds this whole Floors panel: its dock in the classic UI,
+--or its rail window's content wrapper in the icon-rail UI.
+local function FloorsPanelRoot(element)
+	return element:FindParentWithClass("dockablePanel") or element:FindParentWithClass("panelDocumentTabContent")
+end
+
+
 DockablePanel.Register{
 	name = "Floors & Layers",
 	icon = mod.images.floorsIcon,
@@ -975,7 +982,7 @@ CreateLayersPanel = function()
 
 								if game.currentFloor.actualFloor ~= floor.floorid then
 									game.ChangeMap(game.currentMap, floor)
-									element:FindParentWithClass("dockablePanel"):FireEventTree("refreshFloorSelection")
+									FloorsPanelRoot(element):FireEventTree("refreshFloorSelection")
 								end
 							end,
 
@@ -1555,7 +1562,7 @@ CreateLayersList = function(parentFloor)
 								end
 
 								game.currentMap.floors = floors
-        						element:FindParentWithClass("dockablePanel"):FireEventTree("refreshGame")
+        						FloorsPanelRoot(element):FireEventTree("refreshGame")
 							end,
 							refreshGame = function(element)
 								if not floor.valid then
@@ -1584,7 +1591,7 @@ CreateLayersList = function(parentFloor)
 							click = function(element)
 								element.popup = nil
 								game.ChangeMap(game.currentMap, floor)
-        						element:FindParentWithClass("dockablePanel"):FireEventTree("refreshFloorSelection")
+        						FloorsPanelRoot(element):FireEventTree("refreshFloorSelection")
 							end,
 
 						}

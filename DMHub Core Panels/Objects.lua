@@ -2194,17 +2194,20 @@ dmhub.ObjectEditingEnabled = function()
 	if m_objectEditor == nil or (not m_objectEditor.valid) then
 		return false
 	end
-	if m_objectEditor:FindParentWithClass("dockablePanel") == nil then
-		return false
-	end
+	--in the icon-rail UI the editor lives in a rail window, not a dock, so
+	--there may be no dock to highlight.
+	local dockPanel = m_objectEditor:FindParentWithClass("dockablePanel")
 
 	if gui.ChildHasFocus(m_objectEditor) then
-		m_objectEditor:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", true)
+		if dockPanel ~= nil then
+			dockPanel:SetClass("highlightPanel", true)
+		end
 		return true
 	end
 
-	--attempt to index nil setclass.
-	m_objectEditor:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", false)
+	if dockPanel ~= nil then
+		dockPanel:SetClass("highlightPanel", false)
+	end
 	return false
 
 

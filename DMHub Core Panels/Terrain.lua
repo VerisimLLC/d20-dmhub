@@ -1,5 +1,16 @@
 local mod = dmhub.GetModLoading()
 
+--Highlights the dock this panel sits in. In the icon-rail UI the panel
+--lives in a rail window instead of a dock, so there may be no dock to
+--highlight -- that is fine, the rail window shows its own focus edge.
+local function SetDockHighlight(panel, on)
+    local dockPanel = panel:FindParentWithClass("dockablePanel")
+    if dockPanel ~= nil then
+        dockPanel:SetClass("highlightPanel", on)
+    end
+end
+
+
 --Map Markup shares the Building editor's wall-height callback. Keep the
 --height mode and value separate so "To Roof" is distinct from a one-tile
 --wall while retaining the existing engine convention that 0 means no cap.
@@ -811,11 +822,11 @@ CreateTerrainEditor = function(options)
         end,
         
         childfocus = function(element)
-            element:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", true)
+            SetDockHighlight(element, true)
         end,
 
         childdefocus = function(element)
-            element:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", false)
+            SetDockHighlight(element, false)
         end,
 
         data = {
@@ -1576,11 +1587,11 @@ CreateBuildingEditor = function()
         end, 
 
         childfocus = function(element)
-            element:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", true)
+            SetDockHighlight(element, true)
         end,
 
         childdefocus = function(element)
-            element:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", false)
+            SetDockHighlight(element, false)
         end,
 
         data = {
@@ -1711,16 +1722,16 @@ CreateBuildingEditor = function()
 end
 
 dmhub.GetSelectedTerrain = function()
-    if m_terrainHud == nil or m_terrainHud:FindParentWithClass("dockablePanel") == nil then
+    if m_terrainHud == nil or (not m_terrainHud.valid) then
         return
     end
     
 	if gui.ChildHasFocus(m_terrainHud) then
-        m_terrainHud:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", true)
+        SetDockHighlight(m_terrainHud, true)
 		return m_terrainHud.data.GetSelectedTerrain()
 	end
 
-    m_terrainHud:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", false)
+    SetDockHighlight(m_terrainHud, false)
 
 	return nil
 end
@@ -1734,16 +1745,16 @@ dmhub.SelectTerrain = function(terrainid)
 end
 
 dmhub.GetSelectedEffect = function()
-    if m_effectsHud == nil or m_effectsHud:FindParentWithClass("dockablePanel") == nil then
+    if m_effectsHud == nil or (not m_effectsHud.valid) then
         return
     end
 
 	if gui.ChildHasFocus(m_effectsHud) then
-        m_effectsHud:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", true)
+        SetDockHighlight(m_effectsHud, true)
 		return m_effectsHud.data.GetSelectedTerrain()
 	end
 
-    m_effectsHud:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", false)
+    SetDockHighlight(m_effectsHud, false)
 
 	return nil
 end
@@ -1757,16 +1768,16 @@ dmhub.SelectEffect = function(effectid)
 end
 
 dmhub.GetSelectedFloor = function()
-    if m_buildingHud == nil or m_buildingHud:FindParentWithClass("dockablePanel") == nil then
+    if m_buildingHud == nil or (not m_buildingHud.valid) then
         return
     end
 
 	if gui.ChildHasFocus(m_buildingHud) then
-        m_buildingHud:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", true)
+        SetDockHighlight(m_buildingHud, true)
 		return m_buildingHud.data.GetSelectedFloor()
 	end
 
-    m_buildingHud:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", false)
+    SetDockHighlight(m_buildingHud, false)
 
 	return nil
 end
@@ -1787,16 +1798,16 @@ dmhub.GetWallHeight = function()
 end
 
 dmhub.GetSelectedWall = function()
-    if m_buildingHud == nil or m_buildingHud:FindParentWithClass("dockablePanel") == nil then
+    if m_buildingHud == nil or (not m_buildingHud.valid) then
         return
     end
 
 	if gui.ChildHasFocus(m_buildingHud) then
-        m_buildingHud:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", true)
+        SetDockHighlight(m_buildingHud, true)
 		return m_buildingHud.data.GetSelectedWall()
 	end
 
-    m_buildingHud:FindParentWithClass("dockablePanel"):SetClass("highlightPanel", false)
+    SetDockHighlight(m_buildingHud, false)
 	return nil
 end
 
