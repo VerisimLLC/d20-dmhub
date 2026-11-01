@@ -26,6 +26,19 @@ local g_gamePageSetting = setting{
 	default = 1,
 }
 
+--Defined here rather than in DMHub Core UI because the engine's vision camera reads it as
+--soon as a game starts, before the game's mods (including Core UI) have loaded. The
+--titlescreen mod is already loaded at that point.
+setting{
+	id = "playervisionoverlay",
+	description = "Player Vision Overlay",
+	classes = {"dmonly"},
+	section = "General",
+	default = false,
+	editor = "check",
+	storage = "preference",
+}
+
 local STORAGE_FIREBASE = 0
 local STORAGE_DURABLE_OBJECTS = 1
 local STORAGE_DURABLE_OBJECTS_STAGING = 2

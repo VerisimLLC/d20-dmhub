@@ -696,16 +696,6 @@ setting{
 }
 
 setting{
-	id = "playervisionoverlay",
-	description = "Player Vision Overlay",
-	classes = {"dmonly"},
-	section = "General",
-	default = false,
-	editor = "check",
-	storage = "preference",
-}
-
-setting{
 	id = "strict:movement",
 	description = "Strictly Enforce Forced Movement Rules",
 	help = "When enabled, players (and a GM viewing as a player) can only place forced movement (push, pull, slide, knockback) on legally reachable tiles.",
