@@ -356,6 +356,97 @@ Styles = {
 			bgcolor = "black",
 		},
 
+		--the open dropdown menu. The synced gui.Dropdown no longer styles its
+		--own popup: the popup inherits the control's cascade, and upstream
+		--the open-menu rules live only in the ThemeEngine theme. Surfaces
+		--whose cascade has Styles.Default but not the theme (the character
+		--sheet, the title screen's dialogs) got bare, unframed option lists.
+		--These mirror DefaultStyles' rules in the gold-on-dark palette; where
+		--the theme IS in the cascade it sits nearer the popup and wins.
+		gui.Style{
+			selectors = {"dropdownBorder"},
+			bgimage = true,
+			bgcolor = "#161616",
+			border = 2,
+			borderColor = textColor,
+			vpad = 2,
+			hpad = 0,
+			priority = 55,
+		},
+		gui.Style{
+			selectors = {"dropdownBorder", "vcenter"},
+			border = 2,
+			vpad = 4,
+		},
+		gui.Style{
+			selectors = {"dropdownBorder", "top"},
+			border = 2,
+		},
+		gui.Style{
+			selectors = {"dropdownBorder", "detached"},
+			border = 2,
+		},
+		gui.Style{
+			selectors = {"dropdownMenuSub"},
+			bgimage = true,
+			bgcolor = "#161616",
+			border = 2,
+			borderColor = textColor,
+			pad = 2,
+			flow = "vertical",
+			width = "auto",
+			height = "auto",
+			valign = "top",
+			hidden = 1,
+		},
+		gui.Style{
+			selectors = {"dropdownMenuSub", "parent:hover"},
+			hidden = 0,
+		},
+		gui.Style{
+			selectors = {"dropdownOption"},
+			bgimage = true,
+			width = "100%-4",
+			height = "auto",
+			halign = "center",
+			textAlignment = "left",
+			hpad = 6,
+			fontSize = 18,
+			color = textColor,
+			bgcolor = "#161616",
+			--beat the generic label rules surfaces add after Styles.Default
+			--(the character sheet centers its labels); stays below the
+			--hover rule's 5 so the hover fill still shows.
+			priority = 4,
+		},
+		gui.Style{
+			selectors = {"dropdownOption", "hover"},
+			color = "black",
+			bgcolor = textColor,
+			priority = 5,
+		},
+		gui.Style{
+			selectors = {"dropdownOption", "searchfocus"},
+			color = "black",
+			bgcolor = textColor,
+		},
+		gui.Style{
+			selectors = {"dropdownOption", "disabled"},
+			color = "#777777",
+		},
+		gui.Style{
+			selectors = {"dropdownSearch"},
+			border = 0,
+		},
+		gui.Style{
+			selectors = {"submenuArrow"},
+			bgcolor = textColor,
+		},
+		gui.Style{
+			selectors = {"submenuArrow", "parent:hover"},
+			bgcolor = "#161616",
+		},
+
 		--sliders
 		gui.Style{
 			selectors = {"sliderHandleBorder"},

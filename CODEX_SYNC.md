@@ -94,6 +94,14 @@ In `PATCHES` in the sync tool. "Director" (Draw Steel's game master) reads
 moment after load; the DM's Screen has no cover art (the Codex's is an image
 in the Codex's cloud, which shows as a grey slab in DMHub).
 
+ThemeEngine also clears its resolved-styles cache whenever a color scheme or
+theme registers. Upstream it does not, which is harmless in the Codex, where
+ThemeEngine loads in Core UI right beside DefaultStyles. In d20 it loads with
+DMHub Titlescreen, well before DefaultStyles registers the default theme, so
+any `GetStyles()` in that window (the title screen's dropdowns) cached an
+empty style set for the whole session, and the in-game title bar's menus came
+up unstyled. If the Codex adopts the same fix, drop these two patches.
+
 ## Known gaps
 
 - **The leather table says "DRAW STEEL"**: the playmat's embossed logo is an

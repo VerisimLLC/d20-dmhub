@@ -485,6 +485,7 @@ function ThemeEngine.RegisterColorScheme(spec)
         gradients = spec.gradients or {},
         highContrast = spec.highContrast == true,
     }
+    _cache = {} --d20 patch: drop styles resolved before this scheme existed
     return true
 end
 
@@ -558,6 +559,7 @@ function ThemeEngine.RegisterTheme(spec)
         fonts = spec.fonts or {},
         styles = spec.styles or {},
     }
+    _cache = {} --d20 patch: drop styles resolved before this theme existed
     return true
 end
 

@@ -122,6 +122,19 @@ PATCHES = {
          "if devmode() then\n    Commands.RegisterMacro{\n        name = \"themecache\",", 1),
         ("tostring(_enforceSafetySetting:Get())), \"safetheme\", \"#cc4444\", dmhub.userid)\n        end\n    end,\n}\n",
          "tostring(_enforceSafetySetting:Get())), \"safetheme\", \"#cc4444\", dmhub.userid)\n        end\n    end,\n}\nend) --d20 patch\n", 1),
+        # Registering a scheme or theme must drop the resolved-styles cache. In
+        # d20 this file loads with DMHub Titlescreen, long before Core UI's
+        # DefaultStyles registers the default theme, so a GetStyles() in that
+        # window (the title screen's dropdowns) cached an empty result for the
+        # whole session and the in-game title bar merged against it.
+        ("        highContrast = spec.highContrast == true,\n    }\n    return true\nend\n",
+         "        highContrast = spec.highContrast == true,\n    }\n"
+         "    _cache = {} --d20 patch: drop styles resolved before this scheme existed\n"
+         "    return true\nend\n", 1),
+        ("        styles = spec.styles or {},\n    }\n    return true\nend\n",
+         "        styles = spec.styles or {},\n    }\n"
+         "    _cache = {} --d20 patch: drop styles resolved before this theme existed\n"
+         "    return true\nend\n", 1),
     ],
     # "Director" is Draw Steel's word for the game master; DMHub says DM.
     "DMHub Game Hud/DirectorScreen.lua": [

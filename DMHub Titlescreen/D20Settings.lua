@@ -57,6 +57,17 @@ setting{
 	storage = "preference",
 }
 
+--The synced ModShare.lua reads this to decide whether to offer the Encounter
+--of the Week module type. The Codex defines it in Codex
+--Titlescreen/EncounterOfTheWeek.lua, which d20 does not have, so every read
+--logged "Could not find setting". Encounter of the Week is a Draw Steel game
+--mode, so register it here permanently off, with no editor so it never shows.
+setting{
+	id = "dev:encounteroftheweek",
+	default = false,
+	storage = "preference",
+}
+
 --Privacy toggle read by analytics helpers before sending any usage data.
 setting{
 	id = "telemetry_enabled",

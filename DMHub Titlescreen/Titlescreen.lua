@@ -213,16 +213,18 @@ local CreateGameScreen = function(titlescreen)
         local modal
 
         local statusLabel = gui.Label{
-            classes = {"dialogMessage", "hidden"},
+            classes = {"dialogMessage", "collapsed"},
+            tmargin = 16,
             text = "Preparing...",
         }
 
         local progressBar = gui.ProgressBar{
-            classes = {"hidden"},
+            classes = {"collapsed"},
             width = "80%",
             height = 24,
             halign = "center",
             valign = "center",
+            tmargin = 12,
             value = 0,
         }
 
@@ -238,10 +240,11 @@ local CreateGameScreen = function(titlescreen)
         }
 
         local backendPanel = gui.Panel{
-            classes = cond(dmhub.GetSettingValue("dev"), {}, {"hidden"}),
-            width = "80%",
+            classes = cond(dmhub.GetSettingValue("dev"), {}, {"collapsed"}),
+            width = "auto",
             height = 36,
             halign = "center",
+            tmargin = 16,
             flow = "horizontal",
 
             gui.Label{
@@ -254,6 +257,9 @@ local CreateGameScreen = function(titlescreen)
             },
 
             gui.Dropdown{
+                --The open menu's rules live in the theme, not Styles.Default;
+                --see the Storage dropdown in CreateGameScreen.
+                styles = ThemeEngine.GetStyles(),
                 width = 240,
                 height = 28,
                 fontSize = 16,
@@ -272,9 +278,9 @@ local CreateGameScreen = function(titlescreen)
         local actionPanel
         local function startDeployment()
             actionPanel:SetClass("hidden", true)
-            backendPanel:SetClass("hidden", true)
-            statusLabel:SetClass("hidden", false)
-            progressBar:SetClass("hidden", false)
+            backendPanel:SetClass("collapsed", true)
+            statusLabel:SetClass("collapsed", false)
+            progressBar:SetClass("collapsed", false)
 
             lobby:PromoteLocalGame{
                 gameid = gameInfo.gameid,
@@ -304,7 +310,7 @@ local CreateGameScreen = function(titlescreen)
                     else
                         statusLabel.text = "Deployment failed: " .. (errorMessage or "Unknown error")
                         statusLabel.selfStyle.color = "red"
-                        progressBar:SetClass("hidden", true)
+                        progressBar:SetClass("collapsed", true)
                         closeButton:SetClass("hidden", false)
                     end
                 end,
@@ -316,6 +322,10 @@ local CreateGameScreen = function(titlescreen)
 
             gui.Button{
                 classes = {"dialogButton"},
+                --{dialogButton} is 160 wide at fontSize 28, sized for the
+                --one-word buttons of the other title-screen dialogs; this
+                --caption wraps in it.
+                width = 230,
                 text = "Deploy Online",
                 click = function(element)
                     startDeployment()
@@ -341,16 +351,28 @@ local CreateGameScreen = function(titlescreen)
                 text = "Invite Players",
             },
 
-            gui.Label{
-                classes = {"dialogMessage"},
-                text = "This game is currently stored only on this computer. " ..
-                    "Deploying it online creates a new invite code and copies the game to Cloudflare. " ..
-                    "The local copy is removed only after the online copy is verified.",
+            --The modal lays its children out with flow "none", so anything
+            --without its own valign piles up at the top over the title, and
+            --the center-aligned status and progress bar would sit on top of
+            --the message. Stack the middle content in one centered column.
+            gui.Panel{
+                width = "100%",
+                height = "auto",
+                valign = "center",
+                flow = "vertical",
+
+                gui.Label{
+                    classes = {"dialogMessage"},
+                    text = "This game is currently stored only on this computer. " ..
+                        "Deploying it online creates a new invite code and copies the game to Cloudflare. " ..
+                        "The local copy is removed only after the online copy is verified.",
+                },
+
+                backendPanel,
+                statusLabel,
+                progressBar,
             },
 
-            backendPanel,
-            statusLabel,
-            progressBar,
             actionPanel,
             closeButton,
         }
@@ -1307,6 +1329,12 @@ local CreateGameScreen = function(titlescreen)
             },
 
             gui.Dropdown{
+                --The open menu inherits its styles from this control and its
+                --ancestors, and the games screen's Styles.Default only covers
+                --the closed control; the open-menu rules (dropdownBorder,
+                --dropdownOption) live in the theme. Scope the theme here, as
+                --the Codex title screen does.
+                styles = ThemeEngine.GetStyles(),
                 width = 260,
                 height = 28,
                 fontSize = 15,
