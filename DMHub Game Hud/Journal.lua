@@ -1,14 +1,21 @@
 local mod = dmhub.GetModLoading()
 
 --This is the start of a journaling system but not much has been done on it yet.
-RegisterGameType("JournalNode")
+--- @class JournalNode: GameType
+--- @field new fun(o?: table): JournalNode
+--- @field id string Key of this row in its data table; SetAndUploadTableItem sets it.
+JournalNode = RegisterGameType("JournalNode")
 
 JournalNode.name = "New Document"
 JournalNode.parentid = "none"
 JournalNode.creatorid = "gm"
 
-RegisterGameType("JournalFolder", "JournalNode")
-RegisterGameType("JournalDocument", "JournalNode")
+--- @class JournalFolder: JournalNode
+--- @field new fun(o?: table): JournalFolder
+JournalFolder = RegisterGameType("JournalFolder", "JournalNode")
+--- @class JournalDocument: JournalNode
+--- @field new fun(o?: table): JournalDocument
+JournalDocument = RegisterGameType("JournalDocument", "JournalNode")
 
 JournalDocument.text = ""
 JournalDocument.image = ""
@@ -48,8 +55,11 @@ local JournalStyles = {
 }
 
 function GameHud:JournalPanel()
+	---@type Panel
+	local resultPanel
 	local result = nil
-	local createItemButton = gui.AddButton{
+	local createItemButton = gui.Button{
+		classes = {"addButton"},
 		margin = 8,
 		linger = function(element)
 			gui.Tooltip("Add a new journal entry")(element)
@@ -141,7 +151,8 @@ end
 
 function GameHud:EditJournalDialog(journalid)
 	local dataTable = dmhub.GetTable(JournalNode.tableName) or {}
-	local doc = dataTable[journalid]
+	--this prototype journal edits the JournalDocument rows it creates (JournalPanel above).
+	local doc = dataTable[journalid] --[[@as JournalDocument]]
 
 	local mainPanel
 
@@ -158,11 +169,10 @@ function GameHud:EditJournalDialog(journalid)
 		},
 
 		children = {
-			gui.PrettyButton{
+			gui.Button{
+				classes = {"sizeL"},
 				text = 'Save & Close',
 				width = 200,
-				height = 80,
-
 				events = {
 					click = function(element)
 						self:CloseModal()
@@ -253,18 +263,20 @@ function GameHud:EditJournalDialog(journalid)
 	
 end
 
+--doc.owner (optional) is the panel the picture was opened from: the viewer
+--opens in that panel's window, which matters when it is popped out.
 function GameHud:ViewJournalEntry(doc)
+	local layer
 
 	local panel = gui.Panel{
 		bgimage = doc.image,
 		bgcolor = "white",
 		maxWidth = 1024,
 		maxHeight = 1024,
-		width = "auto",
-		height = "auto",
-		autosizeimage = true,
+		width = rawget(doc, "width") or "auto",
+		height = rawget(doc, "height") or "auto",
+		autosizeimage = cond(rawget(doc, "autosizeimage") ~= nil, rawget(doc, "autosizeimage"), true),
 		interactable = false,
-
 	}
 
 	local parentPanel = gui.Panel{
@@ -281,10 +293,10 @@ function GameHud:ViewJournalEntry(doc)
 		},
 
 		press = function(element)
-			self:CloseModal()
+			self:CloseModalInLayer(layer)
 		end,
 		click = function(element)
-			self:CloseModal()
+			self:CloseModalInLayer(layer)
 		end,
 
 		escapeActivates = true,
@@ -293,17 +305,27 @@ function GameHud:ViewJournalEntry(doc)
 	}
 
 	dmhub.Debug(string.format("VIEW JOURNAL: %s", doc.image))
-	self:ShowModal(parentPanel)
+	layer = self:ShowModal(parentPanel, { owner = rawget(doc, "owner") })
 end
 
 function GameHud:ViewSign(imageid)
+    if imageid == nil then
+        return
+    end
+
+    local documentTable = dmhub.GetTable(MarkdownDocument.tableName or {})
+    if documentTable[imageid] then
+        documentTable[imageid]:ShowDocument()
+        return
+    end
+
 	self:ViewJournalEntry(JournalDocument.new{
 		image = imageid,
 	})
 end
 
 --renders a compendium entry in modal form.
-function GameHud:ViewCompendiumEntryModal(entry, token)
+function GameHud:ViewCompendiumEntryModal(entry, token, options)
 	local panel = gui.Panel{
 		width = "100%",
 		height = "100%",
@@ -339,7 +361,7 @@ function GameHud:ViewCompendiumEntryModal(entry, token)
 				height = "auto",
 				halign = "left",
 				hmargin = 4,
-				entry:Render({}, token),
+				entry:Render(options, token),
 			},
 		}
 	}

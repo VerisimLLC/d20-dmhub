@@ -1,710 +1,1176 @@
 local mod = dmhub.GetModLoading()
 
-RegisterGameType("InfoDocument")
-RegisterGameType("InfoDocumentSection")
+---@class InfoDocument: GameType
+--- @field new fun(o?: table): InfoDocument
+---@field docid string|false a reference to a markdown document in the journal.
+---@field linkid string|false a PDF, image or PDF bookmark in the journal (see CreateInfoDocument).
+InfoDocument = RegisterGameType("InfoDocument")
+--- @class InfoDocumentSection: GameType
+--- @field new fun(o?: table): InfoDocumentSection
+InfoDocumentSection = RegisterGameType("InfoDocumentSection")
+
+--a reference to a markdown document in the journal.
+InfoDocument.docid = false
+--a journal entry that is not in the documents table: a PDF, an image or a PDF
+--bookmark. A bubble made by dragging one onto the map opens it.
+InfoDocument.linkid = false
+InfoDocument.sections = {}
+
+function InfoDocument:GetMarkdownDocument()
+    local doc = (dmhub.GetTable(CustomDocument.tableName) or {})[self.docid]
+    return doc
+end
 
 function InfoDocument.OnDeserialize(self)
-	self:get_or_add("ord", 0)
+    self:get_or_add("ord", 0)
 end
 
 function InfoDocument:AddSection()
-	self.sections[#self.sections+1] = InfoDocumentSection.new{
-		title = "Description",
-		text = "",
-	}
+    self.sections[#self.sections + 1] = InfoDocumentSection.new {
+        title = "Description",
+        text = "",
+    }
 end
 
 --called by DMHub to validate an info document is valid.
 function IsValidInfoDocument(doc)
-	return doc ~= nil and doc.typeName == "InfoDocument"
+    return doc ~= nil and doc.typeName == "InfoDocument"
 end
 
---called by DMHub to create an info document.
-function CreateInfoDocument()
-	local maxOrd = 1
-	for k,p in pairs(dmhub.infoBubbles) do
-		if p.document ~= nil and p.document.ord ~= nil and p.document.ord > maxOrd then
-			maxOrd = p.document.ord
-		end
-	end
-	return InfoDocument.new{
-		ord = maxOrd+1,
-		sections = {
-			InfoDocumentSection.new{
-				title = "Description",
-				text = "",
-			}
-		}
-	}
+--called by DMHub to create an info document. link is the id of an existing
+--journal entry (dmhub.CreateInfoBubble's options.link, e.g. a document dragged
+--onto the map): the bubble opens that entry and no new document is made.
+function CreateInfoDocument(description, link)
+    local maxOrd = 1
+    for k, p in pairs(dmhub.infoBubbles) do
+        if p.document ~= nil and p.document.ord ~= nil and p.document.ord > maxOrd then
+            maxOrd = p.document.ord
+        end
+    end
+
+    if link ~= nil then
+        local entry = CustomDocument.FindJournalEntry(link)
+        if entry == nil then
+            --nil aborts the bubble, as for a document that could not be saved.
+            return nil
+        end
+        if (dmhub.GetTable(CustomDocument.tableName) or {})[link] ~= nil then
+            return InfoDocument.new {
+                ord = maxOrd + 1,
+                docid = link,
+            }
+        end
+        return InfoDocument.new {
+            ord = maxOrd + 1,
+            linkid = link,
+        }
+    end
+
+    local docid = dmhub.GenerateGuid()
+    local description = description or "Room 1"
+    local markdownDoc = MarkdownDocument.new {
+        id = docid,
+        description = description or "Room 1",
+        parentFolder = game.currentMapId,
+        content = "# " .. description,
+        annotations = {},
+    }
+
+    --Persist the document BEFORE we hand an InfoDocument back. Our caller
+    --(InfoBubbleController.CreateInfoBubble) writes the bubble to the floor as a
+    --SEPARATE write the moment we return, so anything that stops the document
+    --from being written leaves a bubble whose docid resolves to nothing -- and
+    --clicking such a bubble used to be a silent no-op. Returning nil makes the
+    --caller abort the bubble instead, so the two can never come apart.
+    dmhub.SetAndUploadTableItem(MarkdownDocument.tableName, markdownDoc)
+
+    if (dmhub.GetTable(CustomDocument.tableName) or {})[docid] == nil then
+        --SetAndUploadTableItem is a no-op in some games (the lobby game returns
+        --early), in which case the row never lands and the bubble must not exist.
+        gui.ModalMessage {
+            title = "Could Not Create Info Bubble",
+            message = "The journal document for this info bubble could not be saved, so the bubble was not created.",
+        }
+        return nil
+    end
+
+    markdownDoc:ShowCreateDialog()
+
+    return InfoDocument.new {
+        ord = maxOrd + 1,
+        docid = docid,
+    }
+end
+
+--Puts an info bubble at the mouse (the square under it, on the floor being
+--viewed) that opens an existing journal entry: a document, PDF, image or PDF
+--bookmark dragged out of the journal onto the map. Director only. Returns
+--the new bubble's id, or nil.
+function InfoDocument.PlaceLinkedBubble(entryid)
+    if not dmhub.isDM then
+        return nil
+    end
+    local entry = CustomDocument.FindJournalEntry(entryid)
+    local pt = dmhub.GetMouseWorldPoint()
+    if entry == nil or pt == nil then
+        return nil
+    end
+    local loc = core.Loc{
+        x = math.floor(pt.x + 0.5),
+        y = math.floor(pt.y + 0.5),
+        floorIndex = game.currentFloorIndex,
+    }
+    return dmhub:CreateInfoBubble(loc, {
+        link = entryid,
+        description = entry.description,
+    })
 end
 
 function GameHud:CreateDocumentsPanel()
-	local result = gui.Panel{
-		id = 'document-dialog-panel',
-		bgimage = 'panels/square.png',
-		interactable = false,
+    local result = gui.Panel {
+        id = 'document-dialog-panel',
+        bgimage = 'panels/square.png',
+        interactable = false,
 
-		styles = {
-			{
-				width = self.dialog.width,
-				height = self.dialog.height,
-				valign = 'center',
-				halign = 'center',
-				bgcolor = 'clear',
-			},
-			{
-				selectors = {'document-dialog'},
-				priority = 5,
-				valign = 'top',
-				halign = 'left',
-				cornerRadius = 12,
-				borderColor = 'black',
-				borderWidth = 2,
-				bgcolor = 'grey',
-			},
-		}
-	}
+        styles = {
+            {
+                --track the parent LIVE. Reading self.dialog.width here froze a
+                --NUMBER at creation time; the layer's coordinate space has a
+                --fixed height (1048) while its width follows the window
+                --aspect, so any resize/fullscreen/monitor change left the
+                --frozen width stale. With halign 'center' the leftover space
+                --split evenly and indented everything mounted in this layer
+                --(icon rails, panel windows, banners) away from the screen
+                --edges -- measured 1728 vs a live 1829.78, ~71px per side. A
+                --Lua reload recreated the panel at the current width and
+                --"fixed" it, which is what made the bug look intermittent.
+                width = "100%",
+                height = "100%",
+                valign = 'center',
+                halign = 'center',
+                bgcolor = 'clear',
+            },
+            --a custom interface hiding the table's windows (suppressWindows,
+            --GameHud.SyncInterfaceSuppression): everything on this layer but
+            --presented dialogs and the rails it put up.
+            {
+                selectors = { 'panel', 'parent:interfaceSuppressing', '~presentedDialog', '~iconRail' },
+                priority = 10,
+                collapsed = 1,
+            },
+            {
+                selectors = { 'document-dialog' },
+                priority = 5,
+                valign = 'top',
+                halign = 'left',
+                cornerRadius = 12,
+                borderColor = 'black',
+                borderWidth = 2,
+                bgcolor = 'grey',
+            },
+        }
+    }
 
-	self.documentsPanel = result
+    self.documentsPanel = result
 
-	return result
+    return result
 end
 
 function GameHud:CreateDocumentDialog()
-	local dialogWidth = 500
-	local dialogHeight = 600
-	local resultPanel
-	local mainPanel
+    local dialogWidth = 700
+    local dialogHeight = 800
+    local resultPanel
+    local mainPanel
 
-	local currentInfo
+    local currentInfo
 
-	local leftPanelChildren = {}
-	local leftPanel = gui.Panel{
-		classes = {'left-panel'},
-		vscroll = true,
+    local leftPanelChildren = {}
+    local leftPanel = gui.Panel {
+        classes = { 'left-panel' },
+        vscroll = true,
 
-		events = {
-			refreshDocument = function(element, info)
-				local children = {}
+        events = {
+            refreshBubbleDocument = function(element, info)
+                local children = {}
+                local newLeftPanelChildren = {}
 
-				local bubbles = dmhub.infoBubbles
-				local bubblesSorted = {}
+                local bubbles = dmhub.infoBubbles
+                local bubblesSorted = {}
 
-				for k,bubble in pairs(bubbles) do
-					if bubble.document ~= nil then
-						bubblesSorted[#bubblesSorted+1] = bubble
-					end
-				end
+                for k, bubble in pairs(bubbles) do
+                    if bubble.document ~= nil then
+                        bubblesSorted[#bubblesSorted + 1] = bubble
+                    end
+                end
 
-				table.sort(bubblesSorted, function(a,b)
-					return a.document.ord < b.document.ord
-				end)
+                table.sort(bubblesSorted, function(a, b)
+                    return a.document.ord < b.document.ord
+                end)
 
-				for i,bubble in ipairs(bubblesSorted) do
-					local id = bubble.id
-					local child = leftPanelChildren[bubble.id] or gui.Panel{
-						bgimage = 'panels/square.png',
-						classes = {'left-panel-child'},
-						flow = "horizontal",
+                for i, bubble in ipairs(bubblesSorted) do
+                    local id = bubble.id
+                    local child = leftPanelChildren[bubble.id] or gui.Panel {
+                        bgimage = 'panels/square.png',
+                        classes = { 'left-panel-child' },
+                        flow = "horizontal",
 
-						gui.Label{
-							classes = {'left-panel-child-bubble'},
-							x = -4,
-							text = bubble.icon,
-							refreshDocument = function(element, info)
-								element.text = bubble.icon
-							end,
-						},
+                        gui.Label {
+                            classes = { 'left-panel-child-bubble' },
+                            x = -4,
+                            text = bubble.icon,
+                            refreshBubbleDocument = function(element, info)
+                                element.text = bubble.icon
+                            end,
+                        },
 
 
-						gui.Label{
-							classes = {'left-panel-child-label'},
-							text = bubble.description,
-							refreshDocument = function(element, info)
-								element.text = bubble.description
-							end,
-						},
+                        gui.Label {
+                            classes = { 'left-panel-child-label' },
+                            text = bubble.description,
+                            refreshBubbleDocument = function(element, info)
+                                element.text = bubble.description
+                            end,
+                        },
 
-						events = {
-							click = function(element)
-								resultPanel:FireEvent('refreshDocument', dmhub.infoBubbles[id])
-							end,
-						},
-					}
-					leftPanelChildren[bubble.id] = child
-					children[#children+1] = child
+                        events = {
+                            press = function(element)
+                                resultPanel:FireEvent('refreshBubbleDocument', dmhub.infoBubbles[id])
+                            end,
+                            refreshBubbleDocument = function(element, info)
+                                element:SetClassTree('selected', id == info.id)
+                            end,
+                            rightClick = function(element)
+                                local currentInfo = dmhub.infoBubbles[id]
+                                local maxOrd = nil
+                                local minOrd = nil
+                                for k, p in pairs(dmhub.infoBubbles) do
+                                    if p.document ~= nil and p.document.ord ~= nil and (maxOrd == nil or p.document.ord > maxOrd) then
+                                        maxOrd = p.document.ord
+                                    end
 
-					child:SetClass('selected', bubble.id == info.id)
-				end
+                                    if p.document ~= nil and p.document.ord ~= nil and (minOrd == nil or p.document.ord < minOrd) then
+                                        minOrd = p.document.ord
+                                    end
+                                end
 
-				element.children = children
-			end,
-		}
-	}
+                                local options = {
+                                    {
+                                        text = "Move to Top",
+                                        click = function()
+                                            currentInfo:BeginChanges()
+                                            currentInfo.document.ord = minOrd-1
+                                            currentInfo:CompleteChanges('Add Info Bubble Section')
+                                            resultPanel:FireEventTree('refreshBubbleDocument', currentInfo)
+                                            element.popup = nil
+                                        end,
+                                    },
+                                    {
+                                        text = "Move to Bottom",
+                                        click = function()
+                                            currentInfo:BeginChanges()
+                                            currentInfo.document.ord = maxOrd+1
+                                            currentInfo:CompleteChanges('Add Info Bubble Section')
+                                            resultPanel:FireEventTree('refreshBubbleDocument', currentInfo)
+                                            element.popup = nil
+                                        end,
+                                    }
+                                }
 
-	local title = gui.Label{
-		bgimage = 'panels/square.png',
-		editable = true,
-		selfStyle = {
-			fontSize = 20,
-			color = 'white',
-			bgcolor = 'clear',
-			borderWidth = 0,
+                                element.popup = gui.ContextMenu{
+                                    width = 180,
+                                    entries = options,
+                                }
+                            end,
+                        },
+                    }
+                    newLeftPanelChildren[bubble.id] = child
+                    children[#children + 1] = child
 
-			width = 'auto',
-			height = 'auto',
-			halign = 'center',
-			valign = 'top',
-		},
-		events = {
-			refreshDocument = function(element, info)
-				element.text = info.description
-			end,
-			change = function(element)
-				currentInfo.description = element.text
-				resultPanel:FireEventTree('refreshDocument', currentInfo)
-			end,
-		}
-	}
+                    child:SetClass('selected', bubble.id == info.id)
+                end
 
-	local bubbleIcon = gui.Label{
-		bgimage = 'panels/square.png',
-		characterLimit = 3,
-		editable = true,
-		selfStyle = {
-			bgcolor = 'black',
-			color = 'white',
-			cornerRadius = '50% height',
-			borderColor = 'white',
-			borderWidth = 1,
-			width = 25,
-			height = 25,
-			fontSize = 13,
-			halign = "center",
-			valign = "center",
-			textAlignment = "center",
-		},
-		events = {
-			refreshDocument = function(element, info)
-				element.text = info.icon
-			end,
-			change = function(element)
-				currentInfo.icon = element.text
-			end,
-		},
-	}
+                leftPanelChildren = newLeftPanelChildren
+                element.children = children
+            end,
+        }
+    }
 
-	local lockIcon = gui.Panel{
-		width = 16,
-		height = 16,
-		bgcolor = "white",
-		selfStyle = {
-			bgimage = "panels/square.png",
-		},
-		linger = gui.Tooltip("Unlock to allow dragging on the map"),
-		refreshDocument = function(element, info)
-			element.selfStyle.bgimage = cond(info.locked, 'icons/icon_tool/icon_tool_30.png', 'icons/icon_tool/icon_tool_30_unlocked.png')
-		end,
+    local title = gui.Label {
+        bgimage = 'panels/square.png',
+        editable = true,
+        selfStyle = {
+            fontSize = 20,
+            color = 'white',
+            bgcolor = 'clear',
+            borderWidth = 0,
 
-		press = function(element)
-			currentInfo.locked = not currentInfo.locked
-			element:FireEvent("refreshDocument", currentInfo)
-		end,
-	}
+            minWidth = 100,
+            width = 'auto',
+            height = 'auto',
+            halign = 'center',
+            valign = 'top',
+        },
+        events = {
+            refreshBubbleDocument = function(element, info)
+                element.text = info.description
+            end,
+            change = function(element)
+                currentInfo.description = element.text
+                resultPanel:FireEventTree('refreshBubbleDocument', currentInfo)
 
-	local titlePanel = gui.Panel{
-		selfStyle = {
-			flow = 'horizontal',
-			width = 'auto',
-			height = 'auto',
-			pad = 0,
+                local doc = currentInfo.document:GetMarkdownDocument()
+                if doc ~= nil then
+                    doc.description = element.text
+                    dmhub.SetAndUploadTableItem(MarkdownDocument.tableName, doc)
+                end
+            end,
+        }
+    }
+
+    local bubbleIcon = gui.Label {
+        bgimage = 'panels/square.png',
+        characterLimit = 3,
+        editable = true,
+        selfStyle = {
+            bgcolor = 'black',
+            color = 'white',
+            cornerRadius = '50% height',
+            borderColor = 'white',
+            borderWidth = 1,
+            width = 25,
+            height = 25,
+            fontSize = 13,
+            halign = "center",
+            valign = "center",
+            textAlignment = "center",
+        },
+        events = {
+            refreshBubbleDocument = function(element, info)
+                element.text = info.icon
+            end,
+            change = function(element)
+                currentInfo.icon = element.text
+            end,
+        },
+    }
+
+    local lockIcon = gui.Panel {
+        width = 16,
+        height = 16,
+        bgcolor = "white",
+        selfStyle = {
+            bgimage = "panels/square.png",
+        },
+        linger = gui.Tooltip("Unlock to allow dragging on the map"),
+        refreshBubbleDocument = function(element, info)
+            element.selfStyle.bgimage = cond(info.locked, 'icons/icon_tool/icon_tool_30.png',
+                'icons/icon_tool/icon_tool_30_unlocked.png')
+        end,
+
+        press = function(element)
+            currentInfo.locked = not currentInfo.locked
+            element:FireEvent("refreshBubbleDocument", currentInfo)
+        end,
+    }
+
+    local titlePanel = gui.Panel {
+        selfStyle = {
+            flow = 'horizontal',
+            width = 'auto',
+            height = 'auto',
+            pad = 0,
             tmargin = 4,
-			valign = 'top',
-		},
-		children = {
-			title,
-			--padding.
-			gui.Panel{
-				width = 8,
-				height = 8,
-			},
-			bubbleIcon,
-			--padding.
-			gui.Panel{
-				width = 30,
-				height = 8,
-			},
-			lockIcon,
-		}
-	}
+            valign = 'top',
+        },
+        children = {
+            title,
+            --padding.
+            gui.Panel {
+                width = 8,
+                height = 8,
+            },
+            bubbleIcon,
+            --padding.
+            gui.Panel {
+                width = 30,
+                height = 8,
+            },
+            lockIcon,
+        }
+    }
 
-	local addPanel = gui.Label{
-		bgimage = 'panels/square.png',
-		text = '+',
-		classes = {'document-add'},
-		events = {
-			click = function(element)
-				currentInfo:BeginChanges()
-				currentInfo.document:AddSection()
-				currentInfo:CompleteChanges('Add Info Bubble Section')
-				resultPanel:FireEventTree('refreshDocument', currentInfo)
-			end,
-		},
-	}
+    local addPanel = gui.Label {
+        bgimage = 'panels/square.png',
+        text = '+',
+        classes = { 'document-add' },
+        events = {
+            click = function(element)
+                currentInfo:BeginChanges()
+                currentInfo.document:AddSection()
+                currentInfo:CompleteChanges('Add Info Bubble Section')
+                resultPanel:FireEventTree('refreshBubbleDocument', currentInfo)
+            end,
+        },
+    }
 
-	local documentPanel = gui.Panel{
-		bgimage = 'panels/square.png',
-		classes = {'document-panel'},
-		vscroll = true,
-		events = {
-			refreshDocument = function(element, info)
-				local children = {}
-				for i,entry in ipairs(info.document.sections) do
-					local index = i
-					children[#children+1] = gui.Panel{
-						bgimage = 'panels/square.png',
-						classes = {'document-entry'},
-						children = {
-							gui.Label{
-								id = 'document-title',
-								editable = true,
-								classes = {'document-title'},
-								text = entry.title,
-								events = {
-									change = function(element)
-										info:BeginChanges()
-										info.document.sections[index].title = element.text
-										info:CompleteChanges("Update Info Bubble Title")
-									end,
-								},
-							},
-							gui.Input{
-								classes = {'document-body'},
-								text = entry.text,
-								placeholderText = 'Enter info...',
-								multiline = true,
-								events = {
-									change = function(element)
-										info:BeginChanges()
-										info.document.sections[index].text = element.text
-										info:CompleteChanges("Update Info Bubble Text")
-									end,
-								},
-							},
-							gui.DeleteItemButton{
-								floating = true,
-                                width = 16,
+    local documentPanel = gui.Panel {
+        bgimage = 'panels/square.png',
+        classes = { 'document-panel' },
+        vscroll = true,
+        events = {
+            refreshBubbleDocument = function(element, info)
+                local children = {}
+                for i, entry in ipairs(info.document.sections) do
+                    local index = i
+                    children[#children + 1] = gui.Panel {
+                        bgimage = 'panels/square.png',
+                        classes = { 'document-entry' },
+                        children = {
+                            gui.Label {
+                                id = 'document-title',
+                                editable = true,
+                                classes = { 'document-title' },
+                                text = entry.title,
+                                events = {
+                                    change = function(element)
+                                        info:BeginChanges()
+                                        info.document.sections[index].title = element.text
+                                        info:CompleteChanges("Update Info Bubble Title")
+                                    end,
+                                },
+                            },
+                            gui.Input {
+                                classes = { 'document-body' },
+                                text = entry.text,
+                                placeholderText = 'Enter info...',
+                                multiline = true,
+                                events = {
+                                    change = function(element)
+                                        info:BeginChanges()
+                                        info.document.sections[index].text = element.text
+                                        info:CompleteChanges("Update Info Bubble Text")
+                                    end,
+                                },
+                            },
+                            gui.Button {
+                                classes = {"deleteButton", "sizeS"},
+                                floating = true,
                                 rmargin = 4,
                                 tmargin = 4,
-                                height = 16,
                                 halign = "right",
                                 valign = "top",
 
-								events = {
-									click = function(element)
-										info:BeginChanges()
-										table.remove(info.document.sections, index)
-										info:CompleteChanges("Remove Info Bubble Section")
-										resultPanel:FireEvent('refreshDocument', dmhub.infoBubbles[currentInfo.id])
-									end,
-								},
-							},
-						},
-					}
-				end
-				element.children = children
-			end
-		},
-	}
+                                events = {
+                                    click = function(element)
+                                        info:BeginChanges()
+                                        table.remove(info.document.sections, index)
+                                        info:CompleteChanges("Remove Info Bubble Section")
+                                        resultPanel:FireEvent('refreshBubbleDocument', dmhub.infoBubbles[currentInfo.id])
+                                    end,
+                                },
+                            },
+                        },
+                    }
+                end
+                element.children = children
+            end
+        },
+    }
 
-	local mainInnerPanel = gui.Panel{
-		classes = {'main-inner-panel'},
-		children = {titlePanel, documentPanel},
-	}
+    local mainInnerPanel = gui.Panel {
+        classes = { 'main-inner-panel' },
+        children = { titlePanel, documentPanel },
+    }
 
-	mainPanel = gui.Panel{
-		classes = {'main-panel'},
-		children = {mainInnerPanel, addPanel},
-	}
+    local closeButton = gui.Button{
+        classes = {"closeButton"},
+        escapeActivates = true,
+        valign = 'top',
+        halign = 'right',
+        events = {
+            click = function(element)
+                resultPanel:SetClass('hidden', true)
+            end,
+        },
 
-	local dialogPanel = gui.Panel{
-		classes = {"framedPanel"},
-		valign = 'top',
-		halign = 'left',
-		width = dialogWidth,
-		height = dialogHeight,
-		children = {
-			leftPanel,
-			mainPanel,
+        refreshBubbleDocument = function(element, info)
+            if info.document.docid then
+                element.selfStyle.collapsed = 1
+            else
+                element.selfStyle.collapsed = 0
+            end
+        end,
+    }
 
-			gui.CloseButton{
-				escapeActivates = true,
-				valign = 'top',
-				halign = 'right',
-				events = {
-					click = function(element)
-						resultPanel:SetClass('hidden', true)
-					end,
-				},
-			},
 
-		},
-	}
+    local dialogPanel
 
-	resultPanel = gui.Panel{
-		draggable = true,
-		x = -dialogWidth/2,
-		y = -dialogHeight/2,
-		events = {
-			drag = function(element)
-				element.x = element.xdrag
-				element.y = element.ydrag
-			end,
+    local function createDocInterfaceArgs(docId)
+        return {
+            dialogPanel = dialogPanel,
+            close = function(element)
+                closeButton:FireEvent("click")
+            end,
+            titlePanel = gui.Panel {
+                selfStyle = {
+                    flow = 'horizontal',
+                    width = 'auto',
+                    height = 'auto',
+                    pad = 0,
+                    tmargin = 4,
+                    lmargin = 20,
+                    halign = "left",
+                    valign = 'top',
+                },
+                children = {
+                    title,
+                    gui.Panel { width = 8, height = 8 },
+                    bubbleIcon,
+                    gui.Panel { width = 30, height = 8 },
+                    lockIcon,
+                }
+            }
+        }
+    end
 
-			refreshDocument = function(element, info)
-				if info ~= nil then
-					currentInfo = info
-				end
+    local customDocPanel = gui.Panel {
+        data = {
+            docid = false,
+            interfacePanel = nil,
+        },
+        width = "100%-4",
+        height = "100%",
+        rmargin = 4,
+        refreshBubbleDocument = function(element, info)
+            if info.document.docid then
+                local doc = (dmhub.GetTable(CustomDocument.tableName) or {})[info.document.docid]
+                if doc ~= nil then
+                    -- Reset history when switching entries
+                    if dialogPanel then
+                        dialogPanel.data.history = {}
+                        dialogPanel.data.forwardHistory = {}
+                        dialogPanel.data.currentDocId = info.document.docid
+                    end
 
-				if currentInfo == nil then
-					return
-				end
-				leftPanel:FireEventTree('refreshDocument', currentInfo)
-				mainPanel:FireEventTree('refreshDocument', currentInfo)
-			end,
-		},
-		selfStyle = {
-			halign = 'center',
-			valign = 'center',
-			width = 1,
-			height = 1,
-		},
+                    element.data.interfacePanel = doc:CreateInterface(createDocInterfaceArgs(info.document.docid))
+                    element.children = { element.data.interfacePanel }
+                    element.data.docid = info.document.docid
+                end
+            end
+        end,
+    }
 
-		styles = {
-			Styles.Default,
-			Styles.Panel,
-			{
-				selectors = {'left-panel'},
-				halign = 'left',
-				height = '100%',
-				valign = 'center',
-				width = 220,
-				x = -40,
-				hmargin = 4,
-				flow = 'vertical',
-			},
-			{
-				selectors = {'left-panel-child-label'},
-				halign = 'left',
-				width = "98%-56",
-				height = 22,
-				hmargin = 6,
-				valign = "center",
-				fontSize = 16,
-				minFontSize = 12,
-				color = Styles.textColor,
-				textAlignment = 'left',
-			},
-			{
-				selectors = {'left-panel-child-bubble'},
-				halign = "left",
-				valign = "center",
-				width = 48,
-				height = 48,
-				bgimage = "panels/square.png",
-				bgcolor = "black",
-				borderWidth = 2,
-				borderColor = Styles.textColor,
-				cornerRadius = 24,
-				textAlignment = "center",
-				fontFace = "CrimsonText",
-				fontSize = 32,
-			},
-			{
-				selectors = {'left-panel-child'},
-				flow = "horizontal",
-				halign = 'left',
-				valign = 'top',
-				lmargin = 8,
-				tmargin = 24,
-				width = '95%',
-				height = 26,
-				y = -6,
-				cornerRadius = 2,
-				borderWidth = 2,
-				borderColor = Styles.textColor,
-				bgcolor = '#00000000',
-			},
-			{
-				selectors = {'left-panel-child', 'hover'},
-			},
-			{
-				selectors = {'left-panel-child', 'selected'},
-			},
-			{
-				selectors = {'main-inner-panel'},
-				halign = "center",
-				valign = "top",
-				width = "100%-8",
-				height = "100%-50",
-				borderWidth = 2,
-				borderColor = Styles.textColor,
-				cornerRadius = 2,
-				bgimage = "panels/square.png",
-				bgcolor = "#00000000",
-				flow = "vertical",
-			},
-			{
-				selectors = {'main-panel'},
-				flow = 'vertical',
-				width = '100%-180',
-				height = '100%-12',
-				halign = 'right',
-				valign = 'center',
-			},
-			{
-				selectors = {'document-panel'},
-				bgcolor = 'black',
-				flow = 'vertical',
-				width = '96%',
-				height = '100%-70',
-				valign = 'top',
-				halign = 'center',
-			},
-			{
-				selectors = {'document-entry'},
-				bgcolor = 'black',
+
+    mainPanel = gui.Panel {
+        classes = { 'main-panel' },
+        children = { mainInnerPanel, addPanel, customDocPanel },
+        refreshBubbleDocument = function(element, info)
+            if info.document.docid then
+                print("BUBBLE:: SHOW CUSTOM DOC PANEL")
+                mainInnerPanel:SetClass("collapsed", true)
+                addPanel:SetClass("collapsed", true)
+                closeButton:SetClass("collapsed", true)
+                customDocPanel:SetClass("collapsed", false)
+            else
+                mainInnerPanel:SetClass("collapsed", false)
+                addPanel:SetClass("collapsed", false)
+                closeButton:SetClass("collapsed", false)
+                customDocPanel:SetClass("collapsed", true)
+            end
+        end,
+    }
+
+    dialogPanel = gui.Panel {
+        classes = { "framedPanel" },
+        valign = 'top',
+        halign = 'left',
+        blurBackground = true,
+        opacity = 0.98,
+        width = dialogWidth,
+        height = dialogHeight,
+
+        data = {
+            history = {},
+            forwardHistory = {},
+            currentDocId = false,
+        },
+
+        navigateToDocument = function(element, docId)
+            local docs = dmhub.GetTable(CustomDocument.tableName) or {}
+            local newDoc = docs[docId]
+            if newDoc == nil then return end
+
+            element.data.history[#element.data.history + 1] = element.data.currentDocId
+            element.data.forwardHistory = {}
+            element.data.currentDocId = docId
+
+            if customDocPanel.data.interfacePanel then
+                customDocPanel.data.interfacePanel:DestroySelf()
+            end
+            customDocPanel.data.interfacePanel = newDoc:CreateInterface(createDocInterfaceArgs(docId))
+            customDocPanel.children = { customDocPanel.data.interfacePanel }
+            customDocPanel.data.docid = docId
+
+            element:FireEventTree("refreshNavButtons")
+        end,
+
+        navigateBack = function(element)
+            local history = element.data.history
+            if #history == 0 then return end
+
+            local prevDocId = history[#history]
+            history[#history] = nil
+
+            element.data.forwardHistory[#element.data.forwardHistory + 1] = element.data.currentDocId
+            element.data.currentDocId = prevDocId
+
+            local docs = dmhub.GetTable(CustomDocument.tableName) or {}
+            local prevDoc = docs[prevDocId]
+            if prevDoc == nil then return end
+
+            if customDocPanel.data.interfacePanel then
+                customDocPanel.data.interfacePanel:DestroySelf()
+            end
+            customDocPanel.data.interfacePanel = prevDoc:CreateInterface(createDocInterfaceArgs(prevDocId))
+            customDocPanel.children = { customDocPanel.data.interfacePanel }
+            customDocPanel.data.docid = prevDocId
+
+            element:FireEventTree("refreshNavButtons")
+        end,
+
+        navigateForward = function(element)
+            local forwardHistory = element.data.forwardHistory
+            if #forwardHistory == 0 then return end
+
+            local nextDocId = forwardHistory[#forwardHistory]
+            forwardHistory[#forwardHistory] = nil
+
+            element.data.history[#element.data.history + 1] = element.data.currentDocId
+            element.data.currentDocId = nextDocId
+
+            local docs = dmhub.GetTable(CustomDocument.tableName) or {}
+            local nextDoc = docs[nextDocId]
+            if nextDoc == nil then return end
+
+            if customDocPanel.data.interfacePanel then
+                customDocPanel.data.interfacePanel:DestroySelf()
+            end
+            customDocPanel.data.interfacePanel = nextDoc:CreateInterface(createDocInterfaceArgs(nextDocId))
+            customDocPanel.children = { customDocPanel.data.interfacePanel }
+            customDocPanel.data.docid = nextDocId
+
+            element:FireEventTree("refreshNavButtons")
+        end,
+
+        children = {
+            leftPanel,
+            mainPanel,
+            closeButton,
+            gui.DialogResizePanel(self, dialogWidth, dialogHeight),
+        },
+    }
+
+    resultPanel = gui.Panel {
+        draggable = true,
+        x = -dialogWidth / 2,
+        y = -dialogHeight / 2,
+        events = {
+            drag = function(element)
+                element.x = element.xdrag
+                element.y = element.ydrag
+            end,
+
+            refreshBubbleDocument = function(element, info)
+                if info ~= nil then
+                    currentInfo = info
+                end
+
+                if currentInfo == nil then
+                    return
+                end
+                leftPanel:FireEventTree('refreshBubbleDocument', currentInfo)
+                mainPanel:FireEventTree('refreshBubbleDocument', currentInfo)
+            end,
+        },
+        selfStyle = {
+            halign = 'center',
+            valign = 'center',
+            width = 1,
+            height = 1,
+        },
+
+        styles = {
+            Styles.Default,
+            Styles.Panel,
+            {
+                selectors = { 'left-panel' },
+                halign = 'left',
+                height = '100%',
+                valign = 'center',
+                width = 220,
+                x = -40,
+                hmargin = 4,
+                flow = 'vertical',
+            },
+            {
+                selectors = { 'left-panel-child-label' },
+                halign = 'left',
+                width = "98%-56",
+                height = 22,
+                hmargin = 6,
+                valign = "center",
+                fontSize = 16,
+                minFontSize = 12,
+                color = Styles.textColor,
+                textAlignment = 'left',
+            },
+            {
+                selectors = { 'left-panel-child-label', 'selected' },
+                color = "black",
+            },
+            {
+                selectors = { 'left-panel-child-bubble' },
+                halign = "left",
+                valign = "center",
+                width = 48,
+                height = 48,
+                bgimage = "panels/square.png",
+                bgcolor = "black",
                 borderWidth = 2,
                 borderColor = Styles.textColor,
-				vmargin = 8,
-				color = 'white',
-				cornerRadius = 0,
-				flow = 'vertical',
-				halign = 'center',
-				valign = 'top',
-				width = '92%',
-				height = 'auto',
-				minHeight = 30,
-			},
-			{
-				selectors = {'document-add'},
-				halign = "center",
-				valign = 'top',
-				bgcolor = 'black',
-				color = Styles.textColor,
-				cornerRadius = 2,
-				borderWidth = 2,
-				borderColor = Styles.textColor,
+                cornerRadius = 24,
+                textAlignment = "center",
+                fontFace = "CrimsonText",
+                fontSize = 32,
+                minFontSize = 16,
+            },
+            {
+                selectors = { 'left-panel-child-bubble', 'parent:hover' },
+                bgcolor = Styles.textColor,
+                color = "black",
+            },
+            {
+                selectors = { 'left-panel-child' },
+                flow = "horizontal",
+                halign = 'left',
+                valign = 'top',
+                lmargin = 8,
+                tmargin = 24,
+                width = '95%',
+                height = 26,
+                y = -6,
+                cornerRadius = 2,
+                borderWidth = 2,
+                borderColor = Styles.textColor,
+                bgcolor = '#00000000',
+            },
+            {
+                selectors = { 'left-panel-child', 'selected' },
+                bgcolor = Styles.textColor,
+            },
+            {
+                selectors = { 'left-panel-child', 'hover' },
+            },
+            {
+                selectors = { 'left-panel-child', 'selected' },
+            },
+            {
+                selectors = { 'main-inner-panel' },
+                halign = "center",
+                valign = "top",
+                width = "100%-8",
+                height = "100%-50",
+                borderWidth = 2,
+                borderColor = Styles.textColor,
+                cornerRadius = 2,
+                bgimage = "panels/square.png",
+                bgcolor = "#00000000",
+                flow = "vertical",
+            },
+            {
+                selectors = { 'main-panel' },
+                flow = 'vertical',
+                width = '100%-180',
+                height = '100%-12',
+                halign = 'right',
+                valign = 'center',
+            },
+            {
+                selectors = { 'document-panel' },
+                bgcolor = 'black',
+                flow = 'vertical',
+                width = '96%',
+                height = '100%-70',
+                valign = 'top',
+                halign = 'center',
+            },
+            {
+                selectors = { 'document-entry' },
+                bgcolor = 'black',
+                borderWidth = 2,
+                borderColor = Styles.textColor,
+                vmargin = 8,
+                color = 'white',
+                cornerRadius = 0,
+                flow = 'vertical',
+                halign = 'center',
+                valign = 'top',
+                width = '92%',
+                height = 'auto',
+                minHeight = 30,
+            },
+            {
+                selectors = { 'document-add' },
+                halign = "center",
+                valign = 'top',
+                bgcolor = 'black',
+                color = Styles.textColor,
+                cornerRadius = 2,
+                borderWidth = 2,
+                borderColor = Styles.textColor,
                 tmargin = 8,
-				width = '100%-8',
-				height = 30,
-				textAlignment = 'center',
-				fontSize = 32,
-			},
-			{
-				selectors = {'document-add', 'hover'},
-				borderColor = '#ffffff',
-			},
-			{
-				selectors = {'document-add', 'press'},
-				borderColor = '#555555',
-			},
+                width = '100%-8',
+                height = 30,
+                textAlignment = 'center',
+                fontSize = 32,
+            },
+            {
+                selectors = { 'document-add', 'hover' },
+                borderColor = '#ffffff',
+            },
+            {
+                selectors = { 'document-add', 'press' },
+                borderColor = '#555555',
+            },
 
-			{
-				selectors = {'document-title'},
-				priority = 10,
-				color = Styles.textColor,
-				fontSize = 14,
-				vmargin = 4,
-				hmargin = 4,
-				halign = 'left',
-				width = '80%',
-				height = 24,
-			},
-			{
-				priority = 10,
-				selectors = {'document-body'},
+            {
+                selectors = { 'document-title' },
+                priority = 10,
+                color = Styles.textColor,
+                fontSize = 14,
+                vmargin = 4,
+                hmargin = 4,
+                halign = 'left',
+                width = '80%',
+                height = 24,
+            },
+            {
+                priority = 10,
+                selectors = { 'document-body' },
                 borderWidth = 2,
                 borderColor = Styles.textColor,
                 color = Styles.textColor,
-				vmargin = 4,
-				width = '90%',
-				height = 'auto',
-				minHeight = 60,
-				fontSize = 14,
-				valign = 'center',
-				halign = 'center',
-				textAlignment = 'topleft',
-			},
-		},
+                vmargin = 4,
+                width = '90%',
+                height = 'auto',
+                minHeight = 60,
+                fontSize = 14,
+                valign = 'center',
+                halign = 'center',
+                textAlignment = 'topleft',
+            },
+        },
 
-		children = {
-			dialogPanel,
+        children = {
+            dialogPanel,
 
-			--resize panel.
-			gui.Panel{
-				bgimage = 'panels/dialog-handle.png',
-				opacity = 0,
-				draggable = true,
-				swallowPress = true,
-				x = dialogWidth-32,
-				y = dialogHeight-32,
-				hoverCursor = "diagonal-expand",
-				dragBounds = { x1 = 100, y1 = -1000, x2 = 1000, y2 = -100 },
-				styles = {
-					{
-						bgcolor = 'grey',
-						width = 32,
-						height = 32,
-						valign = 'top',
-						halign = 'left',
-						cornerRadius = 8,
-					},
-					{
-						selectors = {'hover'},
-						brightness = 1.5,
-					},
-				},
-				events = {
-					dragging = function(element)
-						dialogPanel.selfStyle.width = max(370, element.xdrag+32)
-						dialogPanel.selfStyle.height = element.ydrag+32
-					end,
-					drag = function(element)
-						element.x = element.xdrag
-						element.y = element.ydrag
-					end,
-				},
-			},
-		}
-	}
 
-	return resultPanel
+        }
+    }
+
+    return resultPanel
 end
 
 function GameHud:IsDocumentDialogOpen()
-	local documentDialog = self:try_get('documentDialog')
-	if documentDialog == nil then
-		return false
-	end
+    local documentDialog = self:try_get('documentDialog')
+    if documentDialog == nil then
+        return false
+    end
 
-	return not documentDialog:HasClass('hidden')
+    return not documentDialog:HasClass('hidden')
 end
 
 local loadid = dmhub.GenerateGuid()
 
+--A bubble can end up pointing at a docid that resolves to no document. The
+--document is written by CreateInfoDocument as a separate write from the bubble
+--itself, and in a local-assets game it is written to the YAML directory rather
+--than into the game -- so it vanishes from the game's view the moment that
+--directory is no longer mounted. Say so, and offer to rebuild the document
+--under the SAME docid so the bubble heals, rather than doing nothing at all.
+local function ShowMissingDocumentMessage(info)
+    local docid = info.document.docid
+    local description = info.description or "Info Bubble"
+
+    local message = string.format(
+        "This info bubble points at a journal document that no longer exists in this game.\n\nDocument id: %s",
+        tostring(docid))
+
+    local status = dmhub.LocalAssetsStatus()
+    if status ~= nil and status.active then
+        message = message .. "\n\nThis game is using local asset directories, so documents created in it are written to disk rather than into the game. If the document is not in those directories the bubble cannot resolve it."
+    end
+
+    gui.ModalMessage {
+        title = "Document Missing",
+        message = message,
+        options = {
+            {
+                text = "Create Document",
+                execute = function()
+                    local doc = MarkdownDocument.new {
+                        id = docid,
+                        description = description,
+                        parentFolder = game.currentMapId,
+                        content = "# " .. description,
+                        annotations = {},
+                    }
+                    doc:Upload()
+                    doc:ShowDocument{ bubbleIcon = info.icon, edit = true }
+                end,
+            },
+            {
+                text = "Cancel",
+            },
+        },
+    }
+end
+
 function GameHud:DisplayDocument(info)
-	local documentDialog = self:try_get('documentDialog')
-	if documentDialog == nil or loadid ~= self:try_get("documentDialogLoadID") then
-		if documentDialog ~= nil then
-			documentDialog:DestroySelf()
-		end
+    if info.document.docid then
+        -- Open all docid-bearing bubbles as top-bar tabs in the journal viewer
+        local docs = dmhub.GetTable(CustomDocument.tableName) or {}
 
-		documentDialog = self:CreateDocumentDialog()
-		self.documentDialogLoadID = loadid
-		self.documentDialog = documentDialog
-		self.documentsPanel.children = {documentDialog}
-	else
-		documentDialog:SetClass('hidden', not documentDialog:HasClass('hidden'))
-	end
+        if docs[info.document.docid] == nil then
+            ShowMissingDocumentMessage(info)
+            return
+        end
 
-	if not documentDialog:HasClass('hidden') then
-		documentDialog:FireEvent("refreshDocument", info)
-	end
+        local bubblesSorted = {}
+        for k, bubble in pairs(dmhub.infoBubbles) do
+            if bubble.document ~= nil and bubble.document.docid then
+                bubblesSorted[#bubblesSorted + 1] = bubble
+            end
+        end
+        table.sort(bubblesSorted, function(a, b)
+            return a.document.ord < b.document.ord
+        end)
+
+        for _, bubble in ipairs(bubblesSorted) do
+            local doc = docs[bubble.document.docid]
+            if doc ~= nil then
+                doc:ShowDocument({bubbleIcon = bubble.icon, skipRefresh = true})
+            end
+        end
+
+        -- Switch to the clicked bubble's tab (addTab detects duplicate and switches)
+        local clickedDoc = docs[info.document.docid]
+        if clickedDoc ~= nil then
+            clickedDoc:ShowDocument({bubbleIcon = info.icon})
+        end
+    elseif info.document.linkid then
+        --a PDF, image or PDF bookmark from the journal.
+        local entry = CustomDocument.FindJournalEntry(info.document.linkid)
+        if entry == nil then
+            --unlike a missing document there is nothing to recreate: the
+            --PDF or image itself is gone.
+            gui.ModalMessage {
+                title = "Journal Entry Missing",
+                message = string.format("This info bubble opens a journal entry (a PDF, image or PDF bookmark) that has been deleted from this game.\n\nEntry id: %s", tostring(info.document.linkid)),
+            }
+            return
+        end
+        CustomDocument.OpenContent(entry)
+    else
+        -- Sections-based bubbles use the existing dialog
+        local documentDialog = self:try_get('documentDialog')
+        if documentDialog == nil or not documentDialog.valid or loadid ~= self:try_get("documentDialogLoadID") then
+            if documentDialog ~= nil and documentDialog.valid then
+                documentDialog:DestroySelf()
+            end
+
+            documentDialog = self:CreateDocumentDialog()
+            self.documentDialogLoadID = loadid
+            self.documentDialog = documentDialog
+            --added among the other windows and the rails: assigning the layer's
+            --children instead removed every one of them.
+            self.documentsPanel:AddChild(documentDialog)
+        else
+            documentDialog:SetClass('hidden', not documentDialog:HasClass('hidden'))
+            --it shares the layer now, so shown again it comes to the front.
+            if not documentDialog:HasClass('hidden') then
+                documentDialog:SetAsLastSibling()
+            end
+        end
+
+        if not documentDialog:HasClass('hidden') then
+            documentDialog:FireEvent("refreshBubbleDocument", info)
+        end
+    end
 end
 
 --called by dmhub when we need to refresh the info bubbles dialog.
 function GameHud:RefreshInfoBubbles()
-	local documentDialog = self:try_get('documentDialog')
-	if documentDialog ~= nil and not documentDialog:HasClass('hidden') then
-		--don't do this right now because updating while editing is very problematic.
-		--though this means multiple DM's editing at the same time won't work so well.
-		--documentDialog:FireEvent("refreshDocument")
-	end
+    local documentDialog = self:try_get('documentDialog')
+    if documentDialog ~= nil and not documentDialog:HasClass('hidden') then
+        --don't do this right now because updating while editing is very problematic.
+        --though this means multiple DM's editing at the same time won't work so well.
+        --documentDialog:FireEvent("refreshBubbleDocument")
+    end
 end
 
 --show the tip for an info bubble
 function GameHud:ShowInfoBubbleTip(info)
+    local markdownDoc = info.document:GetMarkdownDocument()
+    if markdownDoc ~= nil then
+        gamehud.popupPanel.popup = gui.TooltipFrame(
+            gui.Label{
+                fontSize = 18,
+                text = string.format("<b><size=140%%>%s</size></b>\n<i>Journal Document</i>\nClick to Open", markdownDoc.name),
+                markdown = true,
+                width = "auto",
+                height = "auto",
+            },
+            {
+                width = "auto",
+                interactable = false,
+            }
+        )
 
-	local styles = {
-		{
-			selectors = {'heading'},
-			fontSize = 30,
-			color = 'white',
-			textAlignment = 'left',
-			width = '95%',
-			height = 'auto',
-			halign = 'center',
-			valign = 'top',
-		},
-		{
-			selectors = {'separator'},
-			width = '96%',
-			height = 2,
-			halign  = 'center',
-			bgcolor = '#ffffff99',
-			vmargin = 4,
-		},
-		{
-			selectors = {'title'},
-			fontSize = 24,
-			color = 'white',
-			textAlignment = 'left',
-			width = '95%',
-			height = 'auto',
-			halign = 'center',
-		},
-		{
-			selectors = {'text'},
-			fontSize = 14,
-			color = 'white',
-			textAlignment = 'left',
-			width = '95%',
-			height = 'auto',
-			halign = 'center',
-		},
-	}
+        gamehud.popupPanel.popup:MakeNonInteractiveRecursive()
 
-	local children = {}
-	children[#children+1] = gui.Label{
-		classes = {'heading'},
-		text = info.description,
-	}
+        return
+    end
 
-	for i,section in ipairs(info.document.sections) do
-		children[#children+1] = gui.Panel{
-			bgimage = 'panels/square.png',
-			classes = {'separator'},
-		}
-		children[#children+1] = gui.Label{
-			classes = {'title'},
-			text = section.title,
-		}
-		children[#children+1] = gui.Label{
-			classes = {'text'},
-			text = section.text,
-		}
-	end
+    if info.document.linkid then
+        local entry = CustomDocument.FindJournalEntry(info.document.linkid)
+        local kinds = {pdf = "PDF", image = "Image", pdffragment = "PDF Bookmark"}
+        local text
+        if entry ~= nil then
+            text = string.format("<b><size=140%%>%s</size></b>\n<i>%s</i>\nClick to Open", entry.description or info.description or "Info Bubble", kinds[entry.nodeType] or "Journal Entry")
+        else
+            text = string.format("<b><size=140%%>%s</size></b>\n<i>Journal Entry Missing</i>\nClick for Details", info.description or "Info Bubble")
+        end
+        gamehud.popupPanel.popup = gui.TooltipFrame(
+            gui.Label{
+                fontSize = 18,
+                text = text,
+                markdown = true,
+                width = "auto",
+                height = "auto",
+            },
+            {
+                width = "auto",
+                interactable = false,
+            }
+        )
 
-	gamehud.popupPanel.popup = gui.Panel{
-		interactable = false,
-		bgimage = 'panels/square.png',
-		selfStyle = {
-			opacity = 1,
-			bgcolor = 'black',
-			borderWidth = 2,
-			borderColor = 'white',
-			width = 400,
-			height = 'auto',
-			flow = 'vertical',
-			vpad = 4,
-		},
-		styles = styles,
-		children = children,
-	}
+        gamehud.popupPanel.popup:MakeNonInteractiveRecursive()
 
+        return
+    end
+
+    if info.document.docid then
+        --A docid that resolves to nothing used to fall through to the sections
+        --tooltip below, which renders as an ordinary bubble with no content --
+        --indistinguishable from a bubble the DM simply left empty.
+        gamehud.popupPanel.popup = gui.TooltipFrame(
+            gui.Label{
+                fontSize = 18,
+                text = string.format("<b><size=140%%>%s</size></b>\n<i>Document Missing</i>\nClick for Details", info.description or "Info Bubble"),
+                markdown = true,
+                width = "auto",
+                height = "auto",
+            },
+            {
+                width = "auto",
+                interactable = false,
+            }
+        )
+
+        gamehud.popupPanel.popup:MakeNonInteractiveRecursive()
+
+        return
+    end
+
+    local styles = {
+        {
+            selectors = { 'heading' },
+            fontSize = 30,
+            color = 'white',
+            textAlignment = 'left',
+            width = '95%',
+            height = 'auto',
+            halign = 'center',
+            valign = 'top',
+        },
+        {
+            selectors = { 'separator' },
+            width     = '96%',
+            height    = 2,
+            halign    = 'center',
+            bgcolor   = '#ffffff99',
+            vmargin   = 4,
+        },
+        {
+            selectors = { 'title' },
+            fontSize = 24,
+            color = 'white',
+            textAlignment = 'left',
+            width = '95%',
+            height = 'auto',
+            halign = 'center',
+        },
+        {
+            selectors = { 'text' },
+            fontSize = 14,
+            color = 'white',
+            textAlignment = 'left',
+            width = '95%',
+            height = 'auto',
+            halign = 'center',
+        },
+    }
+
+    local children = {}
+    children[#children + 1] = gui.Label {
+        classes = { 'heading' },
+        text = info.description,
+    }
+
+    for i, section in ipairs(info.document.sections) do
+        children[#children + 1] = gui.Panel {
+            bgimage = 'panels/square.png',
+            classes = { 'separator' },
+        }
+        children[#children + 1] = gui.Label {
+            classes = { 'title' },
+            text = section.title,
+        }
+        children[#children + 1] = gui.Label {
+            classes = { 'text' },
+            text = section.text,
+        }
+    end
+
+    gamehud.popupPanel.popup = gui.Panel {
+        interactable = false,
+        bgimage = 'panels/square.png',
+        selfStyle = {
+            opacity = 1,
+            bgcolor = 'black',
+            borderWidth = 2,
+            borderColor = 'white',
+            width = 400,
+            height = 'auto',
+            flow = 'vertical',
+            vpad = 4,
+        },
+        styles = styles,
+        children = children,
+    }
 end
 
 function GameHud:HideInfoBubbleTip(info)
-	gamehud.popupPanel.popup = nil
+    gamehud.popupPanel.popup = nil
 end

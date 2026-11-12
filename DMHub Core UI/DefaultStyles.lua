@@ -10,36 +10,53 @@ local mod = dmhub.GetModLoading()
 ThemeEngine.RegisterColorScheme{
     id          = "default",
     name        = "Default",
-    description = "The classic D&D 5e gold-on-dark palette.",
-    -- Retinted for the 5e build: the classic gold-on-dark identity --
-    -- neutral near-black surfaces, warm gold text and chrome, and the
-    -- teal health-bar gradient from the legacy 5e styles.
+    description = "The Draw Steel default color palette: warm parchment text on warm-black surfaces.",
+    -- Ported from the Codex design system (claude.ai/design, achromatic
+    -- chrome policy): warm-black surface ladder, parchment text in place
+    -- of stark white, primary-by-value (the parchment doubles as the
+    -- accent/inverse fill), and quiet white-alpha borders.
     colors = {
-        -- Surfaces
-        bg            = "#161616",
-        bgAlt         = "#222222",
-        bgInverse     = "srgb:#C09571", -- gold "primary by value" fill
+        -- Surfaces (design ladder: #0a0a0b page, #1a1a1e nested strip)
+        bg            = "#0A0A0B",
+        bgAlt         = "#1A1A1E",
+        -- The hover/focus "lift" fill for interactive text fields (search
+        -- bar, inputs): the whole control raises to this gray and holds it
+        -- while focused. Introduced 2026-08-22 to unify the value the
+        -- search-bar rules had shipped as literal #2E2E33.
+        bgRaised      = "#2E2E33",
+        bgInverse     = "#E4DDD0", -- parchment "primary by value" fill
 
-        -- Foreground / text
-        fg            = "srgb:#C09571",
-        fgStrong      = "#d0c3a5",
-        fgMuted       = "#777777",
-        fgPending     = "#999999",
-        fgInverse     = "#222222", -- text on a gold fill
+        -- Foreground / text (parchment ladder - the "less stark white")
+        fg            = "#E4DDD0",
+        fgStrong      = "#F2EDE1",
+        fgMuted       = "#8A8A8A",
+        fgPending     = "#7A7468", -- design text-soft: warm-muted secondary
+        fgInverse     = "#0A0A0B", -- text on a parchment fill
 
-        -- Borders
-        border        = "srgb:#C09571",
-        borderInverse = "#666666",
+        -- Borders (design: depth from quiet 1px edges, not bright frames)
+        border        = "#FFFFFF29", -- control border, white at 0.16
+        -- @border pre-composited over @bg at FULL alpha. The rounded
+        -- `border` frame shader ignores the color's alpha channel
+        -- (measured 2026-08-21: #FFFFFF29 renders as a full-contrast
+        -- ~#909090 line), so any rule drawing a QUIET rounded frame must
+        -- use this token instead of @border.
+        borderSolid   = "#313134",
+        borderInverse = "#7A7468",
 
-        -- Accent + interactive
-        accent        = "srgb:#C09571",
-        accentHover   = "#d0c3a5",
+        -- Accent + interactive (achromatic: emphasis by value, not hue)
+        accent        = "#E4DDD0",
+        accentHover   = "#F7F3EA",
 
         -- Status
-        success       = "#77ff77", -- Also healthy, good, etc.
+        success       = "#4DB88C", -- Also healthy, good, etc.
         info          = "#E9C868",
-        warning       = "#fa9a00", -- Also winded, etc.
-        danger        = "#bb0000", -- Also dying, bad, etc.
+        warning       = "#E8A030", -- Also winded, etc.
+        danger        = "#C94040", -- Also dying, bad, etc.
+
+        -- Visible to players: the Director has shared this (tabletop share
+        -- icons and the frame around shared table items). Cool on purpose,
+        -- so it never reads as the warm gold of focus or highlight.
+        share         = "#4FB6E8",
 
         -- Disabled
         disabled      = "#343434",
@@ -58,47 +75,43 @@ ThemeEngine.RegisterColorScheme{
     },
     gradients = {
         -- Surfaces
-        -- Retinted to the neutral near-black family of the classic 5e
-        -- dialog gradient (same steps, hue follows the new surfaces).
+        -- Retinted from the old green-black family to the warm-black
+        -- ladder (same values/steps, hue follows the new surfaces).
         surfaceRadial = {
             type = "radial",
             point_a = {x = 0.5, y = 0.5},
             point_b = {x = 0.5, y = 1.0},
             stops = {
-                {position = -0.01, color = "#1c1c1c"},
-                {position = 0.00,  color = "#1c1c1c"},
-                {position = 0.12,  color = "#191919"},
-                {position = 0.25,  color = "#161616"},
-                {position = 0.37,  color = "#131313"},
-                {position = 0.50,  color = "#101010"},
-                {position = 0.62,  color = "#0d0d0d"},
-                {position = 0.75,  color = "#0b0b0b"},
-                {position = 0.87,  color = "#080808"},
-                {position = 1.00,  color = "#060606"},
+                {position = -0.01, color = "#1c1c1e"},
+                {position = 0.00,  color = "#1c1c1e"},
+                {position = 0.12,  color = "#19191b"},
+                {position = 0.25,  color = "#161618"},
+                {position = 0.37,  color = "#131315"},
+                {position = 0.50,  color = "#101012"},
+                {position = 0.62,  color = "#0d0d0f"},
+                {position = 0.75,  color = "#0b0b0d"},
+                {position = 0.87,  color = "#0a0a0c"},
+                {position = 1.00,  color = "#0a0a0b"},
             },
         },
 
-        -- The classic 5e dialogGradient: near-black at the top-left
-        -- lifting to a slightly lighter charcoal at the bottom-right.
         surfaceLinear = {
             point_a = {x = 0, y = 0},
             point_b = {x = 1, y = 1},
             stops = {
-                {position = 0, color = "#060606"},
-                {position = 1, color = "#1c1c1c"},
+                {position = 0, color = "#1A1A1E"},
+                {position = 1, color = "#060607"},
             },
         },
 
         -- Bars
-        -- Important: This is used in the title bar (and nothing else), so it
-        -- follows the scheme's near-black surfaces: bg on the left, bgAlt on
-        -- the right. Schemes without their own barTrack inherit this one.
+        -- Important: This is used in the title bar
         barTrack = {
             point_a = {x = -0.02, y = 0},
             point_b = {x = 1.02,  y = 0},
             stops = {
-                {position = 0, color = "#161616"},
-                {position = 1, color = "#2A2A2A"},
+                {position = 0, color = "#070708"},
+                {position = 1, color = "@bgAlt"},
             },
         },
 
@@ -141,6 +154,7 @@ ThemeEngine.RegisterColorScheme{
         -- Surfaces
         bg            = "#1B1310",
         bgAlt         = "#2A1E15",
+        bgRaised      = "#3A2B1E", -- text-field hover/focus lift (see default scheme)
         bgInverse     = "#E9B86F",
 
         -- Foreground / text
@@ -152,6 +166,10 @@ ThemeEngine.RegisterColorScheme{
 
         -- Borders
         border        = "#C49562",
+        -- This scheme's @border is already full-alpha, but the rounded
+        -- frame shader path wants a QUIET resting frame; the dark leather
+        -- brown (= this scheme's borderInverse) plays that role.
+        borderSolid   = "#5A4128",
         borderInverse = "#5A4128",
 
         -- Accent + interactive
@@ -194,16 +212,6 @@ ThemeEngine.RegisterColorScheme{
                 {position = 1.00,  color = "#100A06"},
             },
         },
-
-        -- Title-bar track: the scheme's bg warming into bgAlt.
-        barTrack = {
-            point_a = {x = -0.02, y = 0},
-            point_b = {x = 1.02,  y = 0},
-            stops = {
-                {position = 0, color = "#1B1310"},
-                {position = 1, color = "#2A1E15"},
-            },
-        },
     },
 }
 
@@ -214,16 +222,15 @@ ThemeEngine.RegisterColorScheme{
 ThemeEngine.RegisterTheme{
     id          = "default",
     name        = "Default",
-    description = "The classic 5e default theme.",
+    description = "The Draw Steel theme: rounded corners on bordered surfaces.",
     colorScheme = "default",
 
     fonts = {
-        --TODO: revisit once the 5e build's font catalog is verified via gui.availableFonts
-        heading = "LiberationSans",
-        label   = "LiberationSans",
+        heading = "Berling",
+        label   = "Berling",
         input   = "LiberationSans",
-        number  = "LiberationSans",
-        mono    = "LiberationSans",
+        number  = "Newzald",
+        mono    = "Courier",
     },
 
     styles = {
@@ -239,16 +246,9 @@ ThemeEngine.RegisterTheme{
         -- framedPanel, tokenImagePortrait, and similar.
 
         --[[ Panel ]]
-        --
-        -- No blanket bgcolor here on purpose. On a panel whose background is
-        -- artwork, bgcolor acts as a tint, so coloring every panel turns
-        -- portraits and icons almost black. This game system's panels are
-        -- written to set their own background color, the same as the older
-        -- stylesheet did, so only the scroll handle is set here. Panels that
-        -- want a themed surface use a class rule below (framedPanel,
-        -- surfaceLinear, row, and so on).
         {
             selectors = {"panel"},
+            bgcolor = "@bg",
             scrollHandleColor = "@fgMuted",
         },
         {
@@ -326,7 +326,7 @@ ThemeEngine.RegisterTheme{
             bgcolor = "white",
         },
         -- Portrait image editor (compendium sidebars on Race / Class /
-        -- Background / etc.). 196x294 with a 2px @border frame; bgcolor
+        -- Career / etc.). 196x294 with a 2px @border frame; bgcolor
         -- "white" is image-tint-neutral (see top of section 1).
         {
             selectors = {"portraitImage"},
@@ -470,10 +470,19 @@ ThemeEngine.RegisterTheme{
         },
 
         --[[ Button (sizes + states + variants) ]]
+        -- Horizontal padding note: a button is a Label, and SheetLabel routes pad
+        -- into the TMP text margin while reporting zero pad to the layout (see
+        -- SheetLabel._lpad). So hpad here does NOT widen the button -- it only
+        -- insets the text, which makes the minFontSize auto-shrink start earlier
+        -- and guarantees a gutter instead of letting a long label run edge to
+        -- edge. Do NOT add borderBox to compensate; there is nothing to subtract.
+        -- Each size rule sets its own hpad because the small sizes are only a few
+        -- dozen pixels wide and would have no content area left at the large value.
         {
             selectors = {"label", "button"},
             height = 31,
             width = 129,
+            hpad = 10,
             bgimage = true,
             fontFace = "@label",
             fontSize = 16,
@@ -493,6 +502,7 @@ ThemeEngine.RegisterTheme{
             width = 24,
             height = 18,
             fontSize = 10,
+            hpad = 2,
             priority = 5,
         },
         {
@@ -500,6 +510,7 @@ ThemeEngine.RegisterTheme{
             width = 31,
             height = 20,
             fontSize = 12,
+            hpad = 3,
             priority = 5,
         },
         {
@@ -507,6 +518,7 @@ ThemeEngine.RegisterTheme{
             width = 57,
             height = 26,
             fontSize = 14,
+            hpad = 6,
             priority = 5,
         },
         {
@@ -514,6 +526,7 @@ ThemeEngine.RegisterTheme{
             width = 129,
             height = 31,
             fontSize = 16,
+            hpad = 10,
             priority = 5,
         },
         {
@@ -521,6 +534,7 @@ ThemeEngine.RegisterTheme{
             width = 175,
             height = 35,
             fontSize = 18,
+            hpad = 12,
             priority = 5,
         },
         {
@@ -528,6 +542,7 @@ ThemeEngine.RegisterTheme{
             width = 175,
             height = 35,
             fontSize = 18,
+            hpad = 12,
             priority = 5,
         },
         {
@@ -535,6 +550,7 @@ ThemeEngine.RegisterTheme{
             width = 175,
             height = 35,
             fontSize = 18,
+            hpad = 12,
             priority = 5,
         },
         {
@@ -543,6 +559,13 @@ ThemeEngine.RegisterTheme{
             border = 0,
             borderWidth = 0,
             bgcolor = "clear",
+            -- Icon buttons hold a glyph, not text, and the glyph child is sized
+            -- "100%" of the parent's content area -- which ApplyChildElement
+            -- shrinks by the pad. Measured live, the size classes' hpad does not
+            -- currently reach hasIcon buttons (they stay 24x24 / 32x32 with a
+            -- full-bleed glyph either way), so this is belt-and-braces: it keeps
+            -- the text padding above from ever insetting an icon.
+            pad = 0,
         },
         {
             selectors = {"button", "disabled"},
@@ -580,7 +603,45 @@ ThemeEngine.RegisterTheme{
             borderColor = "@fg",
         },
 
+        -- Primary call-to-action button: the one control the flow is waiting on
+        -- (e.g. the action bar's Confirm). Accent fill + bold so it reads as
+        -- "press me" next to plain default buttons like Skip/Cancel. Use at
+        -- most one per view. The hover rule repeats the base selectors plus
+        -- the negations so it outranks the generic 5-selector hover inversion.
+        {
+            selectors = {"label", "button", "primary"},
+            bgcolor = "@accent",
+            color = "@fgInverse",
+            borderColor = "@accent",
+            fontWeight = "bold",
+            bold = true,
+            priority = 5,
+        },
+        {
+            selectors = {"label", "button", "primary", "~disabled", "~hasIcon", "hover"},
+            bgcolor = "@accentHover",
+            color = "@fgInverse",
+            borderColor = "@accentHover",
+            fontWeight = "bold",
+            priority = 5,
+        },
+
         --[[ Input ]]
+        -- The ONE canonical text-field look (Control Zoo pass 2026-08-22),
+        -- sharing the search bar's interaction language -- quiet at rest,
+        -- the fill lifts to @bgRaised on hover, the lift holds on focus --
+        -- with two deliberate differences from searchInput:
+        --   1. An editing field keeps an honest 1px resting frame for
+        --      "type here" affordance; a search bar's magnifier already
+        --      carries that job, so search rests frameless.
+        --   2. Focus paints the frame @fgStrong: in a form, the frame is
+        --      what answers "where will my keystrokes go", so the input's
+        --      state ladder tops out above search's fill-only hold.
+        -- Ladder: @borderSolid -> @fgMuted (hover) -> @fgStrong (focus),
+        -- monotonic in both schemes. `border`, NOT `borderWidth` (the
+        -- square widget outline -- see the searchInput comment below), and
+        -- @borderSolid, NOT @border, because the rounded frame shader
+        -- ignores alpha and renders @border as a full-contrast line.
         {
             selectors = {"input"},
             bgimage = true,
@@ -588,8 +649,12 @@ ThemeEngine.RegisterTheme{
             fontSize = 14,
             color = "@fg",
             bgcolor = "@bg",
-            borderColor = "@border",
-            border = 2,
+            -- Frameless at rest (trial 2026-08-22): painted fill-color,
+            -- like searchInput; the 1px geometry stays so hover/focus
+            -- recolor without shifting pixels.
+            borderColor = "@bg",
+            border = 1,
+            borderWidth = 0,
             bold = false,
             height = 26,
             -- The dims below mirror the legacy Styles.Default 'input-main' rule
@@ -606,9 +671,33 @@ ThemeEngine.RegisterTheme{
             vpad = 4,
             selectedColor = "#444444",
         },
+        -- Opt-in resting frame for inputs on surfaces at or below @bg,
+        -- where the frameless well has nothing to contrast against:
+        -- compose `classes = {"bordered"}`. The conjunct rule redirects
+        -- the generic {bordered} @border (alpha token -- renders
+        -- full-contrast through the rounded frame shader) to the quiet
+        -- @borderSolid. Hover/focus below take over the frame color in
+        -- both variants.
         {
-            selectors = {"input", "focus"},
-            borderColor = "@fg",
+            selectors = {"input", "bordered"},
+            borderColor = "@borderSolid",
+        },
+        -- ~searchInput: search fields are {input} too, and without the
+        -- exclusion these frame rules race the frameless {searchInput}
+        -- state rules on hover-enter -- the frame won the first resolve
+        -- pass and then faded out as the searchInput override landed
+        -- (flashing frame, MonsterSearch 2026-08-22). Search fields are
+        -- governed entirely by their own state rules below.
+        {
+            selectors = {"input", "hover", "~searchInput"},
+            bgcolor = "@bgRaised",
+            borderColor = "@fgMuted",
+            transitionTime = 0.15,
+        },
+        {
+            selectors = {"input", "focus", "~searchInput"},
+            bgcolor = "@bgRaised",
+            borderColor = "@fgStrong",
         },
         {
             selectors = {"inputFaded"},
@@ -617,33 +706,80 @@ ThemeEngine.RegisterTheme{
             borderFade = true,
             bgcolor = "@bg",
         },
-        -- Default search input has no border. Surfaces that want a bordered
-        -- search input add it via their own MergeStyles extras.
+        -- The ONE canonical search-field look (Control Zoo decision
+        -- 2026-08-20, "solve it once and for all"). History: the default
+        -- shipped borderless, which is invisible on dark surfaces, so the
+        -- title bar and Maps panel each grew their own frame -- and both
+        -- independently chose thin @border + focus @fgStrong. That de
+        -- facto standard is now THE standard, with quiet 14px regular
+        -- type (16 bold outshouted every surface it sat on). Surfaces
+        -- must NOT re-style searchInput locally.
         {
             selectors = {"searchInput"},
             bgimage = true,
-            hpad = 6,
-            fontSize = 16,
-            bold = true,
+            fontSize = 14,
+            bold = false,
             borderFade = false,
             color = "@fg",
             bgcolor = "@bg",
+            --border, NOT borderWidth: `border` is the rounded shader
+            --frame; `borderWidth` draws the input widget's own SQUARE
+            --outline, which pokes past the pill's end caps as a broken
+            --inner edge (live-debugged on the title bar 2026-08-20 --
+            --red-border/green-fill experiments; the old rule zeroed it
+            --deliberately).
+            border = 1,
             borderWidth = 0,
+            --no visible border at rest: painted the same color as the
+            --fill (NOT alpha 0 -- the 1px `border` shader IGNORES the
+            --color's alpha channel: @border #FFFFFF29 and #FFFFFF14
+            --both measured as an antialiased ~#909090 WHITE hairline,
+            --title bar 2026-08-21, so alpha-based border tokens render
+            --full-contrast). Keeping border = 1 in the geometry lets
+            --hover (@borderInverse) and focus (@fgStrong) recolor it
+            --without anything shifting.
+            borderColor = "@bg",
+            hpad = 24,
+        },
+        {
+            --hover response is the FILL lightening, not a frame (Venla
+            --2026-08-21): the whole bar lifts to a raised gray. The
+            --border is repainted to match the hover fill so it stays
+            --invisible -- leaving it at the resting @bg would draw a
+            --dark ring around the lightened bar.
+            selectors = {"searchInput", "hover"},
+            bgcolor = "@bgRaised",
+            borderColor = "@bgRaised",
+            transitionTime = 0.15,
+        },
+        {
+            --focused = the highlight HOLDS: same raised fill as hover,
+            --still no frame (Venla 2026-08-21). The caret and typed
+            --text carry the active signal beyond the fill.
+            selectors = {"searchInput", "focus"},
+            bgcolor = "@bgRaised",
+            borderColor = "@bgRaised",
         },
         -- Magnifying-glass icon child auto-created by gui.SearchInput.
-        -- Tinted to @fg so the glyph follows the active scheme. The
-        -- `floating = true` and `x = -20` positioning stay inline at
-        -- the call site -- floating is a structural property (controls
-        -- layout participation) that the engine doesn't honor through
-        -- the style cascade.
+        -- Tinted to @fg so the glyph follows the active scheme; the
+        -- structural half (floating, position, size) lives inline at the
+        -- call site -- floating is a property the engine doesn't honor
+        -- through the style cascade.
         {
             selectors = {"searchInputIcon"},
             bgcolor = "@fg",
-            vmargin = 0,
-            halign = "left",
-            valign = "center",
-            height = "90%",
-            width = "100% height",
+        },
+        -- Clear-x child auto-created by gui.SearchInput, shown while the
+        -- field has text. Muted at rest so it reads quieter than the
+        -- typed text beside it; full strength on hover to invite the
+        -- click.
+        {
+            selectors = {"searchInputClear"},
+            bgcolor = "@fgMuted",
+        },
+        {
+            selectors = {"searchInputClear", "hover"},
+            bgcolor = "@fgStrong",
         },
         -- Color picker main button (gui.ColorPicker mainPanel).
         -- The button shows the currently-selected color via
@@ -695,7 +831,10 @@ ThemeEngine.RegisterTheme{
         },
         {
             selectors = {"dropdown", "hover", "~search"},
-            bgcolor = "@fg",
+            --hover fills use @accentHover, not @fg/@bgInverse: the
+            --parchment text color as a large fill read as aged paper
+            --over warm map art (Venla 2026-08-19; see menuItem hover).
+            bgcolor = "@accentHover",
         },
         -- The search field inside an open dropdown popup. It is a
         -- {searchInput}, so it picks up the base {input} rule's border = 2 --
@@ -753,7 +892,7 @@ ThemeEngine.RegisterTheme{
         -- guard on the rule above: the ENGINE itself applies
         -- dropdownTriangle + parent:hover -> black, so merely removing the Lua
         -- rules uncovers that instead of fixing anything. Priority 5 is what
-        -- it takes to beat the engine default.
+        -- it takes to beat the engine default (see DS_EDITOR_STYLING.md).
         {
             selectors = {"dropdownTriangle", "parent:hover", "parent:search"},
             priority = 5,
@@ -819,13 +958,15 @@ ThemeEngine.RegisterTheme{
         {
             selectors = {"dropdownOption", "hover"},
             color = "@fgInverse",
-            bgcolor = "@bgInverse",
+            --@accentHover, not @bgInverse: the aged-paper hover fix
+            --(see menuItem hover).
+            bgcolor = "@accentHover",
             priority = 5,
         },
         {
             selectors = {"dropdownOption", "searchfocus"},
             color = "@bg",
-            bgcolor = "@fg",
+            bgcolor = "@accentHover",
         },
         {
             selectors = {"dropdownOption", "disabled"},
@@ -1002,14 +1143,14 @@ ThemeEngine.RegisterTheme{
             transitionTime = 0.2,
         },
 
-        --[[ Divider ]]
-        -- The divider widget (Gui.lua wrapper) -- a primitive divider widget with
+        --[[ MCDM Divider ]]
+        -- gui.MCDMDivider (Gui.lua wrapper) -- a primitive divider widget with
         -- optional dot/line/peak/v ornaments. The outer panel and the three
         -- inner panels (left line / icon / right line) all use this class so
         -- the cascade drives their bgcolor. Callers may still override with
         -- an explicit bgcolor on the option.
         {
-            selectors = {"divider"},
+            selectors = {"mcdmDivider"},
             bgcolor = "@border",
         },
 
@@ -1239,9 +1380,20 @@ ThemeEngine.RegisterTheme{
             selectors = {"panel", "buttonIcon", "parent:addButton"},
             bgimage = "ui-icons/Plus.png",
         },
+        -- Note on hover-circle backplates (tried and removed 2026-08-22):
+        -- a hover-only circle behind the X was prototyped as
+        -- `{iconButton, closeButton}` bgimage = "game-icons/plain-circle.png"
+        -- (a TEXTURE, not cornerRadius -- the rounded shader's radius must
+        -- stay under half the rendered height at any window scale) with a
+        -- clear rest tint and @bgRaised on hover, plus an 85% glyph inset
+        -- for ring clearance (62% shrank the X to ~10px on sizeXs chrome
+        -- buttons). Venla preferred the plain glyph; the generic
+        -- {iconButton, hover} brightness lift is the whole hover state.
         {
             selectors = {"panel", "buttonIcon", "parent:closeButton"},
-            bgimage = "ui-icons/close.png",
+            -- phosphor's geometric X (Control Zoo pass 2026-08-22),
+            -- replacing the legacy ui-icons/close.png glyph app-wide.
+            bgimage = "phosphor/x-bold.png",
         },
         -- Standard inset for close buttons. They are almost always pinned to a
         -- top corner (halign right/left + valign top + floating), and sitting
@@ -1470,7 +1622,22 @@ ThemeEngine.RegisterTheme{
         },
         {
             selectors = {"menuItem", "hover"},
-            bgcolor = "@fg",
+            --The search bar's quiet raised lift, not an inverted accent
+            --fill (Venla 2026-08-24: "use the search field's light grey
+            --hover for the other hovers here too"). Supersedes the
+            --@accentHover fill picked 2026-08-19 -- the whole title bar
+            --now shares one hover language: fill lifts to @bgRaised,
+            --content color stays put.
+            bgcolor = "@bgRaised",
+            transitionTime = 0.15,
+        },
+        {
+            --while the item's dropdown is open the plate HOLDS, hover or
+            --not (Venla 2026-08-24, VS Code menu behavior). The class is
+            --managed by the opener (menuOpen on open, cleared on every
+            --close path incl. the closePopup event).
+            selectors = {"menuItem", "menuOpen"},
+            bgcolor = "@bgRaised",
         },
         {
             selectors = {"menuLabel"},
@@ -1481,34 +1648,41 @@ ThemeEngine.RegisterTheme{
             hmargin = 4,
             color = "@fg",
         },
-        {
-            selectors = {"menuLabel", "parent:hover"},
-            color = "@bg",
-        },
+        --No parent:hover recolor for menuLabel/menuItemIcon: the raised
+        --fill is dark enough that the resting @fg stays readable, same
+        --as typed text in the search bar. (The old @accentHover fill
+        --needed the @bg flip; it left with it, 2026-08-24.)
         {
             selectors = {"menuItemIcon"},
             bgcolor = "@fg",
         },
-        {
-            selectors = {"menuItemIcon", "parent:hover"},
-            bgcolor = "@bg",
-        },
 
         --[[ Context menu ]]
 
-        -- The popup panel itself
+        -- The popup panel itself: frameless flat chrome, VS Code-style
+        -- (Venla 2026-08-24) -- the fill matches the title bar's @bg so a
+        -- menu dropped from the bar reads as the bar continuing, the way
+        -- the search popup continues its field. No border; rounded like
+        -- the rest of the popup family. Supersedes the parchment-framed
+        -- @surfaceLinear look.
         {
             selectors = {"contextMenu"},
             bgimage = true,
-            bgcolor = "white",
-            gradient = "@surfaceLinear",
-            borderColor = "@fg",
-            borderWidth = 2,
+            bgcolor = "@bg",
+            borderWidth = 0,
+            cornerRadius = 7,
+            --breathing room above the first row and below the last, and
+            --it keeps a hovered edge row's square fill inside the
+            --rounded corners (fills do not clip to the radius).
+            vpad = 6,
             flow = "vertical",
         },
 
         -- Rows: transparent at rest so the panel surface paints through;
-        -- hover/press states give them distinct backgrounds.
+        -- hover lifts one surface step, content color stays put (the
+        -- title-bar hover language; the old inverted @accentHover fill
+        -- and its dark-text flips left 2026-08-24). Instant, no fade --
+        -- a fade lags when running the cursor down a list.
         {
             selectors = {"contextMenuItem"},
             bgimage = true,
@@ -1518,8 +1692,7 @@ ThemeEngine.RegisterTheme{
         },
         {
             selectors = {"contextMenuItem", "hover"},
-            bgcolor = "@fg",
-            color = "@bg",
+            bgcolor = "@bgRaised",
         },
         {
             selectors = {"contextMenuItem", "press"},
@@ -1536,10 +1709,6 @@ ThemeEngine.RegisterTheme{
             selectors = {"contextMenuLabel", "disabled"},
             color = "@fgMuted",
         },
-        {
-            selectors = {"contextMenuLabel", "parent:hover"},
-            color = "@bg",
-        },
 
         -- Bind label (keyboard shortcut hint)
         {
@@ -1551,19 +1720,11 @@ ThemeEngine.RegisterTheme{
             selectors = {"contextMenuBind", "disabled"},
             color = "@fgMuted",
         },
-        {
-            selectors = {"contextMenuBind", "parent:hover"},
-            color = "@bg",
-        },
 
         -- Icon glyph (image-tint to text color)
         {
             selectors = {"contextMenuIcon"},
             bgcolor = "@fg",
-        },
-        {
-            selectors = {"contextMenuIcon", "parent:hover"},
-            bgcolor = "@bg",
         },
 
         -- Checkmark glyph
@@ -1571,16 +1732,13 @@ ThemeEngine.RegisterTheme{
             selectors = {"contextMenuCheck"},
             bgcolor = "@fg",
         },
-        {
-            selectors = {"contextMenuCheck", "parent:hover"},
-            bgcolor = "@bg",
-        },
 
-        -- Divider
+        -- Divider: quiet white-alpha hairline (@border), not a parchment
+        -- line -- depth from quiet edges, per the design ladder.
         {
             selectors = {"contextMenuDiv"},
             bgimage = true,
-            bgcolor = "@fg",
+            bgcolor = "@border",
             vmargin = 2,
         },
 
@@ -1788,7 +1946,7 @@ ThemeEngine.RegisterTheme{
         -- featureCardNested adjusts width and bottom margin for cards
         -- rendered inside another card's option list.
         --
-        -- Used by class / race / background feature editors in the
+        -- Used by class / race / background / kit feature editors in the
         -- compendium UI.
         {
             selectors = {"featureCard"},
@@ -1946,9 +2104,7 @@ ThemeEngine.RegisterTheme{
         {
             selectors = {"framedPanel"},
             bgimage = true,
-            -- White means "draw the gradient untinted"; the alpha on the end
-            -- makes dialogs just barely see-through, matching the docks.
-            bgcolor = "#fffffff7",
+            bgcolor = "white",
             -- cornerRadius = 4,
             gradient = "@surfaceLinear",
             borderWidth = 2.2,
@@ -2202,7 +2358,14 @@ ThemeEngine.RegisterTheme{
             vpad = 4,
         },
 
-        -- Focus edge on the panel that owns keyboard focus in a dock.
+        -- Focus edge: marks the panel whose content tree currently holds
+        -- GUI focus. Several panels are only "armed" while focused (the
+        -- Map Markup drawing tools, the Building editor, the Objects
+        -- panel), and nothing used to show which one that was. A single
+        -- thick accent edge on the LEFT, not a full ring: the same
+        -- selected-state vocabulary the row grammar uses (see
+        -- STYLE_GUIDE.md), scaled up a notch for panel size -- a ring
+        -- around the whole panel outshouted the content it framed.
         -- Fades rather than snapping, so it reads as state moving
         -- between panels instead of flickering.
         {
@@ -2386,60 +2549,16 @@ ThemeEngine.RegisterTheme{
         },
 
         -- =====================================================================
-        -- Square-corner reset.
+        -- Corner radii.
         --
-        -- The cascade is additive: an absent property does not reset an
-        -- inherited one. When a rounded theme (e.g. default-rounded) is the
-        -- active theme on an ancestor, its cornerRadius cascades into any
-        -- subtree -- even one explicitly styled with GetStyles("default").
-        -- The default theme must therefore *assert* square corners, not
-        -- merely omit cornerRadius. This block mirrors the default-rounded
-        -- selector set 1:1 so the two stay in lockstep.
+        -- 10px on panel-class surfaces, 5px on interactive controls, with
+        -- asymmetric values where only the outer corners should round
+        -- (featureCardHeader/Body when stacked, enum-slider ends, tab tops).
+        -- These live on the base theme deliberately: rounded corners are not
+        -- an option, so every subtree -- including one explicitly styled with
+        -- GetStyles("default") for theme-recovery purposes -- gets them.
         -- =====================================================================
-        { selectors = {"panel", "bordered"},   cornerRadius = 0 },
-        { selectors = {"panel", "dialog"},     cornerRadius = 0 },
-        { selectors = {"modalDialog"},         cornerRadius = 0 },
-        { selectors = {"framedPanel"},         cornerRadius = 0 },
-        { selectors = {"contextMenu"},         cornerRadius = 0 },
-        { selectors = {"featureCard"},         cornerRadius = 0 },
-        { selectors = {"featureCardHeader"},   cornerRadius = 0 },
-        { selectors = {"featureCardHeader", "expanded"}, cornerRadius = 0 },
-        { selectors = {"featureCardBody"},     cornerRadius = 0 },
 
-        { selectors = {"label", "button"},        cornerRadius = 0 },
-        { selectors = {"iconButton"},             cornerRadius = 0 },
-        { selectors = {"input"},                  cornerRadius = 0 },
-        { selectors = {"searchInput"},            cornerRadius = 0 },
-        { selectors = {"dropdown"},               cornerRadius = 0 },
-        { selectors = {"dropdownBorder"},         cornerRadius = 0 },
-        { selectors = {"dropdownMenuSub"},        cornerRadius = 0 },
-        { selectors = {"colorPicker"},            cornerRadius = 0 },
-        { selectors = {"label", "bordered"},      cornerRadius = 0 },
-        { selectors = {"input", "bordered"},      cornerRadius = 0 },
-        { selectors = {"multiselectChip"},        cornerRadius = 0 },
-        { selectors = {"multiselectChipRemove"},  cornerRadius = 0 },
-        { selectors = {"enumSliderOption"},       cornerRadius = 0 },
-        { selectors = {"enumSliderOption", "enumSliderFirst"},                     cornerRadius = 0 },
-        { selectors = {"enumSliderOption", "enumSliderLast"},                      cornerRadius = 0 },
-        { selectors = {"enumSliderOption", "enumSliderFirst", "enumSliderLast"},   cornerRadius = 0 },
-        { selectors = {"checkBackground"},        cornerRadius = 0 },
-        { selectors = {"tab"},                    cornerRadius = 0 },
-    },
-}
-
--- =============================================================================
--- Default Rounded theme -- inherits everything from default and only overrides
--- cornerRadius on bordered surfaces. 10px for panel-class surfaces, 5px for
--- interactive controls (buttons, inputs, dropdowns, checkboxes, tabs, ...).
--- =============================================================================
-
-ThemeEngine.RegisterTheme{
-    id          = "default-rounded",
-    name        = "Default Rounded",
-    description = "Default theme with rounded corners on bordered surfaces.",
-    colorScheme = "default",
-
-    styles = {
         -- Panel surfaces
         { selectors = {"panel", "bordered"},   cornerRadius = 10 },
         { selectors = {"panel", "dialog"},     cornerRadius = 10 },
@@ -2461,7 +2580,20 @@ ThemeEngine.RegisterTheme{
         { selectors = {"label", "button"},        cornerRadius = 5 },
         { selectors = {"iconButton"},             cornerRadius = 5 },
         { selectors = {"input"},                  cornerRadius = 5 },
-        { selectors = {"searchInput"},            cornerRadius = 5 },
+        --search fields are the one pill-shaped input: form follows
+        --function -- a search box filters, a plain input edits.
+        --7, not 9: the radius must stay UNDER half the field's
+        --RENDERED height or the border path breaks at the end caps --
+        --and window scale shrinks rendered heights below the declared
+        --ones, which is what the old "under half of 20" reasoning
+        --missed. The title bar's 20px field renders 18px in a 1009px
+        --window, where 9 hit the limit and the caps broke (live-
+        --debugged 2026-08-21). The relative forms ("50% height",
+        --"45% height") do NOT fix this: they resolve against the
+        --declared height before scaling, so they break identically
+        --(also tried live). 7 keeps the caps clean down to ~0.78
+        --window scale (15.5px rendered) on the 20px fields.
+        { selectors = {"searchInput"},            cornerRadius = 7 },
         { selectors = {"dropdown"},               cornerRadius = 5 },
         { selectors = {"dropdownBorder"},         cornerRadius = 5 },
         { selectors = {"dropdownMenuSub"},        cornerRadius = 5 },
@@ -2478,6 +2610,84 @@ ThemeEngine.RegisterTheme{
         { selectors = {"enumSliderOption", "enumSliderFirst", "enumSliderLast"},   cornerRadius = 5 },
         { selectors = {"checkBackground"},        cornerRadius = 5 },
         { selectors = {"tab"},                    cornerRadius = {x1 = 5, x2 = 0, y1 = 5, y2 = 0} },
+    },
+}
+
+-- =============================================================================
+-- My Little Pony color scheme
+--
+-- A magic-purple night-sky surface palette with pastel rainbow accents drawn
+-- from the mane-six. Selectable from the standard color scheme picker.
+-- =============================================================================
+
+ThemeEngine.RegisterColorScheme{
+    id          = "my-little-pony",
+    name        = "Carnivorous Pony",
+    description = "Twilight's night-sky purple with pastel mane-six accents.",
+    colors = {
+        -- Surfaces
+        bg            = "#2D1843",
+        bgAlt         = "#3D2257",
+        bgInverse     = "#FFE5F1",
+
+        -- Foreground / text
+        fg            = "#F8C8E0",
+        fgStrong      = "#FFE8F5",
+        fgMuted       = "#A892C4",
+        fgPending     = "#8478A8",
+        fgInverse     = "#2D1843",
+
+        -- Borders
+        border        = "#FF6FAE",
+        borderInverse = "#5A3878",
+
+        -- Accent + interactive
+        accent        = "#56C4E6",
+        accentHover   = "#A0E0F4",
+
+        -- Status (Applejack green, Fluttershy yellow, Applejack orange, Big Mac red)
+        success       = "#88D67A",
+        info          = "#FFE066",
+        warning       = "#FFA864",
+        danger        = "#FF5577",
+
+        -- Disabled
+        disabled      = "#5D4D6E",
+    },
+    gradients = {
+        surfaceLinear = {
+            point_a = {x = 0, y = 0},
+            point_b = {x = 1, y = 1},
+            stops = {
+                {position = 0, color = "#2D1843"},
+                {position = 1, color = "#5C2868"},
+            },
+        },
+        -- Subtle vignette: bgAlt-ish at center fading to bg at the edge.
+        -- Kept restrained on purpose; MLP is already loud enough without
+        -- a high-contrast radial fighting the rest of the scheme.
+        surfaceRadial = {
+            type = "radial",
+            point_a = {x = 0.5, y = 0.5},
+            point_b = {x = 0.5, y = 1.0},
+            stops = {
+                {position = -0.01, color = "#3D2257"},
+                {position = 0.00,  color = "#3D2257"},
+                {position = 0.25,  color = "#371F50"},
+                {position = 0.50,  color = "#321B4A"},
+                {position = 0.75,  color = "#2F1946"},
+                {position = 1.00,  color = "#2D1843"},
+            },
+        },
+        barTrack = {
+            point_a = {x = -0.02, y = 0},
+            point_b = {x = 1.02, y = 0},
+            stops = {
+                {position = 0, color = "#3D1B5C"},
+                {position = 1, color = "#6B2D9C"},
+                -- {position = 1, color = "#A347D9"},
+            },
+        },
     },
 }
 
@@ -2607,6 +2817,93 @@ ThemeEngine.RegisterColorScheme{
 }
 
 -- =============================================================================
+-- MCDM color scheme
+--
+-- Drawn from the MCDM logo: steel-blue letter faces over a deep navy night
+-- sky, a cream-yellow horizon glow, and a warm amber/sunset border. Surfaces
+-- are deep navy with subtle blue undertones; foreground text reads as steel
+-- blue with cream highlights. Accent is the bright sky-blue from the letter
+-- faces; border is the gold rim. Warning/danger lean into the sunset palette
+-- so semantic colors track the same warm-cool axis as the logo.
+-- =============================================================================
+
+ThemeEngine.RegisterColorScheme{
+    id          = "mcdm",
+    name        = "MCDM",
+    description = "Steel-blue night sky with a cream horizon glow and a warm amber rim, after the MCDM logo.",
+    colors = {
+        -- Surfaces (deep navy with a blue undertone, not pure black)
+        bg            = "#0F1A28",
+        bgAlt         = "#1A2738",
+        bgInverse     = "#C8DCEB",
+
+        -- Foreground / text (steel-blue body, cream-yellow highlight to echo
+        -- the horizon glow inside the logo letters)
+        fg            = "#B8CFE0",
+        fgStrong      = "#F2DEAE",
+        fgMuted       = "#6A89A4",
+        fgPending     = "#4A6680",
+        fgInverse     = "#0F1A28",
+
+        -- Borders (warm amber rim from the logo's outer frame)
+        border        = "#D89540",
+        borderInverse = "#1A2738",
+
+        -- Accent + interactive (bright sky-blue from the letter faces)
+        accent        = "#4A9FD8",
+        accentHover   = "#7CC4EC",
+
+        -- Status (warm side leans sunset; cool side leans cyan-green so it
+        -- reads against the blue surfaces without going neon)
+        success       = "#6BA84F",
+        info          = "#E9C868",
+        warning       = "#E89B36",
+        danger        = "#D63A1C",
+
+        -- Disabled
+        disabled      = "#2A3848",
+    },
+    gradients = {
+        -- Diagonal night-sky wash: lighter navy at the top-left fading to
+        -- near-black at the bottom-right.
+        surfaceLinear = {
+            point_a = {x = 0, y = 0},
+            point_b = {x = 1, y = 1},
+            stops = {
+                {position = 0, color = "#1A2738"},
+                {position = 1, color = "#070C12"},
+            },
+        },
+        -- Soft vignette: the navy surface lifts slightly at the centre to
+        -- suggest the cream horizon glow without ever competing with the
+        -- accents around it.
+        surfaceRadial = {
+            type = "radial",
+            point_a = {x = 0.5, y = 0.5},
+            point_b = {x = 0.5, y = 1.0},
+            stops = {
+                {position = -0.01, color = "#22344A"},
+                {position = 0.00,  color = "#22344A"},
+                {position = 0.25,  color = "#1C2D40"},
+                {position = 0.50,  color = "#162638"},
+                {position = 0.75,  color = "#121F2E"},
+                {position = 1.00,  color = "#0F1A28"},
+            },
+        },
+        -- Bar track: navy on the left fading to the warm amber rim, mirrors
+        -- the night-sky-meets-sunset transition in the logo border.
+        barTrack = {
+            point_a = {x = -0.02, y = 0},
+            point_b = {x = 1.02,  y = 0},
+            stops = {
+                {position = 0, color = "#0F1A28"},
+                {position = 1, color = "#A86A28"},
+            },
+        },
+    },
+}
+
+-- =============================================================================
 -- My Favorite Colors color scheme
 --
 -- A springtime garden at dusk: dark leaf-shadow surfaces so the blooms pop,
@@ -2689,53 +2986,139 @@ ThemeEngine.RegisterColorScheme{
     },
 }
 
+-- =============================================================================
+-- High Contrast color scheme.
+--
+-- Built for low vision rather than for looks: true black, pure white text and
+-- loud borders. fg and fgStrong are both pure white on purpose -- there is no
+-- brighter color left for headings, so headings stand out by size instead.
+-- =============================================================================
+
+ThemeEngine.RegisterColorScheme{
+    id           = "high-contrast",
+    name         = "High Contrast",
+    description  = "True black and pure white, at maximum legibility.",
+    highContrast = true,
+    colors = {
+        -- Surfaces
+        bg            = "#000000",
+        bgAlt         = "#16161A",
+        bgRaised      = "#2A2A30", -- text-field hover/focus lift (see default scheme)
+        bgInverse     = "#FFFFFF",
+
+        -- Foreground / text (both white -- see above)
+        fg            = "#FFFFFF",
+        fgStrong      = "#FFFFFF",
+        fgMuted       = "#C4C4C4",
+        fgPending     = "#A8A8A8",
+        fgInverse     = "#000000",
+
+        -- Borders (loud on purpose)
+        border        = "#FFFFFF",
+        borderSolid   = "#FFFFFF",
+        borderInverse = "#000000",
+
+        -- Accent + interactive
+        accent        = "#FFE14D",
+        accentHover   = "#FFFFFF",
+
+        -- Status. The default four are hard to tell apart if you are
+        -- colorblind; these stay distinct.
+        success       = "#B6FF9E",
+        info          = "#B49DFF",
+        warning       = "#FFD24D",
+        danger        = "#FF8A93",
+
+        -- Disabled text still has to be readable, so this is much lighter
+        -- than the default scheme's.
+        disabled      = "#8C8C8C",
+
+        -- implStatus* inherited on purpose: they should mean the same thing
+        -- in every scheme.
+    },
+    gradients = {
+        -- Near-flat on purpose -- a gradient would eat into the contrast.
+        surfaceLinear = {
+            point_a = {x = 0, y = 0},
+            point_b = {x = 1, y = 1},
+            stops = {
+                {position = 0, color = "#16161A"},
+                {position = 1, color = "#000000"},
+            },
+        },
+
+        surfaceRadial = {
+            type = "radial",
+            point_a = {x = 0.5, y = 0.5},
+            point_b = {x = 0.5, y = 1.0},
+            stops = {
+                {position = -0.01, color = "#16161A"},
+                {position = 0.00,  color = "#16161A"},
+                {position = 0.50,  color = "#0B0B0D"},
+                {position = 1.00,  color = "#000000"},
+            },
+        },
+    },
+}
+
+-- =============================================================================
+-- Colorblind Safe color scheme.
+--
+-- Looks like the default scheme -- same surfaces, same text -- but the four
+-- status colors are re-picked so they stay apart for colorblind players. The
+-- default amber info and orange warning are close to the same color even for
+-- normal vision. Turning on Status Icons matters more than the colors do.
+-- =============================================================================
+
+ThemeEngine.RegisterColorScheme{
+    id          = "colorblind-safe",
+    name        = "Colorblind Safe",
+    description = "The default look, with status colors that survive color vision deficiency.",
+    colors = {
+        -- Surfaces -- identical to the default scheme.
+        bg            = "#0A0A0B",
+        bgAlt         = "#1A1A1E",
+        bgRaised      = "#2E2E33",
+        bgInverse     = "#E4DDD0",
+
+        -- Foreground / text. fgMuted and fgPending are lifted; the default
+        -- values were too dark to read comfortably.
+        fg            = "#E4DDD0",
+        fgStrong      = "#F2EDE1",
+        fgMuted       = "#A5A5A5",
+        fgPending     = "#8F8A80",
+        fgInverse     = "#0A0A0B",
+
+        -- Borders. borderSolid is lifted; the default was nearly invisible.
+        border        = "#FFFFFF3D",
+        borderSolid   = "#66666C",
+        borderInverse = "#8F8A80",
+
+        -- Accent + interactive (colorless, as in the default scheme)
+        accent        = "#E4DDD0",
+        accentHover   = "#F7F3EA",
+
+        -- Status -- the point of this scheme.
+        success       = "#A0EE87",
+        info          = "#708CE1",
+        warning       = "#FABD2E",
+        danger        = "#DA6C75",
+
+        -- Disabled. The default was too dark to read.
+        disabled      = "#9A9A9A",
+
+        -- implStatus* inherited on purpose -- see the High Contrast scheme.
+    },
+    -- No gradients: the surfaces match the default scheme, so its gradients
+    -- already fit.
+}
+
 -- Register any user-created custom schemes (persisted per-user on this machine)
 -- so they exist before the active selection is restored -- otherwise a saved
 -- active pick of a custom scheme would fall back to default.
 ThemeEngine.LoadUserColorSchemes()
 
--- After schemes and themes are registered, restore the user's
--- saved selections (defaults to "default" / "default" if they
--- haven't picked anything yet).
+-- After the schemes are registered, restore the user's saved color-scheme
+-- selection (defaults to the "default" scheme if they haven't picked anything
+-- yet).
 ThemeEngine.RestoreActiveSelection()
-
--- =============================================================================
--- Legacy Styles compatibility shim.
--- The old 5e UI reads colors from the global Styles table (for example
--- bgcolor = Styles.textColor) instead of using theme rules. Pointing those
--- values at the active color scheme here makes the old UI follow theme
--- switches too. Panels read the values when they are built, so already-open
--- panels keep their colors until they are rebuilt or the game reloads.
--- =============================================================================
-local function RebuildLegacyStyles()
-    local legacy = rawget(_G, "Styles")
-    if legacy == nil then
-        return
-    end
-
-    local colors = ThemeEngine.GetColorSchemeColors(ThemeEngine.GetActiveColorScheme())
-    if colors == nil then
-        return
-    end
-
-    if colors.fg ~= nil then
-        legacy.textColor = colors.fg
-    end
-    if colors.bg ~= nil then
-        legacy.backgroundColor = colors.bg
-    end
-end
-
-RebuildLegacyStyles()
-
---OnThemeChanged relies on EventUtils, which loads after this file, so
---subscribe after a short delay.
-dmhub.Schedule(0.5, function()
-    if mod.unloaded then
-        return
-    end
-    if rawget(_G, 'EventUtils') == nil then
-        return
-    end
-    ThemeEngine.OnThemeChanged(mod, RebuildLegacyStyles)
-end)

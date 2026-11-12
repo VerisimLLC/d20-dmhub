@@ -1,5 +1,9 @@
 local mod = dmhub.GetModLoading()
 
+--What dmhub.GetTypeDocumentation actually returns (the engine stub declares
+--the bare fields array, but the C# wraps it in a { fields = ... } table).
+---@class APIDocumentationTypeDocs
+---@field fields {name: string, type: string, documentation: string|nil, typeSignature: string|nil}[]
 
 dmhub.RegisterEventHandler("link", function(url)
 
@@ -9,10 +13,49 @@ dmhub.RegisterEventHandler("link", function(url)
         return
     end
 
-    local docs = dmhub.GetTypeDocumentation(string.sub(url, 5))
+    local rawtypename = string.sub(url, 5)
+    local docs = dmhub.GetTypeDocumentation(rawtypename)
     if docs == nil then
         return
     end
+    ---@cast docs APIDocumentationTypeDocs
+
+    for i=1,10 do
+        if rawtypename == nil then
+            break
+        end
+        local ok, result = pcall(function()
+            local typeInfo = rawget(_G, rawtypename)
+            rawtypename = typeInfo.mt.baseTypeName
+            if rawtypename ~= nil then
+                local baseDocs = dmhub.GetTypeDocumentation(rawtypename)
+                ---@cast baseDocs APIDocumentationTypeDocs
+
+                --merge into the main docs.
+                for _,field in ipairs(baseDocs.fields) do
+                    local added = false
+                    for i=1,#docs.fields do
+                        if docs.fields[i].type == field.type then
+                            if docs.fields[i].name == field.name then
+                                added = true
+                                break
+                            end
+                            if docs.fields[i].name > field.name then
+                                table.insert(docs.fields, i, field)
+                                added = true
+                                break
+                            end
+                        end
+                    end
+
+                    if not added then
+                        docs.fields[#docs.fields+1] = field
+                    end
+                end
+            end
+        end)
+    end
+
 
     local dialog
 
@@ -113,7 +156,8 @@ dmhub.RegisterEventHandler("link", function(url)
             end,
         },
 
-        gui.CloseButton{
+        gui.Button{
+            classes = {"closeButton"},
             halign = "right",
             valign = "top",
             click = function(element)

@@ -2,6 +2,7 @@ local mod = dmhub.GetModLoading()
 
 local CreateTutorialDialog
 
+--[[
 LaunchablePanel.Register{
     name = "Tutorial",
     icon = mod.images.help,
@@ -16,8 +17,9 @@ LaunchablePanel.Register{
 		return CreateTutorialDialog()
 	end,
 }
+]]
 
-local goblinGuid = "a360aff2-f4c8-4e88-a41d-6e9becd1fce0"
+local goblinGuid = "76de605d-434b-4210-905f-5c47caf159cf"
 
 local tutorials = {
     {
@@ -88,11 +90,11 @@ local tutorials = {
             },
             {
                 target = "#MonsterSearch",
-                text = "Let's add a Goblin. Select the search input and type 'goblin'",
+                text = "Let's add a Goblin Cursespitter. Select the search input and type 'goblin'",
             },
             {
                 target = "#" .. goblinGuid,
-                text = "Select the Goblin entry in the Bestiary",
+                text = "Select the Goblin Cursespitter entry in the Bestiary",
             },
             {
                 condition = function()
@@ -104,7 +106,7 @@ local tutorials = {
                     return false
                 end,
                 
-                text = "Now click on a vacant spot on the map to add the goblin to the map.",
+                text = "Now click on a vacant spot on the map to add the Goblin Cursespitter to the map.",
             },
         }
 
@@ -134,6 +136,7 @@ local g_tutorialDialog = nil
 
 CreateTutorialDialog = function()
 
+    ---@type Panel[]
     local tutorialLinks = {
         gui.Label{
             width = "90%",

@@ -1,7 +1,12 @@
 local mod = dmhub.GetModLoading()
 
-RegisterGameType("Hud")
-
+--- @class Hud: GameType
+--- @field new fun(o?: table): Hud
+--- @field dialog SheetContainer The engine's sheet container; every Hud is a GameHud built by dmhub.CreateGameHud.
+--- @field dialogWorldPanel Panel Host for world-space dialogs; set by Hud.MainDialogPanel.
+--- @field mainDialogPanel Panel Main dialog layer; set by Hud.MainDialogPanel.
+--- @field modalPanel Panel Modal dialog layer; set by Hud.ModalDialogPanel.
+Hud = RegisterGameType("Hud")
 
 function Hud.HasFocus(self)
 	return gui.HasFocus()
@@ -28,28 +33,13 @@ function Hud.SetFocus(self, newFocus)
 	gui.SetFocus(newFocus)
 end
 
-function Hud.CreateShapesLayer(self)
-	if dmhub.isDM then
-		return gui.Panel{
-			interactable = false,
-			bgcolor = "white",
-			bgimage = "#Shapes",
-			width = "100%",
-			height = "100%",
-		}
-	else
-		return nil
-	end
-end
+local g_screenArea = core.Vector4(0,0,0,0)
 
 --function called by dmhub to see what area of the screen is occupied by the hud.
---With UI blur turned on the docks are see-through, so the map is allowed to
---fill the whole screen and the docks float over it. With blur off they are
---solid, so the map is squeezed in between them instead.
 function Hud.GetScreenHudArea(self)
 	local left = 0
 	local right = 0
-	--rawget: this can run before the docks exist (lobby, early boot).
+    
 	if gamehud ~= nil and not dmhub.GetSettingValue("graphics:uiblur") then
 		if rawget(gamehud, "leftDock") ~= nil and (not gamehud.leftDock:HasClass("offscreen")) and #gamehud.leftDock.data.GetChildren() > 0 then
 			left = (DockablePanel.DockWidth/1920) * (1920/1080) / (self.dialog.width/self.dialog.height)
@@ -59,7 +49,31 @@ function Hud.GetScreenHudArea(self)
 		end
 	end
 
-	return core.Vector4(left,right,0.0,0.0)
+    g_screenArea.x = left
+    g_screenArea.y = right
+    return g_screenArea
+end
+
+local g_worldPanelArea = core.Vector4(0,0,0,0)
+
+--same as above but special version for World Panel
+function Hud.GetScreenHudAreaWorldPanel(self)
+	local left = 0
+	local right = 0
+    
+	if gamehud ~= nil then
+        --the GetChildren() calls are expensive. Try to work out a more efficient way to do them if we need to have them.
+		if gamehud:has_key("leftDock") and (not gamehud.leftDock:HasClass("offscreen")) then --and #gamehud.leftDock.data.GetChildren() > 0 then
+			left = (DockablePanel.DockWidth/1920) * (1920/1080) / (self.dialog.width/self.dialog.height)
+		end
+		if gamehud:has_key("rightDock") and (not gamehud.rightDock:HasClass("offscreen")) then --and #gamehud.rightDock.data.GetChildren() > 0 then
+			right = DockablePanel.DockWidth/1920 * (1920/1080) / (self.dialog.width/self.dialog.height)
+		end
+	end
+
+    g_worldPanelArea.x = left
+    g_worldPanelArea.y = right
+    return g_worldPanelArea
 end
 
 --- Owner-routed modals: a modal fired from a panel living in a native
@@ -220,7 +234,7 @@ local function PromoteModalToChildWindow(hud, layer, modal)
 	if root == nil or (not root.valid) then
 		return
 	end
-	if GameHud.instance == nil or GameHud.instance.documentsPanel == nil or
+	if not GameHud.instance or GameHud.instance.documentsPanel == nil or
 		(not GameHud.instance.documentsPanel.valid) then
 		return
 	end
@@ -395,7 +409,7 @@ end
 
 --- Close the topmost modal in the given layer (the global modalPanel or a
 --- popout window's own layer).
---- @param layer Panel
+--- @param layer Panel|nil nil (or a destroyed layer) is ignored.
 function Hud.CloseModalInLayer(self, layer)
 	if layer == nil or (not layer.valid) then
 		return
@@ -453,10 +467,11 @@ function Hud.GetModal(self, owner)
 end
 
 --- @class ModalMessageArgs
---- @param title nil|string @message shown at the top
---- @param message string @message taking up the bulk of the dialog.
---- @param panel nil|Panel An arbitrary panel to display in the center.
---- @param options nil|{text: string, execute: function} a list of buttons that will be displayed at the bottom.
+--- @field title nil|string message shown at the top
+--- @field message nil|string message taking up the bulk of the dialog.
+--- @field panel nil|Panel An arbitrary panel to display in the center.
+--- @field options nil|{text: string, execute?: function}[] a list of buttons that will be displayed at the bottom.
+--- @field owner nil|Panel The element this message concerns. If it lives in a native popout window, the message appears in THAT window instead of the main one.
 
 --- Display a modal message dialog.
 --- @param args ModalMessageArgs
@@ -465,7 +480,6 @@ function Hud:ModalMessage(args)
 	if args.title ~= nil then
 		titleText = gui.Label({
 			id = 'modal-title',
-			--Size, color, and placement come from the {modalTitle} theme rule.
 			classes = {"modalTitle"},
 			text = args.title,
 		})
@@ -499,11 +513,10 @@ function Hud:ModalMessage(args)
 	local options = {}
 	for i,option in ipairs(argOptions) do
 		local optionInfo = option
-		options[#options+1] = gui.PrettyButton({
+		options[#options+1] = gui.Button({
 			id = 'modal-button-' .. optionInfo.text,
+			classes = {"sizeL"},
 			text = optionInfo.text,
-			width = 140,
-			height = 60,
 			events = {
 				click = function()
 					self:CloseModalInLayer(modalLayer)
@@ -517,21 +530,17 @@ function Hud:ModalMessage(args)
 
 	optionsPanel = gui.Panel({
 		id = 'modal-buttons-panel',
-		style = {
-			height = 'auto',
-			width = '80%',
-			valign = 'bottom',
-			vmargin = 20,
-			flow = 'horizontal',
-		},
+		height = 'auto',
+		width = '80%',
+		valign = 'bottom',
+		vmargin = 20,
+		flow = 'horizontal',
 		children = options,
 	})
 
 	modalLayer = self:ShowModal(
 		gui.Panel({
 			id = 'modal-dialog',
-			--The dialog frame and labels are fully theme-driven now; layout
-			--stays inline. The default color scheme matches the old look.
 			classes = {"framedPanel"},
 			styles = ThemeEngine.GetStyles(),
 			halign = 'center',
@@ -574,9 +583,10 @@ function Hud:ModalChoice(args)
 	local dialog
 	dialog = gui.Panel{
 		classes = {"framedPanel"},
-		--The theme provides framedPanel + row/oddRow/evenRow + base label
-		--rules. Local extras: option sizing and the bespoke red hover/press
-		--wash, which stays hardcoded on purpose.
+		-- Theme provides framedPanel + row/oddRow/evenRow + base label rules.
+		-- Local extras: option-specific size/font and bespoke red hover/press
+		-- colors. Hover/press literals stay (component-specific dark-red wash;
+		-- could map to @danger family later if you want them theme-driven).
 		styles = ThemeEngine.MergeStyles({
 			{
 				selectors = {"option"},
@@ -601,7 +611,6 @@ function Hud:ModalChoice(args)
 		gui.Label{
 			classes = {"title"},
 			valign = "top",
-			--The old Styles.Panel title rule supplied the size; now inline.
 			fontSize = 28,
 			bold = true,
 			text = args.title,
@@ -629,7 +638,7 @@ function Hud.MainDialogPanel(self)
 		halign = "left",
 		valign = "top",
 		think = function(element)
-			local area = self:GetScreenHudArea()
+			local area = self:GetScreenHudAreaWorldPanel()
 			element.x = self.dialog.width*area.x
 			element.y = self.dialog.height*area.z
 
@@ -650,7 +659,7 @@ function Hud.MainDialogPanel(self)
 
 		width = "100%",
 		height = "100%",
-		valign = 'center',
+		valign = 'bottom',
 		halign = 'center',
 	})
 
@@ -696,15 +705,19 @@ function Hud:UploadDialog(options)
 		classes = {"uploadDialogLabel"},
 		text = options.text,
 
+		-- Color, bgcolor, borderColor come from the {label, uploadDialogLabel}
+		-- theme rule on the parent dialog so this label follows scheme switches.
+		-- Layout/typography stays inline. Dropped a stray duplicate `height` key
+		-- (was `'center'` then `'auto'`); converted '80%' fontSize to absolute
+		-- 28 since the theme's {label} rule sets a 14px cascade base.
 		style = {
 			valign = 'center',
-			height = 'center',
 			width = 'auto',
 			height = 'auto',
 			pad = 100,
 			cornerRadius = 16,
 			borderWidth = 2,
-			fontSize = '80%',
+			fontSize = 28,
 			textAlignment = 'center',
 		},
 		monitorAssets = true,
@@ -726,14 +739,10 @@ function Hud:UploadDialog(options)
 
 	}
 
-	local closeButton = gui.IconButton{
-		icon = 'ui-icons/close.png',
-		style = {
-			halign = 'right',
-			valign = 'top',
-			width = 24,
-			height = 24,
-		},
+	local closeButton = gui.Button{
+		classes = {"closeButton", "sizeL"},
+		halign = 'right',
+		valign = 'top',
 		events = {
 			click = function(element)
 				self:CloseModal()
@@ -747,14 +756,12 @@ function Hud:UploadDialog(options)
 			height = 400,
 			flow = 'none',
 		},
-		--Colors come from the active color scheme; geometry stays on the
-		--label above.
 		styles = ThemeEngine.MergeStyles({
 			{
 				selectors = {"label", "uploadDialogLabel"},
-				color = "@fg",
-				bgcolor = "@bgAlt",
-				borderColor = "@border",
+				color = "@text",
+				bgcolor = "@grey02",
+				borderColor = "@text",
 			},
 		}),
 		children = {
@@ -767,15 +774,379 @@ function Hud:UploadDialog(options)
 	return dialog
 end
 
-RegisterGameType("GameHud", "Hud")
+--- @class GameHud: Hud
+--- @field new fun(o?: table): GameHud
+--- @field dialog SheetContainer The engine's sheet container, passed to dmhub.CreateGameHud.
+--- @field tokenInfo SheetHud The engine's token/selection interface, passed to dmhub.CreateGameHud.
+--- @field parentPanel Panel Root panel of the hud (dialog.sheet); set by dmhub.CreateGameHud.
+--- @field actionBarPanel Panel Set by the action bar when it is created.
+--- @field bannerLayer? Panel Layer over the floating windows for mode banners; set by GameHud:CreateBannerLayer (nil on the lobby hud).
+--- @field rollDialog Panel Set by dmhub.CreateGameHud (GameHud:CreateRollDialog).
+--- @field inventoryDialog Panel
+--- @field basicInventoryDialog Panel
+--- @field tradeInventoryDialog Panel
+--- @field createItemDialog Panel
+--- @field initiativeInterface table The initiative bar's interface table; set by GameHud.CreateInitiativeBar.
+--- @field initiativeCarousel Panel
+--- @field choiceInitiativeBar Panel
+--- @field respiteBar Panel
+--- @field castingSpell boolean
+--- @field currentInitiativeId? string
+--- @field interactionQueue fun()[] Pending popup interactions, run one per Think when the player is free; set by the hud constructors.
+--- @field openInventoryDialogs Panel[] Inventory dialogs currently open; set by the hud constructors.
+--- @field CreateRollResultPanel fun(self: GameHud): Panel Defined in the engine TextAsset roll-display.txt.
+--- @field shopPanel Panel|false Fullscreen shop host; false on the lobby hud (see the default below).
+GameHud = RegisterGameType("GameHud", "Hud")
 
---The dialog currently being presented to players, or nil if none is. The
---in-game hud overrides this with an instance closure over its presentation
---state (see dmhub.CreateGameHud in GameHud.lua). The lobby hud never
---presents anything, so this class-level nil default keeps callers (like the
---Present button CustomDocument puts on documents) from falling through to
---the base Hud type and raising "unknown field".
+-- Fullscreen host panel for the shop/inventory screen. Set by
+-- dmhub.CreateGameHud for the in-game hud; stays false for the lobby hud
+-- (the lobby uses the titlescreen as the shop host instead).
+GameHud.shopPanel = false
+
+-- The dialog currently being presented to players, or nil if none is. The
+-- in-game hud overrides this with an instance closure over its presentation
+-- state (see dmhub.CreateGameHud in GameHud.lua). The lobby hud has no
+-- presentation system at all -- it never fires "presentDialog" -- so nothing
+-- is ever presented there and nil is the truthful answer. This class-level
+-- default is what makes the accessor total: without it, callers running under
+-- the lobby hud (e.g. the Present button that CustomDocument:CreateInterface
+-- puts on info-bubble documents, which the lobby does show) fall through
+-- GameHud to the base Hud type and raise "Attempt to read unknown field".
 GameHud.GetCurrentlyPresentedDialog = function()
+	return nil
+end
+
+-- The PANEL that presentation put on screen, or nil if nothing is presented.
+-- Presented dialogs are mounted as ordinary children of the documents layer,
+-- so callers that share that layer (the icon rails, panel windows, the chat
+-- speech bubble) need the panel itself to tell whether they are in front of
+-- it or buried behind it. Same totality story as the accessor above: the
+-- lobby hud presents nothing, and this class-level default is what keeps the
+-- call from raising there.
+GameHud.GetCurrentlyPresentedDialogPanel = function()
+	return nil
+end
+
+--Director-facing UI gate. Game modes can register a filter that suppresses
+--Director chrome (dmonly dock panels, the GM toolbar, initiative-bar strips)
+--on clients that hold Director status internally but should present as
+--players -- e.g. the Encounter of the Week host, who must keep engine DM
+--rights (monster control, encounter spawning) while looking like a player.
+--This gates PRESENTATION only; permission checks must keep using dmhub.isDM.
+GameHud.directorUIFilters = {}
+
+--fn() -> false hides Director-facing UI on this client; any other result
+--(true, nil, or an error) leaves it visible.
+GameHud.RegisterDirectorUIFilter = function(fn)
+	if type(fn) == "function" then
+		GameHud.directorUIFilters[#GameHud.directorUIFilters+1] = fn
+	end
+end
+
+--True when this client should show Director-facing UI: a Director whose
+--registered filters (if any) all allow it. UI sites use this in place of
+--dmhub.isDM when gating pure chrome.
+GameHud.DirectorUIVisible = function()
+	if not dmhub.isDM then
+		return false
+	end
+	for _,fn in ipairs(GameHud.directorUIFilters) do
+		local ok, show = pcall(fn)
+		if ok and show == false then
+			return false
+		end
+	end
+	return true
+end
+
+--Custom-interface hook. A game mode can usurp the normal game hud chrome:
+--replace the icon-rail button columns with its own side widgets, suppress
+--(or add) title-bar menus, remove panels outright (e.g. the Compendium),
+--hide search buckets, and force the character panel read-only. The title
+--bar itself always remains. Register a provider table:
+--
+--  GameHud.RegisterCustomInterface{
+--      id = "eotw",                     --stable id; rails and the title
+--                                       --bar watch it to detect takeovers
+--      active = function() end,         --true while the interface is on
+--      suppressRails = true,            --replace the icon-rail columns;
+--                                       --docks slide away transiently too
+--      suppressWindows = true,          --hide every window on the table (maps,
+--                                       --scenes, journals, panel windows),
+--                                       --the maximized window's strip and
+--                                       --minimized window buttons; nothing
+--                                       --about any window changes, so they
+--                                       --come back as they were. Call
+--                                       --GameHud.SyncInterfaceSuppression
+--                                       --when active() changes
+--      railPanel = function(side) end,  --widget for "left"/"right" (used
+--                                       --only when suppressRails)
+--      railBottomPanel = function(side) end,
+--                                       --widget pinned to the BOTTOM
+--                                       --corner of that side (e.g. kept
+--                                       --Chat/Action Log buttons)
+--      suppressTitlebarMenu = set|fn,   --menu NAME -> true hides it
+--      titlebarPanels = function() end, --panels added to the menu bar
+--      suppressPanel = set|fn,          --panel NAME -> true removes it
+--                                       --from menus/search/toolbar
+--      suppressSearchBucket = set|fn,   --search bucket id -> true
+--      characterPanelAccess = function(token) end,
+--                                       --override CharacterPanel access:
+--                                       --"edit"|"view"|"none"|nil=normal
+--      openSheet = function(token, tabid) end,
+--                                       --a character sheet is opening for
+--                                       --token: return true to show your
+--                                       --own view instead (the full sheet
+--                                       --then closes itself); nil/false
+--                                       --opens the normal sheet
+--      ownsSheet = function(token) end, --true when openSheet will show your
+--                                       --own view for token, so the full
+--                                       --sheet skips refreshing itself
+--                                       --first. No side effects: asked
+--                                       --before openSheet on every open
+--      playersPopout = function() end,  --content for the popout under the
+--                                       --title bar's players row (replaces
+--                                       --the Heroes panel there); nil=normal
+--      confirmExit = function(kind, proceed) end,
+--                                       --the user is leaving the game
+--                                       --(kind "leave") or quitting the app
+--                                       --("quit"): return true to put up
+--                                       --your own confirmation, which calls
+--                                       --proceed() to really go; false or
+--                                       --nil lets the exit happen as normal
+--      forcedMap = function() end,      --a mapid to hold maximized on the
+--                                       --table (no restore, minimize or
+--                                       --close), like a Director-forced
+--                                       --map; nil for none (Tabletop.lua)
+--  }
+--
+--Everything but id/active is optional. The FIRST registered provider whose
+--active() returns true wins. Consumer reads are pcall-guarded so a broken
+--provider degrades to the normal interface, never a dead hud.
+GameHud.customInterfaces = {}
+
+GameHud.RegisterCustomInterface = function(provider)
+	if type(provider) == "table" and type(provider.active) == "function" then
+		--a Lua reload re-registers every provider: replace the one with
+		--the same id in place rather than appending, otherwise the stale
+		--generation's provider stays first and keeps winning.
+		if provider.id ~= nil then
+			for i,existing in ipairs(GameHud.customInterfaces) do
+				if existing.id == provider.id then
+					GameHud.customInterfaces[i] = provider
+					return
+				end
+			end
+		end
+		GameHud.customInterfaces[#GameHud.customInterfaces+1] = provider
+	end
+end
+
+--The active provider, or nil. Consumers use the helpers below instead.
+GameHud.CustomInterface = function()
+	for _,provider in ipairs(GameHud.customInterfaces) do
+		local ok, active = pcall(provider.active)
+		if ok and active then
+			return provider
+		end
+	end
+	return nil
+end
+
+--The active provider's id (nil when none): consumers that BUILD UI for an
+--interface compare this against what they built for to detect a takeover
+--or a release mid-session.
+GameHud.CustomInterfaceId = function()
+	local provider = GameHud.CustomInterface()
+	if provider == nil then
+		return nil
+	end
+	return provider.id or "custom"
+end
+
+--Evaluate a provider field that may be a plain value, a set-style table
+--keyed by the argument, or a function of the argument. nil when no
+--interface is active, the field is absent, or the provider errors.
+local function CustomInterfaceField(field, arg)
+	local provider = GameHud.CustomInterface()
+	if provider == nil then
+		return nil
+	end
+	local value = provider[field]
+	if type(value) == "function" then
+		local ok, result = pcall(value, arg)
+		if ok then
+			return result
+		end
+		return nil
+	end
+	if type(value) == "table" and arg ~= nil then
+		return value[arg]
+	end
+	return value
+end
+
+GameHud.CustomInterfaceSuppressesRails = function()
+	return CustomInterfaceField("suppressRails") == true
+end
+
+GameHud.CustomInterfaceSuppressesWindows = function()
+	return CustomInterfaceField("suppressWindows") == true
+end
+
+--Apply the active interface's suppressWindows now. The documents layer
+--carries the class and its own style rule collapses every window under it
+--(InfoDocument.lua), so a window opened while suppressed is hidden too and
+--each one keeps its own state underneath; the strip and the minimized
+--buttons live in Tabletop's layers.
+GameHud.SyncInterfaceSuppression = function()
+	local suppress = GameHud.CustomInterfaceSuppressesWindows()
+	--false, not nil, until the hud is built.
+	local hud = GameHud.instance
+	if hud and hud.documentsPanel ~= nil and hud.documentsPanel.valid then
+		hud.documentsPanel:SetClass("interfaceSuppressing", suppress)
+	end
+	pcall(function()
+		Tabletop.SyncInterfaceSuppression(suppress)
+	end)
+end
+
+--The custom widget to mount where the icon rail would be, or nil.
+GameHud.CustomInterfaceRailPanel = function(side)
+	local provider = GameHud.CustomInterface()
+	if provider == nil or type(provider.railPanel) ~= "function" then
+		return nil
+	end
+	local ok, panel = pcall(provider.railPanel, side)
+	if ok then
+		return panel
+	end
+	return nil
+end
+
+--The custom widget pinned to the bottom corner of that side, or nil.
+GameHud.CustomInterfaceRailBottomPanel = function(side)
+	local provider = GameHud.CustomInterface()
+	if provider == nil or type(provider.railBottomPanel) ~= "function" then
+		return nil
+	end
+	local ok, panel = pcall(provider.railBottomPanel, side)
+	if ok then
+		return panel
+	end
+	return nil
+end
+
+GameHud.CustomInterfaceSuppressesTitlebarItem = function(name)
+	return CustomInterfaceField("suppressTitlebarMenu", name) == true
+end
+
+--Extra panels the interface adds to the title bar's menu row, or nil.
+GameHud.CustomInterfaceTitlebarPanels = function()
+	local provider = GameHud.CustomInterface()
+	if provider == nil or type(provider.titlebarPanels) ~= "function" then
+		return nil
+	end
+	local ok, panels = pcall(provider.titlebarPanels)
+	if ok and type(panels) == "table" then
+		return panels
+	end
+	return nil
+end
+
+GameHud.CustomInterfaceSuppressesPanel = function(name)
+	return CustomInterfaceField("suppressPanel", name) == true
+end
+
+GameHud.CustomInterfaceSuppressesSearchBucket = function(bucket)
+	return CustomInterfaceField("suppressSearchBucket", bucket) == true
+end
+
+--Access override for a token's character panel, or nil for the normal
+--rules. Only the three known access levels pass through.
+GameHud.CustomInterfaceCharacterPanelAccess = function(token)
+	local provider = GameHud.CustomInterface()
+	if provider == nil or type(provider.characterPanelAccess) ~= "function" then
+		return nil
+	end
+	local ok, access = pcall(provider.characterPanelAccess, token)
+	if ok and (access == "edit" or access == "view" or access == "none") then
+		return access
+	end
+	return nil
+end
+
+--Offer the active interface the character sheet a token is about to open.
+--True when it showed its own view instead (the caller must then not open
+--the full sheet); false for the normal sheet (no interface, no hook, or the
+--hook declined or failed).
+GameHud.CustomInterfaceOpenSheet = function(token, tabid)
+	local provider = GameHud.CustomInterface()
+	if provider == nil or type(provider.openSheet) ~= "function" then
+		return false
+	end
+	local ok, handled = pcall(provider.openSheet, token, tabid)
+	if not ok then
+		dmhub.Error(string.format("custom interface openSheet failed: %s", tostring(handled)))
+		return false
+	end
+	return handled == true
+end
+
+--Whether the active interface will show its own view of this token's sheet
+--(see openSheet). Asked before the full sheet refreshes, so that work can be
+--skipped; false when there is no interface, no hook, or the hook fails.
+GameHud.CustomInterfaceOwnsSheet = function(token)
+	local provider = GameHud.CustomInterface()
+	if provider == nil or type(provider.ownsSheet) ~= "function" then
+		return false
+	end
+	local ok, owns = pcall(provider.ownsSheet, token)
+	if not ok then
+		dmhub.Error(string.format("custom interface ownsSheet failed: %s", tostring(owns)))
+		return false
+	end
+	return owns == true
+end
+
+--Offer the active interface a say in the user leaving the game ("leave")
+--or quitting the app ("quit"). True when it has put up its own
+--confirmation, which will call proceed() if the user goes ahead; the
+--caller must then do nothing more. False when the exit should go ahead as
+--normal (no interface, no hook, or the hook declined or failed).
+GameHud.CustomInterfaceConfirmExit = function(kind, proceed)
+	local provider = GameHud.CustomInterface()
+	if provider == nil or type(provider.confirmExit) ~= "function" then
+		return false
+	end
+	local ok, handled = pcall(provider.confirmExit, kind, proceed)
+	if not ok then
+		dmhub.Error(string.format("custom interface exit confirmation failed: %s", tostring(handled)))
+		return false
+	end
+	return handled == true
+end
+
+--The panel the interface wants in the players-row popout, or nil for the
+--normal Heroes panel.
+GameHud.CustomInterfacePlayersPopout = function()
+	local provider = GameHud.CustomInterface()
+	if provider == nil or type(provider.playersPopout) ~= "function" then
+		return nil
+	end
+	local ok, panel = pcall(provider.playersPopout)
+	if ok and panel ~= nil then
+		return panel
+	end
+	return nil
+end
+
+--The map the active interface holds maximized on the table, or nil.
+GameHud.CustomInterfaceForcedMap = function()
+	local mapid = CustomInterfaceField("forcedMap")
+	if type(mapid) == "string" and mapid ~= "" then
+		return mapid
+	end
 	return nil
 end
 

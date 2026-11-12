@@ -1,0 +1,381 @@
+local mod = dmhub.GetModLoading()
+
+local g_useCompiled = false
+
+local g_compiledGoblinScript
+g_compiledGoblinScript = setting{
+    id = "compiledgoblinscript",
+    name = "Compiled Goblin Script",
+    default = true,
+    description = "Use compiled Goblin Script evaluation where possible. Improves performance.",
+    onchange = function()
+        g_useCompiled = g_compiledGoblinScript:Get()
+        print("GoblinScript: use compiled =", g_useCompiled)
+    end,
+}
+
+g_useCompiled = g_compiledGoblinScript:Get()
+
+local g_compiled = {}
+local g_errors = {}
+
+Commands.RegisterMacro{
+    name = "flushcompiledgoblinscript",
+    summary = "flush formula cache",
+    doc = "Usage: /flushcompiledgoblinscript\nClears the compiled GoblinScript formula cache.",
+    command = function()
+        g_compiled = {}
+        g_errors = {}
+        print("GoblinScript: Flushed compiled formula cache")
+    end,
+}
+
+local g_debugEntries = {}
+local g_debugScheduled = false
+---@type Panel?
+local g_debugPanel = nil
+
+function RegisterGoblinScriptDebugPanel(panel)
+    g_debugPanel = panel
+end
+
+local function LogDebugEntry(entry)
+    --only called under a g_debugPanel ~= nil check.
+    ---@cast g_debugPanel -nil
+    if not g_debugPanel.valid then
+        g_debugPanel = nil
+    else
+        g_debugEntries[#g_debugEntries+1] = entry
+        if g_debugScheduled == false then
+            g_debugScheduled = true
+            dmhub.Schedule(0.1, function()
+                g_debugScheduled = false
+                if g_debugPanel ~= nil and g_debugPanel.valid then
+                    g_debugPanel:FireEvent("debugEntries", g_debugEntries)
+                end
+                g_debugEntries = {}
+            end)
+        end
+    end
+end
+
+GoblinScriptDebug = {
+    formulaOverrides = {},
+
+    OverrideFormula = function(formula, fn, lua)
+        GoblinScriptDebug.formulaOverrides[formula] = lua
+        g_compiled[formula] = fn
+        print("GoblinScript:: Override:", formula, "with", lua, type(fn))
+    end,
+
+    -- Map of formula -> dialog panel currently listening for per-expression debug info.
+    -- Populated by gui.GoblinScriptDebugDialog via EnableDebug/DisableDebug.
+    activeDialogs = {},
+
+    -- Monotonic batch counter. Every formula invocation compiled in debug mode calls
+    -- NewBatch() once to tag all of its GoblinScriptDebugInfo events with a shared id so
+    -- the dialog can group them.
+    nextBatch = 0,
+
+    -- Called once per invocation of a debugged formula from the compiler-emitted preamble.
+    -- Bumps the global batch counter, then pushes batch metadata (frame number, Lua
+    -- traceback) to the dialog listening on this formula. Returns the fresh batch id so
+    -- every GoblinScriptDebugInfo call in the same invocation can tag itself.
+    --
+    -- Uses FireEvent (not FireEventTree) since the handler lives on the dialog root --
+    -- tree-walking for every event was a major source of slowdown when formulas fire
+    -- hundreds of times per frame.
+    NewBatch = function(formula, frame, trace)
+        GoblinScriptDebug.nextBatch = GoblinScriptDebug.nextBatch + 1
+        local id = GoblinScriptDebug.nextBatch
+        local dialog = GoblinScriptDebug.activeDialogs[formula]
+        if dialog ~= nil and dialog.valid then
+            dialog:FireEvent("debugBatchStart", {
+                batchId = id,
+                formula = formula,
+                frame = frame,
+                trace = trace,
+            })
+        end
+        return id
+    end,
+
+    EnableDebug = function(formula, dialog)
+        GoblinScriptDebug.activeDialogs[formula] = dialog
+        dmhub.SetGoblinScriptDebug(formula, true)
+        -- Force recompile with instrumentation on the next evaluation.
+        g_compiled[formula] = nil
+        g_errors[formula] = nil
+    end,
+
+    DisableDebug = function(formula)
+        GoblinScriptDebug.activeDialogs[formula] = nil
+        dmhub.SetGoblinScriptDebug(formula, false)
+        -- Force recompile without instrumentation.
+        g_compiled[formula] = nil
+        g_errors[formula] = nil
+    end,
+}
+
+-- Global entry point called from instrumented Lua emitted by the GoblinScript compiler.
+-- Must stay cheap: runs inside every sub-expression evaluation when a formula is being
+-- debugged. Missing dialog / stale dialog is treated as a no-op (debug flag not yet cleared).
+-- Uses FireEvent (handler is on the dialog root) to avoid FireEventTree's descendants walk,
+-- which dominated cost when formulas fire hundreds of times per frame.
+function GoblinScriptDebugInfo(info)
+    if info == nil then return end
+    local dialog = GoblinScriptDebug.activeDialogs[info.formula]
+    if dialog ~= nil and dialog.valid then
+        dialog:FireEvent("debugInfo", info)
+    end
+end
+
+local g_profileGoblinScript = dmhub.ProfileMarker("ExecuteGoblinScript")
+
+local g_profileInstruments = {}
+
+function ExecuteGoblinScript(formula, symbols, defaultValue, contextMessage)
+    if formula == "" or formula == nil then
+        return defaultValue
+    end
+
+    local t = type(formula)
+    if t == "number" then
+        return formula
+    end
+--[[
+    local profile = g_profileInstruments[formula]
+    if profile == nil then
+        profile = dmhub.ProfileMarker("GoblinScript:" .. formula)
+        g_profileInstruments[formula] = profile
+    end
+
+    local _ = profile.Begin
+    ]]
+
+    if (not g_useCompiled) or t ~= "string" then
+        local result = dmhub.EvalGoblinScriptDeterministic(formula, symbols, defaultValue, contextMessage)
+        --print("GoblinScript:: EVAL", formula, "DETERMINISTIC ->", result)
+        --local _ = profile.End
+        return result
+    end
+
+    local fn = g_compiled[formula]
+
+    if fn == nil then
+        local out = {}
+        fn = dmhub.CompileGoblinScriptDeterministic(formula, out)
+        if out.error then
+            print("GoblinScript: Error in formula", formula, "error:", out.error)
+        end
+
+        if fn == nil then
+            fn = false
+        end
+
+        g_compiled[formula] = fn
+    end
+
+    if fn == false then
+        --print("GoblinScript:: EVAL", formula, "COULD NOT COMPILE ->", result)
+        --local _ = profile.End
+        return defaultValue
+    else
+        if type(symbols) == "table" then
+            symbols = GenerateSymbols(symbols)
+        end
+
+        --fn is never nil here (a failed compile is stored as false) and false took the branch above.
+        ---@cast fn function
+        local ok, result = pcall(fn,symbols)
+        local error
+        if not ok then
+            error = result
+            result = defaultValue
+            if g_errors[formula] == nil then
+                --Print the caught error, not result -- result has already been replaced
+                --by defaultValue on the line above, so this used to log the default.
+                print("GoblinScript: Runtime error in formula", formula, "error:", error)
+                g_errors[formula] = true
+            end
+        elseif result == nil then
+            result = defaultValue
+        end
+
+        --print("GoblinScript:: EVAL", formula, "CALCULATED ->", result, "ok", ok)
+        if result == true then
+            result = 1
+        elseif result == false then
+            result = 0
+        end
+
+
+        if g_debugPanel ~= nil then
+            LogDebugEntry{
+                input = formula,
+                deterministic = true,
+                result = result,
+                error = error,
+                reason = contextMessage,
+                lookupFunction = symbols,
+                lookups = {},
+            }
+        end
+
+
+        --local _ = profile.End
+        return result
+    end
+end
+
+BuiltinGoblinScriptFunctions = {
+    min = math.min,
+    max = math.max,
+    floor = math.floor,
+    ceiling = math.ceil,
+    friends = function(a, b)
+        local toka = dmhub.LookupToken(a)
+        local tokb = dmhub.LookupToken(b)
+        if toka == nil or tokb == nil then
+            return false
+        end
+
+        return toka:IsFriend(tokb)
+    end,
+
+    lineofsight = function(a, b)
+        local toka = dmhub.LookupToken(a)
+        local tokb = dmhub.LookupToken(b)
+        if toka == nil or tokb == nil then
+            return 1
+        end
+        local pierceWalls = (toka.properties ~= nil) and toka.properties:GetPierceWalls() or 0
+        local coverInfo = dmhub.GetCoverInfo(toka, tokb, pierceWalls)
+        if coverInfo == nil then
+            return 1
+        end
+
+        return 1 - coverInfo.coverModifier
+    end,
+
+    substring = function(haystack, needle)
+        return string.find(haystack, needle) ~= nil
+    end,
+}
+
+--- @class GoblinScriptTestObject: GameType
+--- @field new fun(o?: table): GoblinScriptTestObject
+GoblinScriptTestObject = RegisterGameType("GoblinScriptTestObject")
+GoblinScriptTestObject.lookupSymbols = {
+    self = function(c)
+        return c
+    end,
+
+    symbols = function(c)
+        return GenerateSymbols(c)
+    end,
+
+    level = function(c)
+        return 1
+    end,
+
+    stamina = function(c)
+        return 10
+    end,
+
+    maximumstamina = function(c)
+        return 30
+    end,
+
+    monstertype = function(c)
+        return "Goblin"
+    end,
+
+    conditions = function(c)
+        return StringSet.new{
+            strings = {"Poisoned", "Weakened"},
+        }
+    end,
+}
+
+local testInstance = GoblinScriptTestObject.new()
+
+local function UnitTestGoblinScript(formula, expectedValue, out)
+    local symbols = GenerateSymbols(testInstance)
+    local fn = dmhub.CompileGoblinScriptDeterministic(formula, out)
+    if out.error then
+        print("GoblinScript Unit Test: FAILED to compile formula", formula, "error:", out.error)
+        return false
+    end
+
+    local ok,result = pcall(fn,symbols)
+    if not ok then
+        print("GoblinScript Unit Test: RUNTIME ERROR in formula", formula, "error:", result)
+        return false
+    end
+
+    if result == true then
+        result = 1
+    elseif result == false then
+        result = 0
+    end
+
+    if result ~= expectedValue then
+        print("GoblinScript Unit Test: FAILED formula", formula, "expected", expectedValue, "got", result)
+        return false
+    end
+
+    return true
+end
+
+Commands.RegisterMacro{
+    name = "goblinscriptunittest",
+    summary = "run formula tests",
+    doc = "Usage: /goblinscriptunittest\nRuns unit tests for the GoblinScript formula evaluator.",
+    command = function(str)
+        local tests = {
+            {"18 + (Level - 1)*6", 18 + (1 - 1)*6},
+            {"min(10, 20)", 10},
+            {"max(10, 20)", 20},
+            {"floor(3.7)", 3},
+            {"ceiling(3.2)", 4},
+            {"self.stamina + 5", 15},
+            {"self.monstertype = \"Goblin\"", 1},
+            {"self.monstertype ~= \"Goblin\"", 0},
+            {"self.conditions has \"Poisoned\"", 1},
+            {"self.conditions has \"Burning\"", 0},
+            {"5 when stamina > 5", 5},
+            {"5 when stamina < 5", 0},
+            {"2 + 5 when stamina > 5 and level = 1 else 12", 7},
+            {"2 + 5 when stamina < 5 and level = 1 else 12", 14},
+            {"max(stamina, 118, 4, 170, 24)", 170},
+            {"stamina or level or 4", 10},
+            {"stamina or level or 18", 18},
+            {"stamina + x where x = 7", 17},
+            {"Stamina <= Maximum Stamina/2", 1},
+            {"Stamina <= Maximum Stamina/4", 0},
+            {"symbols = self", 1},
+            {"symbols = symbols", 1},
+            {"symbols != self", 0},
+            {"symbols != symbols", 0},
+        }
+
+        local allPassed = true
+        for i, test in ipairs(tests) do
+            local formula = test[1]
+            local expectedValue = test[2]
+            local out = {}
+            local passed = UnitTestGoblinScript(formula, expectedValue, out)
+            if not passed then
+                print("GoblinScript Unit Test: Lua code for failed", formula, ":\n", out.lua)
+                allPassed = false
+            end
+        end
+
+        if allPassed then
+            print("GoblinScript Unit Test: ALL TESTS PASSED")
+        else
+            print("GoblinScript Unit Test: SOME TESTS FAILED")
+        end
+    end,
+}

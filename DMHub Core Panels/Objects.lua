@@ -1,5 +1,16 @@
 local mod = dmhub.GetModLoading()
 
+local function track(eventType, fields)
+	if dmhub.GetSettingValue("telemetry_enabled") == false then
+		return
+	end
+	fields.type = eventType
+	fields.userid = dmhub.userid
+	fields.gameid = dmhub.gameid
+	fields.version = dmhub.version
+	analytics.Event(fields)
+end
+
 DockablePanel.Register{
 	name = "Objects",
 	icon = mod.images.objectsIcon,
@@ -9,11 +20,29 @@ DockablePanel.Register{
 	dmonly = true,
 	folder = "Map Editing",
 	stickyFocus = true,
+	--a press anywhere on the panel -- including its title bar, which is
+	--the host's chrome and so outside the content's own press handler --
+	--claims focus for it.
+	focusOnClick = true,
 	content = function()
+		track("panel_open", {
+			panel = "Objects",
+			dailyLimit = 30,
+		})
 		return mod.shared.CreateObjectEditor()
 	end,
 	hasNewContent = function()
 		return module.HasNovelContent("object")
+	end,
+	--having the panel open counts as seeing the new objects: the rail
+	--calls this while the panel is shown. The folder/item pips only
+	--re-check on moduleInstalled, so they stay visible for this viewing
+	--and are gone the next time the panel is built.
+	markContentSeen = function()
+		gui.ClearNovelContent("object")
+	end,
+	clearNewContent = function()
+		gui.ClearNovelContent("object")
 	end,
 }
 
@@ -26,6 +55,333 @@ local function Indent(depth)
 end
 
 local CreateObjectNode
+
+--"Objects for this map": when the current map came from a map pack that
+--ships props, the engine merges that map's set into the asset tree as a
+--transient store (MapPackObjects.cs, MAP_PACK_OBJECTS_PLAN.md). Its root
+--folder is pinned to the top of the library and starts expanded. Its folders
+--vanish on other maps, so they cannot be renamed, deleted, or filed into.
+local function MapPackObjectsFolderId()
+	local info = mappacks.currentMapObjects
+	if info == nil or info.status ~= "loaded" or info.folderid == "" then
+		return nil
+	end
+	return info.folderid
+end
+
+--the status line under the library's search box while the current map's set
+--is not usable yet: loading, locked behind a Patreon tier, or failed. nil
+--when there is nothing to say (no set, or it is loaded).
+local function MapPackObjectsStatusText(info, creatorName)
+	if info == nil or info.status == "loaded" then
+		return nil
+	end
+	if info.status == "loading" then
+		return "Loading objects for this map..."
+	end
+	if info.status == "error" then
+		return "Could not load the objects for this map."
+	end
+	local objects = cond(info.count == 1, "1 object", string.format("%d objects", info.count))
+	if info.tier > 0 then
+		local requirement = mod.shared.MapPackPatreonText({tier = info.tier, tierName = info.tierName, owned = false}, creatorName)
+		return string.format("This map comes with %s. %s.", objects, requirement)
+	end
+	return string.format("This map comes with %s, unlocked along with the map.", objects)
+end
+
+--Props packs (PropsPackManager.cs, PROPS_PACKS_PLAN.md): each synced pack is
+--a folder at the library root holding a folder per bundle. A bundle's objects
+--are loaded only when its folder is opened or a search hits it, so until then
+--the folder is empty and a status line under it says why.
+
+--{pack = PropsPackInfo, bundle = nil|PropsPackBundleInfo} for a pack or
+--bundle folder, else nil.
+local function PropsPackFolderInfo(nodeid)
+	local folder = propspacks.GetFolder(nodeid)
+	if folder == nil then
+		return nil
+	end
+	local pack = propspacks.GetPack(folder.pack)
+	if pack == nil then
+		return nil
+	end
+	if folder.bundle == nil then
+		return {pack = pack}
+	end
+	for _,bundle in ipairs(pack.bundles) do
+		if bundle.key == folder.bundle then
+			return {pack = pack, bundle = bundle}
+		end
+	end
+	return nil
+end
+
+--the line under a pack or bundle folder, or nil when there is nothing to say.
+local function PropsPackStatusText(info, creatorName)
+	if info == nil then
+		return nil
+	end
+	local pack = info.pack
+	local bundle = info.bundle
+	if bundle == nil then
+		if pack.access then
+			return nil
+		end
+		local requirement = mod.shared.MapPackPatreonText({tier = pack.tier, tierName = pack.tierName, owned = false}, creatorName)
+		return string.format("%d props in %d bundles. %s.", pack.count, #pack.bundles, requirement or "Locked")
+	end
+	if bundle.status == "loading" or bundle.status == "unloaded" then
+		return string.format("Loading %d props...", bundle.count)
+	end
+	if bundle.status == "error" then
+		return "Could not load these props."
+	end
+	if bundle.status == "locked" then
+		local requirement = mod.shared.MapPackPatreonText({tier = bundle.tier, tierName = bundle.tierName, owned = false}, creatorName)
+		return string.format("%d props. %s.", bundle.count, requirement or "Locked")
+	end
+	return nil
+end
+
+--Loads every unlocked, not yet loaded bundle that has an object matching
+--text. Returns true if it started any load.
+local function LoadPropsPackBundlesMatching(text)
+	local hits = propspacks.Search{text = text, maxResults = 2000}
+	if #hits == 0 then
+		return false
+	end
+	local wanted = {}
+	for _,hit in ipairs(hits) do
+		wanted[hit.pack .. "/" .. hit.bundle] = {pack = hit.pack, bundle = hit.bundle}
+	end
+	local started = false
+	for _,pack in ipairs(propspacks.packs) do
+		for _,bundle in ipairs(pack.bundles) do
+			if wanted[pack.id .. "/" .. bundle.key] ~= nil and bundle.status == "unloaded" then
+				if propspacks.LoadBundle(pack.id, bundle.key) then
+					started = true
+				end
+			end
+		end
+	end
+	return started
+end
+
+local function PropsPackBundlesLoading()
+	for _,pack in ipairs(propspacks.packs) do
+		for _,bundle in ipairs(pack.bundles) do
+			if bundle.status == "loading" then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+--propspacks hands out plain image URLs, which bgimage does not load; "md5:"
+--in front of one makes the image manager download it (as chat images do).
+local function PropsPackImageId(url)
+	if url == nil or url == "" then
+		return nil
+	end
+	return "md5:" .. url
+end
+
+--A props pack object's small preview, used as its icon so a folder or a
+--search full of props downloads previews rather than full images (the full
+--image comes with the tooltip, or when the prop is placed). nil for any
+--other object; the pack check skips the lookup in games with no packs.
+local function PropsPackPreview(nodeid)
+	--GetPreview is missing on engine builds older than the previews.
+	if #propspacks.packs == 0 or propspacks.GetPreview == nil then
+		return nil
+	end
+	return PropsPackImageId(propspacks.GetPreview(nodeid))
+end
+
+--True for a props pack folder, or one of its bundle folders, that this
+--account cannot use. Those stay out of the tree: their props only show up
+--under "From Patreon Creators..." when a search matches them.
+local function IsLockedPropsPackFolder(folderNode)
+	if not folderNode.fromMapPack then
+		return false
+	end
+	local info = PropsPackFolderInfo(folderNode.id)
+	if info == nil then
+		return false
+	end
+	if info.bundle ~= nil then
+		return not info.bundle.access
+	end
+	return not info.pack.access
+end
+
+--"Requires the X tier of the Y Patreon" for the bundle a search hit is in.
+local function PropsPackHitRequirement(hit, creatorName)
+	local pack = propspacks.GetPack(hit.pack)
+	if pack == nil then
+		return nil
+	end
+	local tier = pack.tier
+	local tierName = pack.tierName
+	for _,bundle in ipairs(pack.bundles) do
+		if bundle.key == hit.bundle and bundle.tier > 0 then
+			tier = bundle.tier
+			tierName = bundle.tierName
+		end
+	end
+	return mod.shared.MapPackPatreonText({tier = tier, tierName = tierName, owned = false}, creatorName)
+end
+
+--Sizes an image panel to its picture's aspect ratio inside its square parent.
+local function FitImageToAspect(element)
+	local maxDim = max(element.bgsprite.dimensions.x, element.bgsprite.dimensions.y)
+	if maxDim > 0 then
+		element.selfStyle.width = tostring(element.bgsprite.dimensions.x/maxDim*100) .. '%'
+		element.selfStyle.height = tostring(element.bgsprite.dimensions.y/maxDim*100) .. '%'
+	end
+end
+
+--Shown when someone without the pledge tries to place a prop from a props
+--pack: invites them to support the creator. hit is a propspacks.Search row.
+local function ShowSupportCreatorDialog(hit)
+	mod.shared.GetMapPackCreator({pack = hit.pack}, function(creator)
+		local creatorName = creator.displayName
+		local who = cond(creatorName ~= nil and creatorName ~= "", creatorName, "this creator")
+		local pack = propspacks.GetPack(hit.pack)
+		local count = pack ~= nil and pack.count or 0
+		local access = mappacks.GetPackAccess(hit.pack)
+
+		local text = string.format("<b>%s</b> is one of %d props %s makes for their supporters on Patreon.", hit.name, count, who)
+		local requirement = PropsPackHitRequirement(hit, creatorName)
+		if requirement ~= nil then
+			text = text .. " " .. requirement .. "."
+		end
+		text = text .. " Patrons get the whole library in the Objects panel of every game they run."
+		if not access.linked then
+			text = text .. "\n\nAlready a patron? Link your Patreon account and it unlocks straight away."
+		end
+
+		local function OpenPatreon()
+			local url = creator.campaignUrl
+			if url == nil or url == "" then
+				url = creator.url
+			end
+			if url ~= nil and url ~= "" then
+				dmhub.OpenURL(url)
+			end
+		end
+
+		local options = {}
+		if not access.linked then
+			options[#options+1] = {
+				text = "Link Patreon",
+				execute = function()
+					dmhub.ShowPlayerSettings{tab = "Account"}
+				end,
+			}
+		end
+		options[#options+1] = {text = "Visit Patreon", execute = OpenPatreon}
+		options[#options+1] = {text = "Not Now"}
+
+		gui.ModalMessage{
+			title = string.format("Support %s", who),
+			panel = gui.Panel{
+				width = 460,
+				height = "auto",
+				flow = "vertical",
+				children = {
+					gui.Panel{
+						width = 160,
+						height = 160,
+						halign = "center",
+						flow = "none",
+						gui.Panel{
+							bgimageStreamed = PropsPackImageId(hit.preview),
+							bgcolor = "white",
+							halign = "center",
+							valign = "center",
+							width = "100%",
+							height = "100%",
+							imageLoaded = FitImageToAspect,
+						},
+					},
+					gui.Label{
+						text = text,
+						width = 460,
+						height = "auto",
+						textWrap = true,
+						fontSize = 16,
+						tmargin = 12,
+					},
+				},
+			},
+			options = options,
+		}
+	end)
+end
+
+--Hover card for a locked prop: its preview, size and who it is from.
+local function ShowLockedPropTooltip(element, hit, creatorName)
+	local dock = element:FindParentWithClass("dock")
+	if dock == nil then
+		return
+	end
+	element.tooltipParent = dock
+	local who = cond(creatorName ~= nil and creatorName ~= "", creatorName, "the creator")
+	element.tooltip = gui.TooltipFrame(
+		gui.Panel{
+			interactable = false,
+			width = 300,
+			height = "auto",
+			flow = "vertical",
+			children = {
+				gui.Label{
+					text = hit.name,
+					fontSize = 18,
+					color = "white",
+					width = "auto",
+					maxWidth = 280,
+					height = "auto",
+					halign = "left",
+				},
+				gui.Panel{
+					width = 240,
+					height = 240,
+					halign = "center",
+					vmargin = 8,
+					flow = "none",
+					gui.Panel{
+						bgimageStreamed = PropsPackImageId(hit.preview),
+						bgcolor = "white",
+						halign = "center",
+						valign = "center",
+						width = "100%",
+						height = "100%",
+						imageLoaded = FitImageToAspect,
+					},
+				},
+				gui.Label{
+					text = string.format("%g x %g squares. For supporters of %s on Patreon: click to find out more.", hit.width, hit.height, who),
+					fontSize = 13,
+					color = "#bbbbbb",
+					width = "90%",
+					height = "auto",
+					textWrap = true,
+				},
+			},
+		},
+		{
+			valign = "center",
+			halign = dock.data.TooltipAlignment(),
+		}
+	)
+end
+
+--how many locked props one search lists at most (the search reads the
+--index, so this caps what the grid builds, not what is downloaded).
+local MAX_PATREON_SEARCH_PROPS = 120
 
 mod.shared.selectedObjectEntries = {}
 
@@ -53,6 +409,9 @@ local ShowObjectTooltip = function(element)
 	assert(dock ~= nil)
 	
 	local node = assets:GetObjectNode(element.data.nodeid)
+	--Only an object entry's linger calls this: deleted nodes stay in the tree (hidden), and
+	--an entry whose node vanished is removed by its folder's refreshAssets.
+	---@cast node -nil
 
 	local duplicatedText = {}
 
@@ -99,8 +458,7 @@ local ShowObjectTooltip = function(element)
 		}
 	end
 
-	element.tooltip =
-	gui.TooltipFrame(
+	local tooltip = gui.TooltipFrame(
 		gui.Panel{
 			interactable = false,
 			style = {
@@ -150,7 +508,8 @@ local ShowObjectTooltip = function(element)
 					children = {
 						gridPanel,
 						gui.Panel{
-							bgimage = node.image,
+							--the 512 px preview; the grid's thumbnail shows until it is made.
+							bgimageStreamed = node.previewId,
 							selfStyle = {
 								width = imageDim,
 								height = imageDim,
@@ -161,14 +520,13 @@ local ShowObjectTooltip = function(element)
 								brightness = node.brightness,
 							},
 							events = {
-								imageLoaded = function(element)
-									if element.bgsprite == nil then
-										dmhub.Debug('NO BG SPRITE')
-									end
-									local maxDim = max(element.bgsprite.dimensions.x, element.bgsprite.dimensions.y)*node.scale
-									local xratio = (element.bgsprite.dimensions.x*node.scale)/maxDim
-									local yratio = (element.bgsprite.dimensions.y*node.scale)/maxDim
-									local dim = maxDim / element.bgsprite.ppu
+								imageDimensions = function(element, info)
+									--node.components above already errors on a nil node.
+									---@cast node -nil
+									local maxDim = max(info.width, info.height)*node.scale
+									local xratio = (info.width*node.scale)/maxDim
+									local yratio = (info.height*node.scale)/maxDim
+									local dim = maxDim / info.ppu
 
 									--the dimensions/number of tiles we will display this object on.
 									local numTiles = max(2, math.ceil(dim))
@@ -258,6 +616,13 @@ local ShowObjectTooltip = function(element)
 
 		}
 	)
+
+    --the size alone: GetImageDimensionsCallback would load the full image to measure it.
+    gui.GetImageSizeCallback(node.image, function(info)
+        tooltip:FireEventTree("imageDimensions", info)
+    end)
+
+	element.tooltip = tooltip
 end
 
 
@@ -341,20 +706,30 @@ local function ScrollObjectEntries(delta)
 	end
 end
 
-Commands.nextobj = function()
-	ScrollObjectEntries(1)
-end
+Commands.RegisterMacro{
+    name = "nextobj",
+    summary = "next map object",
+    doc = "Usage: /nextobj\nSelects the next object in the map objects panel.",
+    command = function()
+        ScrollObjectEntries(1)
+    end,
+}
 
-Commands.prevobj = function()
-	ScrollObjectEntries(-1)
-end
+Commands.RegisterMacro{
+    name = "prevobj",
+    summary = "previous map object",
+    doc = "Usage: /prevobj\nSelects the previous object in the map objects panel.",
+    command = function()
+        ScrollObjectEntries(-1)
+    end,
+}
 
 --randomize which object is selected out of the list.
 local function RandomizeObjectSelection()
 	if gui.GetFocus() == nil or #mod.shared.selectedObjectEntries == 0 then
 		return
 	end
-	
+
 	local index = math.random(#mod.shared.selectedObjectEntries)
 	local best = mod.shared.selectedObjectEntries[index]
 	if best ~= nil then
@@ -365,7 +740,12 @@ local function RandomizeObjectSelection()
 	end
 end
 
-Commands.randobj = RandomizeObjectSelection
+Commands.RegisterMacro{
+    name = "randobj",
+    summary = "random map object",
+    doc = "Usage: /randobj\nRandomly selects an object from the map objects panel.",
+    command = RandomizeObjectSelection,
+}
 
 local g_objectEntryStyles = {
 	gui.Style{
@@ -414,16 +794,19 @@ local g_objectEntryStyles = {
 
 local function CreateObjectEntry(nodeid, parentElement, options)
 	local node = assets:GetObjectNode(nodeid)
+	--Callers pass the id of a live node; refreshAssets keeps it non-nil after that.
+	---@cast node -nil
 
 	local searchActive = false
 	local matchesSearch = true
 	local parentCollapsed = false
 
+	---@type Panel
 	local resultPanel = nil
 
 
 	local objImagePanel = gui.Panel{
-		bgimage = node.thumbnailId,
+		bgimageStreamed = PropsPackPreview(nodeid) or node.thumbnailId,
 
 		bgcolor = 'white',
 		halign = 'center',
@@ -472,7 +855,14 @@ local function CreateObjectEntry(nodeid, parentElement, options)
 						return
 					end
 
-					element.dragging = false
+					--Arm the engine's placement mode and let OUR drag keep running to
+					--mouse-up, exactly as the Bestiary row does (CharacterPanel.lua's
+					--dragging -> dmhub.SetDraggingMonster). Cancelling the drag here
+					--(element.dragging = false) used to end it while button 0 was still
+					--held, and the engine then handed the live mouse-down to the nearest
+					--draggable ancestor -- the rail panel window, or the dock's drag
+					--ghost -- so the WINDOW followed the cursor and the object never got
+					--placed. Report 29MWMJ3X.
 					dmhub.SetDraggingObject()
 				end
 			end,
@@ -493,6 +883,9 @@ local function CreateObjectEntry(nodeid, parentElement, options)
 					--swapping the objects that are subject of the drag.
 					local sourceNode = assets:GetObjectNode(element.data.nodeid)
 					local targetNode = assets:GetObjectNode(target.data.nodeid)
+					--Both are live object entries; same invariant as CreateObjectEntry's node.
+					---@cast sourceNode -nil
+					---@cast targetNode -nil
 
 					local sourceOrd = sourceNode.ord
 					local targetOrd = targetNode.ord
@@ -572,8 +965,13 @@ local function CreateObjectEntry(nodeid, parentElement, options)
 			end,
 
 			refreshAssets = function(element)
-				node = assets:GetObjectNode(nodeid)
-				objImagePanel.bgimage = node.thumbnailId
+				local refreshed = assets:GetObjectNode(nodeid)
+				if refreshed == nil then
+					--the object was deleted; the parent folder's refresh removes this entry.
+					return
+				end
+				node = refreshed
+				objImagePanel.bgimageStreamed = PropsPackPreview(nodeid) or node.thumbnailId
 
 				if element:HasClass('focus') then
 					element:FireEvent('focus')
@@ -761,9 +1159,39 @@ local function CreateObjectEntry(nodeid, parentElement, options)
 			focus = function(element)
 			end,
 
+            --make it so when you mouse over an object in the palette, instances on the map highlight.
 			hover = function(element)
+                local nhighlights = 0
+
+                local objects = game.currentFloor.objects
+                for _,obj in pairs(objects) do
+                    local assetid = obj.assetid
+                    if assetid == nodeid then
+                        obj.editorFocus = true
+                        nhighlights = nhighlights + 1
+                    end
+                end
+
+                element.data.nhighlights = nhighlights
+			end,
+
+			--Defer the tooltip until the user dwells on the entry: each one builds a 512 px
+			--preview, decoding (or downloading) the full image the first time.
+			linger = function(element)
 				ShowObjectTooltip(element)
-			end
+			end,
+
+			dehover = function(element)
+                if (element.data.nhighlights or 0) > 0 then
+                    local objects = game.currentFloor.objects
+                    for _,obj in pairs(objects) do
+                        local assetid = obj.assetid
+                        if assetid == nodeid then
+                            obj.editorFocus = false
+                        end
+                    end
+                end
+			end,
 		},
 
 		data = {
@@ -830,6 +1258,221 @@ local DragHandleStyles = {
 	},
 }
 
+--One prop the account cannot use, in the "From Patreon Creators..." grid.
+--It is not an object in the library, so it cannot be dragged or placed:
+--clicking it explains how to get it instead.
+local function CreateLockedPropEntry(hit, creatorName)
+	return gui.Panel{
+		bgimage = 'panels/square.png',
+		styles = g_objectEntryStyles,
+		press = function(element)
+			ShowSupportCreatorDialog(hit)
+		end,
+		linger = function(element)
+			ShowLockedPropTooltip(element, hit, creatorName)
+		end,
+		children = {
+			gui.Panel{
+				bgimageStreamed = PropsPackImageId(hit.preview),
+				bgcolor = 'white',
+				halign = 'center',
+				valign = 'center',
+				width = '100%',
+				height = '100%',
+				interactable = false,
+				imageLoaded = FitImageToAspect,
+			},
+			gui.Panel{
+				bgimage = "phosphor/patreon-logo-fill.png",
+				bgcolor = "white",
+				width = 10,
+				height = 10,
+				halign = "right",
+				valign = "bottom",
+				interactable = false,
+			},
+		},
+	}
+end
+
+--Root only: search matches from props packs this account cannot use, in a
+--folder below everything else that starts collapsed. Its grid is built only
+--when opened, so a search downloads no previews unless someone looks.
+--data.search(text) is called by the root's search box.
+local function CreatePatreonSearchPanel()
+	local m_hits = {}
+	local m_total = 0
+	local m_expanded = false
+	local m_builtFor = nil
+	local m_text = ""
+
+	local body = gui.Panel{
+		classes = {"collapsed"},
+		x = Indent(1),
+		width = 290,
+		height = "auto",
+		flow = "vertical",
+		halign = "left",
+	}
+
+	local headerLabel = gui.Label{
+		text = "",
+		fontSize = "70%",
+		width = "auto",
+		height = "auto",
+		halign = "left",
+		valign = "center",
+		interactable = false,
+	}
+
+	local triangle = gui.Panel{
+		bgimage = 'panels/triangle.png',
+		classes = {"triangle"},
+		interactable = false,
+		styles = {
+			{rotate = 90},
+			{selectors = {'expanded'}, transitionTime = 0.2, rotate = 0},
+		},
+	}
+
+	--one group per pack: who it is from, then the grid of its props.
+	local function BuildBody()
+		local groups = {}
+		local order = {}
+		for _,hit in ipairs(m_hits) do
+			if groups[hit.pack] == nil then
+				groups[hit.pack] = {}
+				order[#order+1] = hit.pack
+			end
+			table.insert(groups[hit.pack], hit)
+		end
+
+		local children = {}
+		for _,packid in ipairs(order) do
+			local logo = gui.Panel{
+				classes = {"collapsed"},
+				width = 16,
+				height = 16,
+				valign = "center",
+				hmargin = 4,
+				bgcolor = "white",
+			}
+			local creditLabel = gui.Label{
+				width = "auto",
+				height = "auto",
+				maxWidth = 260,
+				valign = "center",
+				fontSize = 12,
+				italics = true,
+				color = "#bbbbbb",
+				text = "",
+			}
+			local grid = gui.Panel{
+				width = 280,
+				height = "auto",
+				flow = "horizontal",
+				wrap = true,
+				halign = "left",
+			}
+			children[#children+1] = gui.Panel{
+				width = "auto",
+				height = "auto",
+				halign = "left",
+				flow = "horizontal",
+				vmargin = 2,
+				children = {logo, creditLabel},
+			}
+			children[#children+1] = grid
+
+			local hits = groups[packid]
+			mod.shared.GetMapPackCreator({pack = packid}, function(creator)
+				if not grid.valid then
+					return
+				end
+				local name = creator.displayName or ""
+				creditLabel.text = string.format("%d from %s", #hits, cond(name ~= "", name, packid))
+				if (creator.logo or "") ~= "" then
+					logo.bgimage = creator.logo
+					logo:SetClass("collapsed", false)
+				end
+				local entries = {}
+				for _,hit in ipairs(hits) do
+					entries[#entries+1] = CreateLockedPropEntry(hit, name)
+				end
+				grid.children = entries
+			end)
+		end
+		body.children = children
+		m_builtFor = m_text
+	end
+
+	local resultPanel
+	local function Refresh()
+		resultPanel:SetClass("collapsed", #m_hits == 0)
+		if #m_hits == 0 then
+			return
+		end
+		local more = cond(m_total > #m_hits, string.format(" (first %d of %d)", #m_hits, m_total), string.format(" (%d)", #m_hits))
+		headerLabel.text = "From Patreon Creators..." .. more
+		triangle:SetClass("expanded", m_expanded)
+		body:SetClass("collapsed", not m_expanded)
+		if m_expanded and m_builtFor ~= m_text then
+			BuildBody()
+		end
+	end
+
+	resultPanel = gui.Panel{
+		classes = {"collapsed"},
+		width = "100%",
+		height = "auto",
+		flow = "vertical",
+		halign = "left",
+		tmargin = 6,
+		data = {
+			search = function(text)
+				m_text = text
+				m_hits = {}
+				m_total = 0
+				if text == "" then
+					m_expanded = false
+					m_builtFor = nil
+					body.children = {}
+					Refresh()
+					return
+				end
+				local access = {}
+				for _,pack in ipairs(propspacks.packs) do
+					for _,bundle in ipairs(pack.bundles) do
+						access[pack.id .. "/" .. bundle.key] = bundle.access
+					end
+				end
+				for _,hit in ipairs(propspacks.Search{text = text, maxResults = 2000}) do
+					if access[hit.pack .. "/" .. hit.bundle] == false then
+						m_total = m_total + 1
+						if #m_hits < MAX_PATREON_SEARCH_PROPS then
+							m_hits[#m_hits+1] = hit
+						end
+					end
+				end
+				Refresh()
+			end,
+		},
+		children = {
+			gui.Panel{
+				bgimage = 'panels/square.png',
+				classes = {'folderHeader'},
+				press = function(element)
+					m_expanded = not m_expanded
+					Refresh()
+				end,
+				children = {triangle, headerLabel},
+			},
+			body,
+		},
+	}
+	return resultPanel
+end
+
 local function CreateObjectFolder(nodeid, parentElement, options)
 	local matchesSearch = true
 	local searchActive = false
@@ -837,76 +1480,123 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 	local isCollapsed = true
 	local refreshAssetsDirty = false
 	local node = assets:GetObjectNode(nodeid)
+	--Callers pass the root ('') or a live folder's id; refreshAssets keeps it non-nil after that.
+	---@cast node -nil
 
+	--a folder of the current map's "Objects for this map" set; see MapPackObjectsFolderId.
+	local fromMapPack = nodeid ~= '' and node.fromMapPack
+	if fromMapPack and nodeid == MapPackObjectsFolderId() then
+		isCollapsed = false
+	end
+
+	--a props pack's folder or one of its bundle folders; see PropsPackFolderInfo.
+	local propsFolder = nil
+	if fromMapPack then
+		propsFolder = propspacks.GetFolder(nodeid)
+	end
+
+	---@type Panel
 	local folderPane = nil
 
 	--the root folder gets additional UI, such as a search and ways to add objects.
 	local rootPanel = nil
-	local clearSearchButton = nil
+	--hoisted out of the root-only block: the collapse handler below the
+	--block clears the search through it. The clear x itself is built into
+	--gui.SearchInput now, so there is no separate clear button any more.
+	local searchInput = nil
+	--root only: props this account cannot use that match the search.
+	local patreonPanel = nil
 	if nodeid == '' then
 
 		isCollapsed = false
 
-		local updateSearch = function(element)
-			clearSearchButton:SetClass('collapsed', element.text == '')
+		if not options.hideobjects and not options.selectfolders then
+			patreonPanel = CreatePatreonSearchPanel()
+		end
+
+		local updateSearch
+		updateSearch = function(element)
 			local text = element.text
 			if string.len(text) <= 1 then
 				--one character searches just count as no search.
 				text = ""
 			end
+			local count = 0
+			if text ~= "" and LoadPropsPackBundlesMatching(text) then
+				--props pack bundles with matches are loading: search again
+				--once they have landed so their objects show up too.
+				local searchedText = element.text
+				local function rerun()
+					dmhub.Schedule(0.5, function()
+						if mod.unloaded or not element.valid or element.text ~= searchedText then
+							return
+						end
+						if PropsPackBundlesLoading() then
+							rerun()
+						else
+							updateSearch(element)
+						end
+					end)
+				end
+				rerun()
+			end
 			if text ~= "" then
 				local nodeids = node:GetNodeIdsMatchingSearch(element.text)
-				local count = 0
+				--GetNodeIdsMatchingSearch returns nil if the C# search aborted (e.g. it hit a
+				--cyclic object-folder tree and threw before returning its result). Guard so we
+				--degrade to an empty result instead of erroring on pairs(nil) below and passing
+				--nil into the prepareSearch FireEventTree.
+				if nodeids == nil then
+					nodeids = {}
+				end
 				for k,v in pairs(nodeids) do
 					count = count + 1
 				end
 				printf("PrepareSearch: (%s) / %d", text, count)
 				folderPane:FireEventTree("prepareSearch", nodeids)
+				track("search_objects", {
+					query = text,
+					hasResults = count > 0,
+					resultCount = count,
+					deduplicate = 0.5,
+					dailyLimit = 50,
+				})
 			end
 			folderPane.data.search(text)
+			if patreonPanel ~= nil then
+				patreonPanel.data.search(text)
+			end
 		end
 
-		local searchInput = gui.Input{
+		--the canonical search field; look comes from DefaultStyles'
+		--searchInput rules, borderBox keeps its hpad 24 inside the width.
+		--Its built-in clear x replaces the old separate clear button.
+		searchInput = gui.SearchInput{
 			id = 'ObjectSearch',
 			placeholderText = 'Search Objects...',
-			style = {
-				fontSize = '50%',
-				width = '80%',
-				height = '100%',
-				halign = 'left',
-				valign = 'center',
-			},
-
-			editlag = 0.25,
-			events = {
-				change = updateSearch,
-				edit = function(element)
-					updateSearch(element)
-				end,
-			}
-		}
-
-		clearSearchButton = gui.Button{
-			icon = 'ui-icons/close.png',
-			classes = {'collapsed'},
-			width = 16,
-			height = 16,
 			halign = 'left',
 			valign = 'center',
+			borderBox = true,
+			width = '80%',
+			height = 24,
 
-			events = {
-				click = function(element)
-					searchInput.text = ''
-					updateSearch(searchInput)
-				end,
-			}
+			editlag = 0.25,
+			--top-level handlers, NOT events = {}: SearchInput installs its
+			--own top-level edit/change defaults (they fire a "search" event
+			--this panel doesn't listen to), and the engine merges an events
+			--table into the same key space in arbitrary order -- so via
+			--events{} the default was winning for edit, killing
+			--search-as-you-type. Top-level keys replace the defaults
+			--outright in SearchInput's args loop.
+			change = updateSearch,
+			edit = updateSearch,
 		}
-
 
 		rootPanel =
 		gui.Panel{
 			id = 'RootUIPanel',
-			x = 10,
+			x = 3,
+			halign = 'left',
 			style = {
 				height = 'auto',
 				width = '90%',
@@ -923,62 +1613,94 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 					},
 					children = {
 						searchInput,
-						clearSearchButton,
+						gui.Panel{
+							floating = true,
+							halign = "right",
+							valign = "center",
+							width = "auto",
+							x = 18,
+							height = 24,
+							flow = "horizontal",
+							children = {
+								gui.Button{
+									classes = {"sizeM"},
+									icon = "game-icons/open-folder.png",
+									linger = gui.Tooltip("Create a new folder"),
+									press = function(element)
+										dmhub.AddObjectFolder()
+									end,
+								},
+                                --[[
+								gui.Button{
+									classes = {"sizeM"},
+									id = "ImportMapObjectButton",
+									icon = "game-icons/treasure-map.png",
+									linger = gui.Tooltip('Import a new map object from an image'),
+									press = function(element)
+										mod.shared.ImportMap{ imagesOnly = true }
+									end,
+								},
+                                ]]--
+								gui.Button{
+									classes = {"addButton", "sizeM"},
+									valign = "center",
+									linger = gui.Tooltip("Import new objects from an image"),
+									click = function(element)
+										mod.shared.ImportObjects()
+									end,
+								},
+							},
+						},
 					},
 				},
 
-				gui.Panel{
-					id = 'AddNodesPanel',
-					style = {
-						height = 30,
-						width = '100%',
-						flow = 'horizontal',
-					},
-					children = {
-
-						gui.Panel{
-							classes = {"clickableIcon"},
-							width = 24,
-							height = 24,
-							halign = "right",
-							bgimage = "game-icons/open-folder.png",
-							linger = gui.Tooltip("Create a new folder"),
-							press = function(element)
-								dmhub.AddObjectFolder()
-							end,
-						},
-
-						gui.Panel{
-							classes = {"clickableIcon"},
-							width = 24,
-							height = 24,
-							halign = "right",
-							id = "ImportMapObjectButton",
-							bgimage = 'game-icons/treasure-map.png',
-							linger = gui.Tooltip('Import a new map object from an image'),
-							press = function(element)
-								mod.shared.ImportMap{ imagesOnly = true }
-							end,
-						},
-
-						gui.AddButton{
-							height = '100%',
-							width = '100% height',
-							halign = 'right',
-							events = {
-								linger = gui.Tooltip("Import new objects from an image"),
-								click = function(element)
-									mod.shared.ImportObjects()
-									--dmhub.ImportObjects()
-								end,
-							}
-						},
-					}
+				--the current map's "Objects for this map" set while it is
+				--loading, locked or failed; once loaded it is a folder below.
+				gui.Label{
+					classes = {"collapsed"},
+					width = "95%",
+					height = "auto",
+					halign = "left",
+					fontSize = 12,
+					italics = true,
+					color = "#bbbbbb",
+					textWrap = true,
+					vmargin = 2,
+					create = function(element)
+						element:FireEvent("refreshAssets")
+					end,
+					refreshAssets = function(element)
+						local info = mappacks.currentMapObjects
+						local text = MapPackObjectsStatusText(info)
+						element:SetClass("collapsed", text == nil)
+						if info == nil or text == nil then
+							return
+						end
+						element.text = text
+						element.data.error = cond(info.status == "error", info.error)
+						if info.status == "locked" and info.tier > 0 then
+							--name the creator once the lookup lands.
+							mod.shared.GetMapPackCreator({pack = info.pack}, function(creator)
+								if element.valid then
+									local current = mappacks.currentMapObjects
+									if current ~= nil and current.status == "locked" and current.pack == info.pack then
+										element.text = MapPackObjectsStatusText(current, creator.displayName)
+									end
+								end
+							end)
+						end
+					end,
+					hover = function(element)
+						if element.data.error ~= nil and element.data.error ~= "" then
+							gui.Tooltip(element.data.error)(element)
+						end
+					end,
 				},
 			},
 		}
 	end
 
+	---@type Panel
 	local triangle = nil
 	triangle = gui.Panel({
 				bgimage = 'panels/triangle.png',
@@ -1020,7 +1742,8 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 							end
 
 						end
-						element:SetClass('empty', nchildren < 1)
+						--a props bundle folder is empty until it is opened and loads.
+						element:SetClass('empty', nchildren < 1 and (propsFolder == nil or propsFolder.bundle == nil))
 					end,
 					refreshCollapse = function(element)
 						element:SetClass('expanded', not isCollapsed)
@@ -1047,13 +1770,19 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 							element:SetClass('search', false)
 							searchActive = false
 
-							if clearSearchButton ~= nil then --is root panel, clear search.
-								clearSearchButton:FireEvent('click')
+							if searchInput ~= nil then --is root panel, clear search.
+								searchInput.text = ''
+								searchInput:FireEvent('edit')
 							end
 						end
 
 						triangle:SetClass('expanded', not isCollapsed)
 						folderPane.data.refreshCollapsed(folderPane)
+
+						if propsFolder ~= nil and propsFolder.bundle ~= nil and not isCollapsed then
+							--fills the folder in when it lands (the objects category refreshes).
+							propspacks.LoadBundle(propsFolder.pack, propsFolder.bundle)
+						end
 
 						if rootPanel ~= nil and not isCollapsed then
 							--send the parent of the objects an expand event to collapse other areas.
@@ -1071,8 +1800,10 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 			wrap = true,
 		},
 
-		classes = {'object-drag-target'},
-		dragTarget = true,
+		--a map-pack folder is not a drop target: anything filed into it
+		--would land at the library root on other maps.
+		classes = {cond(not fromMapPack, 'object-drag-target')},
+		dragTarget = not fromMapPack,
 		dragTargetPriority = 0,
 
 		children = {},
@@ -1086,10 +1817,10 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 	local headerPanel = gui.Panel({
 		
 		bgimage = 'panels/square.png',
-		classes = {'folderHeader','object-drag-target'},
-		dragTarget = true,
+		classes = {'folderHeader', cond(not fromMapPack, 'object-drag-target')},
+		dragTarget = not fromMapPack,
 
-		draggable = nodeid ~= '',
+		draggable = nodeid ~= '' and not fromMapPack,
 		canDragOnto = function(element, target)
 			return target:HasClass('object-drag-target') and not IsObjectNodeSelfOrChildOf(element.data.nodeid, target.data.nodeid)
 		end,
@@ -1138,7 +1869,7 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 
 			gui.Label({
 				text = 'Object Library',
-				editableOnDoubleClick = (nodeid ~= ''), --all folders except the root Object folder can be renamed.
+				editableOnDoubleClick = (nodeid ~= '' and not fromMapPack), --all folders except the root Object folder and map-pack folders can be renamed.
 				characterLimit = 52,
 				events = {
 					moduleInstalled = function(element)
@@ -1164,14 +1895,12 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 					refreshAssets = function(element)
 						element.text = node.description
 					end,
-					press = function()
+					click = function()
 						triangle:FireEvent('press')
 					end,
 				},
 				selfStyle = {
-					--No fontSize here: inherit the editor's label rule (14, same
-					--as the theme). A percent would multiply that 14 into
-					--unreadable ~10pt text, so any override must be absolute.
+					fontSize = "70%",
 					width = 'auto',
 					height = 'auto',
 					halign = 'left',
@@ -1184,6 +1913,145 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 
 		},
 	})
+
+	--under the "Objects for this map" folder: who made the props.
+	local creditPanel = nil
+	if fromMapPack and nodeid == MapPackObjectsFolderId() then
+		local creditLogo = gui.Panel{
+			classes = {"collapsed"},
+			width = 16,
+			height = 16,
+			valign = "center",
+			hmargin = 4,
+			bgcolor = "white",
+		}
+		local creditLabel = gui.Label{
+			width = "auto",
+			height = "auto",
+			maxWidth = 240,
+			valign = "center",
+			fontSize = 12,
+			italics = true,
+			color = "#bbbbbb",
+			text = "",
+		}
+		creditPanel = gui.Panel{
+			classes = {cond(isCollapsed, "collapsed")},
+			x = 18,
+			width = "auto",
+			height = "auto",
+			halign = "left",
+			flow = "horizontal",
+			vmargin = 2,
+			children = {creditLogo, creditLabel},
+		}
+
+		local info = mappacks.currentMapObjects
+		if info ~= nil then
+			mod.shared.GetMapPackCreator({pack = info.pack}, function(creator)
+				if not creditLabel.valid then
+					return
+				end
+				if (creator.displayName or "") ~= "" then
+					creditLabel.text = string.format("From %s", creator.displayName)
+				end
+				if (creator.logo or "") ~= "" then
+					creditLogo.bgimage = creator.logo
+					creditLogo:SetClass("collapsed", false)
+				end
+			end)
+		end
+	elseif propsFolder ~= nil then
+		--under a props pack's folder: who made it, and what unlocks it while
+		--locked; under a bundle folder: loading, locked or failed.
+		local creatorName = nil
+		local children = {}
+		local creditLogo = nil
+		local creditLabel = nil
+		if propsFolder.bundle == nil then
+			creditLogo = gui.Panel{
+				classes = {"collapsed"},
+				width = 16,
+				height = 16,
+				valign = "center",
+				hmargin = 4,
+				bgcolor = "white",
+			}
+			creditLabel = gui.Label{
+				width = "auto",
+				height = "auto",
+				maxWidth = 240,
+				valign = "center",
+				fontSize = 12,
+				italics = true,
+				color = "#bbbbbb",
+				text = "",
+			}
+			children[#children+1] = gui.Panel{
+				width = "auto",
+				height = "auto",
+				halign = "left",
+				flow = "horizontal",
+				children = {creditLogo, creditLabel},
+			}
+		end
+		local statusLabel
+		statusLabel = gui.Label{
+			classes = {"collapsed"},
+			width = 260,
+			height = "auto",
+			halign = "left",
+			fontSize = 12,
+			italics = true,
+			color = "#bbbbbb",
+			textWrap = true,
+			create = function(element)
+				element:FireEvent("refreshAssets")
+			end,
+			refreshAssets = function(element)
+				local info = PropsPackFolderInfo(nodeid)
+				local text = PropsPackStatusText(info, creatorName)
+				element:SetClass("collapsed", text == nil)
+				if text ~= nil then
+					element.text = text
+				end
+				element.data.error = info ~= nil and info.bundle ~= nil and info.bundle.error or nil
+			end,
+			hover = function(element)
+				if element.data.error ~= nil and element.data.error ~= "" then
+					gui.Tooltip(element.data.error)(element)
+				end
+			end,
+		}
+		children[#children+1] = statusLabel
+		creditPanel = gui.Panel{
+			classes = {cond(isCollapsed, "collapsed")},
+			x = 18,
+			width = "auto",
+			height = "auto",
+			halign = "left",
+			flow = "vertical",
+			vmargin = 2,
+			children = children,
+		}
+
+		mod.shared.GetMapPackCreator({pack = propsFolder.pack}, function(creator)
+			creatorName = creator.displayName
+			if statusLabel.valid then
+				statusLabel:FireEvent("refreshAssets")
+			end
+			if creditLabel == nil or not creditLabel.valid then
+				return
+			end
+			if (creator.displayName or "") ~= "" then
+				creditLabel.text = string.format("From %s", creator.displayName)
+			end
+			if (creator.logo or "") ~= "" and creditLogo ~= nil then
+				creditLogo.bgimage = creator.logo
+				creditLogo:SetClass("collapsed", false)
+			end
+		end)
+	end
 
 	local elements = {}
 
@@ -1250,6 +2118,10 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 					rootPanel:SetClass('collapsed', isCollapsed)
 				end
 
+				if creditPanel ~= nil then
+					creditPanel:SetClass('collapsed', isCollapsed)
+				end
+
 				for k,v in pairs(elements) do
 					v.data.setParentCollapsed(v, isCollapsed)
 				end
@@ -1274,6 +2146,11 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 			end,
 
 			rightClick = function(element)
+				if fromMapPack then
+					--map-pack folders come and go with the map; nothing to edit.
+					return
+				end
+
 				--create the context menu for this folder.
 				local menuItems = {}
 				local parentElement = element
@@ -1369,12 +2246,20 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 
 				refreshAssetsDirty = isCollapsed
 
-				node = assets:GetObjectNode(nodeid)
+				local refreshed = assets:GetObjectNode(nodeid)
+				if refreshed == nil then
+					--the folder was deleted; its parent folder's refresh removes it.
+					return
+				end
+				node = refreshed
 
 				if (not isCollapsed) or searchNodes ~= nil then
 					local newElements = {}
 					for i,v in ipairs(node.children) do
-						if (not options.hideobjects) or v.isfolder then
+						--a folder picker (selectfolders) never offers map-pack folders,
+						--and props pack folders this account cannot use are left out.
+						if ((not options.hideobjects) or v.isfolder) and not (options.selectfolders and v.fromMapPack)
+								and not (v.isfolder and IsLockedPropsPackFolder(v)) then
 							--if we are searching, only create the elements that match the search.
 							if elements[v.id] == nil and ((not isCollapsed) or searchNodes == nil or searchNodes[v.id]) then
 								newElements[v.id] = CreateObjectNode(v, folderPane, options)
@@ -1391,7 +2276,7 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 						end
 					end
 
-					local newChildren = {headerPanel, rootPanel}
+					local newChildren = {headerPanel, rootPanel or creditPanel}
 					local newPalette = {}
 
 					element.data.childObjectPanels = {}
@@ -1407,7 +2292,27 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 						end
 					end
 
-					table.sort(folderChildren, function(a,b) return a.data.node().description < b.data.node().description end)
+					--the current map's "Objects for this map" folder goes first,
+					--the game's own folders next, props packs last.
+					local pinnedFolder = MapPackObjectsFolderId()
+					local function rank(folder)
+						local folderNode = folder.data.node()
+						if folderNode.id == pinnedFolder then
+							return 0
+						end
+						if nodeid == '' and folderNode.fromMapPack and propspacks.GetFolder(folderNode.id) ~= nil then
+							return 2
+						end
+						return 1
+					end
+					table.sort(folderChildren, function(a,b)
+						local aRank = rank(a)
+						local bRank = rank(b)
+						if aRank ~= bRank then
+							return aRank < bRank
+						end
+						return a.data.node().description < b.data.node().description
+					end)
 					for _,folder in ipairs(folderChildren) do
 						newChildren[#newChildren+1] = folder
 					end
@@ -1416,6 +2321,9 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 
 					newChildren[#newChildren+1] = palettePanel
 					palettePanel.children = newPalette
+					if patreonPanel ~= nil then
+						newChildren[#newChildren+1] = patreonPanel
+					end
 
 					elements = newElements
 
@@ -1430,8 +2338,9 @@ local function CreateObjectFolder(nodeid, parentElement, options)
 
 		children = {
 			headerPanel,
-			rootPanel,
+			rootPanel or creditPanel,
 			palettePanel,
+			patreonPanel,
 		}
 	})
 
@@ -1808,6 +2717,7 @@ local function CreateObjectInstanceHierarchy()
 	local resultPanel
 
 	local m_currentFloorId = nil
+	---@type Panel?
 	local bodyPanel = nil
 
 	local triangle = nil
@@ -1865,6 +2775,8 @@ local function CreateObjectInstanceHierarchy()
 
 								thinkTime = 0.3,
 								think = function(element)
+									--built by the time it thinks (LuaLS sees the nil it had when this closure was made).
+									---@cast bodyPanel Panel
 									if bodyPanel:HasClass("collapsed") then
 										return
 									end
@@ -1876,6 +2788,7 @@ local function CreateObjectInstanceHierarchy()
 								end,
 
 								refreshObjectInstances = function(element)
+									---@cast bodyPanel Panel
 									if bodyPanel:HasClass("collapsed") then
 										return
 									end
@@ -2009,7 +2922,7 @@ mod.shared.CreateObjectEditor = function(options)
 		styles = {
 			{
 				selectors = {"label"},
-				fontSize = 14,
+				fontSize = 18,
 				color = Styles.textColor,
 			},
 			{
@@ -2121,6 +3034,12 @@ mod.shared.CreateObjectEditor = function(options)
 		end,
 
         childfocus = function(element)
+			--Focus IS object editing mode's armed state, so gaining it is
+			--arming: claim the map so any latched map tool (Map Markup, the
+			--Elevation Editor) puts itself down. See
+			--DMHub Core UI/MapToolArbiter.lua.
+			MapTools.Claim("objects")
+
 			local dockablePanel = element:FindParentWithClass("dockablePanel")
 			if dockablePanel ~= nil then
             	dockablePanel:SetClass("highlightPanel", true)
@@ -2128,12 +3047,14 @@ mod.shared.CreateObjectEditor = function(options)
         end,
 
         childdefocus = function(element, focusInfo)
+			MapTools.Release("objects")
+
 			local dockablePanel = element:FindParentWithClass("dockablePanel")
 			if dockablePanel ~= nil then
             	dockablePanel:SetClass("highlightPanel", false)
 			end
 
-			if focusInfo.oldFocus ~= element and focusInfo.newFocus == nil and (not dmhub.KeyPressed("escape")) then
+			if focusInfo.oldFocus ~= element and focusInfo.newFocus == nil and (not dmhub.KeyPressed("Escape")) then
 				focusInfo.newFocus = element
 			end
         end,
@@ -2190,25 +3111,263 @@ dmhub.GetSelectedObject = function()
 	return gui.GetFocus().data.objectid
 end
 
+--Focus alone is not proof the editor is on screen. A dock that is slid away
+--carries the "offscreen" class and a panel sitting behind another tab (or
+--minimized) carries "collapsed"; either way the children stay alive, keep
+--their focus, and are invisible. That matters more here than for a normal
+--panel: object editing mode turns OFF regular play mode, which stops
+--TokenController from starting a creature rectangle-select (the drag falls
+--through to ObjectTool's object rectangle instead), so an invisible panel
+--holding focus silently breaks dragging out a selection of creatures.
+local function ObjectEditorOnScreen(element)
+	local p = element
+	while p ~= nil do
+		if p:HasClass("offscreen") or p:HasClass("collapsed") then
+			return false
+		end
+		p = p.parent
+	end
+
+	return true
+end
+
+--This used to require a "dockablePanel" ANCESTOR, which doubled as the
+--liveness check and as the thing carrying the legacy highlight class. That
+--ancestor only exists in a DOCK, so hosted anywhere else -- notably an
+--icon-rail panel window -- object editing mode never armed at all, meaning
+--locked objects could not be clicked. Liveness is now checked directly and
+--the dock ancestor is only used for the highlight class, when there is one.
 dmhub.ObjectEditingEnabled = function()
-	if m_objectEditor == nil or (not m_objectEditor.valid) then
+	if m_objectEditor == nil or (not m_objectEditor.valid) or m_objectEditor.parent == nil then
 		return false
 	end
-	--in the icon-rail UI the editor lives in a rail window, not a dock, so
-	--there may be no dock to highlight.
+
+	local focused = gui.ChildHasFocus(m_objectEditor) and ObjectEditorOnScreen(m_objectEditor)
+
 	local dockPanel = m_objectEditor:FindParentWithClass("dockablePanel")
-
-	if gui.ChildHasFocus(m_objectEditor) then
-		if dockPanel ~= nil then
-			dockPanel:SetClass("highlightPanel", true)
-		end
-		return true
-	end
-
 	if dockPanel ~= nil then
-		dockPanel:SetClass("highlightPanel", false)
+		dockPanel:SetClass("highlightPanel", focused)
 	end
-	return false
 
+	return focused
+end
 
+--Somebody else armed a map tool: object editing mode is focus-armed, so
+--putting it down means giving up focus. A safety net rather than the
+--mechanism - every arming path takes focus, so the claimant has normally
+--taken it already by the time we run. (Note childdefocus above refuses to
+--let focus go to nil while this panel is up, so this only bites when the
+--claimant has focus, which is exactly when it does not need to.)
+MapTools.Register("objects", function()
+	if m_objectEditor ~= nil and m_objectEditor.valid and m_objectEditor.parent ~= nil and gui.ChildHasFocus(m_objectEditor) then
+		gui.SetFocus(nil)
+	end
+end)
+
+--The object wiring overlay -- the trigger/action "plug" icons the engine draws
+--on map objects so you can wire an Action to a Trigger -- keys off the panel
+--being OPEN rather than focused. Focus is right for object editing MODE above
+--(it turns off regular play mode, so it must not latch), but as a gate on a
+--passive, DM-only overlay it meant that opening any other panel, or the
+--object's own properties dialog -- the very thing you use to add a trigger --
+--took every plug icon off the map. Report T45GPX6J.
+dmhub.ObjectPanelOpen = function()
+	if m_objectEditor == nil or (not m_objectEditor.valid) or m_objectEditor.parent == nil then
+		return false
+	end
+
+	return ObjectEditorOnScreen(m_objectEditor)
+end
+
+-- Live image editing dialog: appears (parented to the world dialog layer, like the vision
+-- perspective dialog) whenever there are active "Live Edit Image" sessions, listing each one with
+-- its state and the appropriate actions. Driven by dmhub.LiveEditSessionsUpdated (fired from C#).
+local liveEditDialog = nil
+
+local CreateLiveEditSessionRow = function(session)
+	local objid = session.objid
+	local changesPending = session.changesPending
+	local uploading = session.uploading
+
+	local statusText
+	local statusColor
+	local buttonsPanel
+
+	if uploading then
+		statusText = "Uploading..."
+		statusColor = "#7fd0ff"
+	elseif changesPending then
+		statusText = "Changes made"
+		statusColor = "#ffd24a"
+		buttonsPanel = gui.Panel{
+			width = "auto",
+			height = "auto",
+			flow = "horizontal",
+			halign = "center",
+			vmargin = 4,
+			gui.PrettyButton{
+				text = "Upload Changes",
+				width = 150,
+				height = 30,
+				fontSize = 14,
+				hmargin = 4,
+				click = function(element)
+					dmhub.UploadLiveEditChanges(objid)
+				end,
+			},
+			gui.PrettyButton{
+				text = "Revert Changes",
+				width = 150,
+				height = 30,
+				fontSize = 14,
+				hmargin = 4,
+				click = function(element)
+					dmhub.RevertLiveEditChanges(objid)
+				end,
+			},
+		}
+	else
+		statusText = "Awaiting changes"
+		statusColor = "#bbbbbb"
+		buttonsPanel = gui.Panel{
+			width = "auto",
+			height = "auto",
+			flow = "horizontal",
+			halign = "center",
+			vmargin = 4,
+			gui.PrettyButton{
+				text = "Close",
+				width = 150,
+				height = 30,
+				fontSize = 14,
+				hmargin = 4,
+				click = function(element)
+					dmhub.CloseLiveEditSession(objid)
+				end,
+			},
+		}
+	end
+
+	local errorLabel = nil
+	if session.error ~= nil then
+		errorLabel = gui.Label{
+			width = "100%",
+			height = "auto",
+			color = "#ff6666",
+			fontSize = 12,
+			bmargin = 2,
+			text = session.error,
+		}
+	end
+
+	return gui.Panel{
+		width = "100%",
+		height = "auto",
+		flow = "vertical",
+		vmargin = 6,
+		hpad = 12,
+		borderBox = true,
+
+		gui.Label{
+			width = "100%",
+			height = "auto",
+			color = "white",
+			fontSize = 15,
+			bold = true,
+			text = session.name,
+		},
+
+		gui.Label{
+			width = "100%",
+			height = "auto",
+			color = statusColor,
+			fontSize = 13,
+			bmargin = 2,
+			text = statusText,
+		},
+
+		errorLabel,
+
+		buttonsPanel,
+	}
+end
+
+dmhub.LiveEditSessionsUpdated = function()
+	local sessions = dmhub.liveEditSessions
+
+	if sessions == nil then
+		if liveEditDialog ~= nil then
+			if liveEditDialog.valid then
+				liveEditDialog:DestroySelf()
+			end
+			liveEditDialog = nil
+		end
+		return
+	end
+
+	if liveEditDialog == nil or (not liveEditDialog.valid) then
+		liveEditDialog = gui.Panel{
+			styles = ThemeEngine.GetStyles(),
+			classes = {"framedPanel"},
+
+			halign = "left",
+			valign = "top",
+
+			width = 360,
+			height = "auto",
+			vmargin = 64,
+			hmargin = 16,
+
+			flow = "vertical",
+
+			draggable = true,
+			drag = function(element)
+				element.x = element.xdrag
+				element.y = element.ydrag
+			end,
+
+			destroy = function(element)
+				if liveEditDialog == element then
+					liveEditDialog = nil
+				end
+			end,
+
+			gui.Panel{
+				margin = 8,
+				halign = "center",
+				valign = "center",
+				flow = "vertical",
+				width = "auto",
+				height = "auto",
+				gui.Label{
+					width = "auto",
+					height = "auto",
+					halign = "center",
+					valign = "center",
+					color = "white",
+					fontSize = 18,
+					text = "Live Image Editing",
+				},
+			},
+
+			gui.Panel{
+				width = "100%",
+				height = "auto",
+				flow = "vertical",
+				halign = "center",
+
+				refreshLiveEdit = function(element)
+					local newChildren = {}
+					for _,session in ipairs(dmhub.liveEditSessions or {}) do
+						newChildren[#newChildren+1] = CreateLiveEditSessionRow(session)
+					end
+					element.children = newChildren
+				end,
+			},
+		}
+
+		gamehud.dialogWorldPanel:AddChild(liveEditDialog)
+	end
+
+	liveEditDialog:FireEventTree("refreshLiveEdit")
 end

@@ -9,35 +9,71 @@ local function ResolveFunction(functionOrValue)
 end
 
 -- Open-state styling (dropdownBorder, dropdownMenuSub, dropdownOption, etc.)
--- now lives in DefaultStyles.lua's default theme, so dropdown popups follow
--- the active color scheme. The popup panel below attaches
--- ThemeEngine.GetStyles() directly instead of inheriting from the trigger's
--- ancestors: most 5e panels are still on the old styling and don't carry
--- theme rules, so inheriting would leave the popup unstyled.
+-- now lives in DefaultStyles.lua's default theme. The popup inherits its
+-- styles from the nearest ancestor of the trigger that has a `styles`
+-- property set (falling back to ThemeEngine.GetStyles() if none does), so
+-- the open-state subtree matches the trigger's cascade -- including locked
+-- overrides like ThemeEngine.GetStyles("default", "default") used by the
+-- theme settings dialog. Same selectors are visible to gui.Multiselect's
+-- internal dropdown, so both render identically.
+
+--- Option ids are only used as table keys and compared with ==, so any of these works.
+--- Numeric ids are common (levels, echelons, setting enums) and are often saved to data.
+--- Keep one dropdown's ids one type: 1 and "1" are different ids. Options with a keybind
+--- must use string ids, because the engine hands keybind ids back as strings.
+--- @alias DropdownId string|number|boolean
 
 --- @class DropdownOption
---- @field id string
+--- @field id DropdownId
 --- @field text string
+--- @field tooltip nil|string|fun():string Tooltip text to show when hovering over this option.
+--- @field submenu nil|DropdownOption[] Child options shown in a flyout; the parent itself is not choosable.
 
 --- @class Dropdown:Panel
---- @field idChosen nil|string The id of the option currently chosen.
---- @field options DropdownOption[] The possible options to choose from
- 
+--- @field idChosen nil|DropdownId The id of the option currently chosen.
+--- @field optionChosen nil|DropdownId Legacy alias of idChosen (GetOptionChosen/SetOptionChosen below).
+--- @field options DropdownOption[] The possible options to choose from. Reads always return the table form, even if strings were assigned.
+
 
 --- @class DropdownArgs:PanelArgs
---- @field idChosen nil|string The id of the option currently chosen.
+--- @field idChosen nil|DropdownId The id of the option currently chosen.
 --- @field textOverride nil|string The text to set on the dropdown, instead of showing the currently chosen option.
 --- @field textDefault nil|string The text to display for the dropdown if there is no option currently chosen.
---- @field options DropdownOption[] The possible options to choose from
+--- @field options? (DropdownOption|string)[] The possible options to choose from; may be set later through the options property. A bare string "x" is shorthand for {id = "x", text = "x"}.
 --- @field hasSearch nil|boolean If true, this dropdown will provide an input field to search it. Good to use on dropdowns with many options.
+--- @field menuAlign nil|"left"|"center"|"right" How the open menu sits against the control; defaults to "center". Only has an effect alongside menuWidth, since otherwise the menu matches the control's width exactly. "left" also brings the search field over the control.
 --- @field sort nil|boolean Sorts @see options before displaying.
+--- @field debug nil|boolean Consumed by gui.Dropdown and not passed to the panel.
+--- @field menuHeight nil|number Maximum height of the open menu; defaults to 300.
+--- @field dropdownHeight nil|number Older name for menuHeight.
+--- @field menuWidth nil|number Width of the open menu; defaults to the control's width.
+--- @field optionChosen nil|DropdownId Older name for idChosen.
 --- @field centerPopup nil|boolean If true, the menu that displays from this dropdown will appear parented to the root of the panel hierarchy and in the center -- i.e. it should pop up in the middle of the screen rather than attached to the dropdown.
+--- @field keybind nil|string|(fun(panel:Dropdown, bind:string, ...:any):nil)
+--- @field monitor nil|string|(fun(panel:Dropdown, ...:any):nil)
+--- @field closePopup nil|string|(fun(panel:Dropdown, ...:any):nil)
+--- @field delete nil|string|(fun(panel:Dropdown, ...:any):nil)
+--- @field change nil|string|(fun(panel:Dropdown, ...:any):nil)
+--- @field click nil|string|(fun(panel:Dropdown, ...:any):nil)
+--- @field rightClick nil|string|(fun(panel:Dropdown, ...:any):nil)
+--- @field rendered nil|string|(fun(panel:Dropdown, width:number,height:number, ...:any):nil)
+--- @field enable nil|string|(fun(panel:Dropdown, ...:any):nil)
+--- @field disable nil|string|(fun(panel:Dropdown, ...:any):nil)
+--- @field create nil|string|(fun(panel:Dropdown, ...:any):nil)
+--- @field think nil|string|(fun(panel:Dropdown, ...:any):nil)
+--- @field escape nil|string|(fun(panel:Dropdown, ...:any):nil)
+--- @field refreshGame nil|string|(fun(panel:Dropdown, ...:any):nil)
+--- @field imageLoaded nil|string|(fun(panel:Dropdown, ...:any):nil)
 
 
 --- Create a Dropdown panel
 --- @param args DropdownArgs
 --- @return Dropdown
 function gui.Dropdown(args)
+
+    local debug = args.debug
+    args.debug = nil
+
 
 	local sort = args.sort
 	args.sort = nil
@@ -72,6 +108,7 @@ function gui.Dropdown(args)
         m_searchFocus = panel
     end
  
+	---@type Dropdown
 	local dropdownParent = nil
  
 	local menuHeight = args.menuHeight or args.dropdownHeight or 300
@@ -80,10 +117,19 @@ function gui.Dropdown(args)
 
 	local menuWidth = args.menuWidth
 	args.menuWidth = nil
- 
+
+	--Only meaningful alongside menuWidth: without it the menu is exactly as wide
+	--as the control, so centering and left-aligning place it identically.
+	local menuAlign = args.menuAlign
+	args.menuAlign = nil
+
 	local npopup = 0
  
 	local m_idToIndex = {}
+	-- Maps a submenu CHILD option's id to its display text, so the collapsed
+	-- dropdown label can resolve a submenu selection. m_idToIndex only covers
+	-- top-level options (submenu children are not in m_options).
+	local m_idToText = {}
 
 	local m_keybinds = nil
 
@@ -102,8 +148,12 @@ function gui.Dropdown(args)
 			element:FireEvent("refreshDropdown")
 		end,
 		refreshDropdown = function(element)
-			if textOverride == nil and m_idChosen ~= nil and m_idToIndex[m_idChosen] ~= nil then
+			if textOverride ~= nil then
+				element.text = textOverride
+			elseif m_idChosen ~= nil and m_idToIndex[m_idChosen] ~= nil then
 				element.text = m_options[m_idToIndex[m_idChosen]].text
+			elseif m_idChosen ~= nil and m_idToText[m_idChosen] ~= nil then
+				element.text = m_idToText[m_idChosen]
 			else
 				element.text = textOverride or textDefault
 			end
@@ -113,10 +163,13 @@ function gui.Dropdown(args)
 	local tri = gui.Panel{
 		classes = {"dropdownTriangle"},
 		bgimage = "panels/triangle.png",
-		-- The triangle art is square (64x64), so "160% height" stretched it
-		-- badly. 120% is a slight widening that reads better at this size.
-		-- This inline width beats the {dropdownTriangle} theme rule, so the
-		-- sizing has to be right here, not just in DefaultStyles.
+		-- panels/triangle.png is a 64x64 source -- full width at the top,
+		-- tapering to a point at the bottom -- so its natural aspect is 1:1.
+		-- "160% height" stretched it 60% wider than it is drawn; 120% is a
+		-- slight deliberate widening that reads better at this size without
+		-- looking squashed. Note this inline width beats the
+		-- {dropdownTriangle} theme rule, so the sizing has to be corrected
+		-- here, not just in DefaultStyles.
 		width = "120% height",
 		height = "30%",
 		valign = "center",
@@ -180,11 +233,19 @@ function gui.Dropdown(args)
 						end
 					end
 
-					return ResolveFunction(a.text) < ResolveFunction(b.text)
+					--Guard against a malformed option with a nil/non-string text.
+					--One such option used to make this comparator throw, which
+					--aborts table.sort and leaves the popup unbuilt.
+					local atext = ResolveFunction(a.text)
+					local btext = ResolveFunction(b.text)
+					if type(atext) ~= "string" then atext = "" end
+					if type(btext) ~= "string" then btext = "" end
+					return atext < btext
 				end)
 			end
 
 			local CreateLabel = function(option)
+                local tooltip = option.tooltip
 				local text = ResolveFunction(option.text)
 				if m_keybinds ~= nil then
 					for _,keybind in ipairs(m_keybinds) do
@@ -202,10 +263,23 @@ function gui.Dropdown(args)
 
                 local panel = ResolveFunction(option.panel)
                 if panel == nil then
+                    local hover = nil
+                    if tooltip ~= nil then
+                        hover = function(element)
+                            local tip = ResolveFunction(tooltip)
+                            if type(tip) == "string" then
+                                gui.Tooltip(tip)(element)
+                            else
+                                element.tooltip = tip
+                            end
+                        end
+                    end
                     panel = gui.Label{
                         classes = classes,
                         fontSize = args.fontSize,
+						bgimage = true,
                         text = text,
+                        hover = hover,
                     }
                 end
 
@@ -299,19 +373,30 @@ function gui.Dropdown(args)
 			if hasSearch then
 				searchInput = gui.Input{
 					classes = {"searchInput", "dropdownSearch"},
-					-- color / bgcolor / border come from the {searchInput}
-					-- theme rule; {dropdownSearch} then clears the border the
-					-- base {input} rule would otherwise draw here.
+					-- color / bgcolor / borderColor / borderWidth come from the
+					-- {searchInput} theme rule; {dropdownSearch} then clears the
+					-- border the base {input} rule would otherwise draw here.
+					-- fontSize bumped to 18 here for
+					-- the dropdown variant; theme default is 16.
+					-- fontSize = 14,
 					floating = true,
 					valign = cond(showTop, "bottom", "top"),
-					y = cond(showTop, 1, -1) * (parentPanel.renderedHeight-2),
 					x = 2,
-					-- Keep the field clear of the dropdown triangle on the
-					-- right (its footprint reaches ~20-23px in from the edge).
-					-- borderBox keeps the theme rule's padding from growing
-					-- the field outside these dimensions.
+					y = cond(showTop, 1, -1) * (parentPanel.renderedHeight-2),
+					-- Keep the field clear of the dropdown triangle on the right.
+					-- The triangle's footprint from the control's right edge is
+					-- border 2 + hmargin 6 + its own width, and that width is
+					-- "160% height" of a 26-30px control, i.e. 12-15px -- so it
+					-- reaches ~20-23px in, and this field additionally starts at
+					-- x = 2. The old 18 was too small and clipped the triangle's
+					-- left edge; 26 clears it at every control height in use.
 					width = (parentPanel.renderedWidth - 26) * parentPanel.renderedScale.x,
 					height = parentPanel.renderedHeight - 2,
+					-- The {searchInput} theme rule carries hpad = 6, which
+					-- without borderBox is added OUTSIDE these dimensions -- the
+					-- field came out 234x31 against a 240x26 control, so its
+					-- right edge sat under the popup's scrollbar and its bottom
+					-- hung over the scrollbar's top, clipping both.
 					borderBox = true,
 					halign = "left",
 					hasFocus = true,
@@ -337,7 +422,21 @@ function gui.Dropdown(args)
  
 			local menu = gui.Panel{
 				classes = {"dropdownMenu"},
-				width = menuWidth or element.renderedWidth,
+				-- Fit INSIDE the dropdownBorder's 2px border, don't restate its
+				-- outer width. The border panel below is sized to the control's
+				-- outer width and draws its border inside that, so the usable
+				-- area is 4px narrower. Passing the outer width made the menu
+				-- overhang by 4px; dropdownOption's "100%-4" + halign center then
+				-- landed the option rows' bgimage exactly on top of the right
+				-- border, erasing it (the left border survived because the rows
+				-- start 2px in), and put the vscroll bar outside the frame.
+				--
+				-- Note "100%" does NOT work here: percent resolves against the
+				-- parent's width less its PADDING only -- the border is not
+				-- deducted, even though the child's origin IS offset by it -- so
+				-- "100%" gave back the full 203px and changed nothing. The -4
+				-- tracks {dropdownBorder}'s border = 2 in DefaultStyles.lua.
+				width = "100%-4",
 				height = "auto",
 				valign = "center",
 				maxHeight = cond(not hasSubmenus, menuHeight),
@@ -367,11 +466,17 @@ function gui.Dropdown(args)
 				element:SetClass("expandedBottom", true)
 			end
  
+			--The engine owns the popup's placement, so halign on it anchors the menu
+			--BESIDE the control and an x offset is ignored outright. To left-align,
+			--keep the popup itself the width of the control (so it sits centered over
+			--it) and let the wider menu overflow rightward from inside. That also
+			--lands the search field on the control, since the field is positioned
+			--from this panel's left edge.
+			local leftAligned = (menuAlign == "left" and menuWidth ~= nil)
+
 			local popup = gui.Panel{
-				--The popup carries its own theme cascade; see the note at the
-				--top of this file for why it doesn't inherit from ancestors.
-				styles = ThemeEngine.GetStyles(),
-				width = "auto",
+				width = cond(leftAligned,
+					parentPanel.renderedWidth * parentPanel.renderedScale.x, "auto"),
 				height = menuHeight + cond(m_centerPopup, 16, 0),
 				scale = parentPanel.renderedScale.x,
 				valign = valign,
@@ -380,6 +485,9 @@ function gui.Dropdown(args)
                     classes = {"dropdownBorder", cond(menuWidth ~= nil, "detached")},
                     width = menuWidth or element.renderedWidth,
                     height = "auto",
+                    --nil, not "center", when not left-aligning: this panel carried no
+                    --halign before, and every other dropdown must keep its default.
+                    halign = cond(leftAligned, "left"),
                     valign = cond(m_centerPopup, "center", cond(showTop, "bottom", "top")),
                     maxHeight = cond(not hasSubmenus, menuHeight),
 				    menu,
@@ -396,6 +504,7 @@ function gui.Dropdown(args)
 			end
  
 			parentPanel.popupPositioning = "panel"
+            parentPanel.popupsInheritStyles = true
 			parentPanel.popup = popup
 		end,
  
@@ -410,6 +519,7 @@ function gui.Dropdown(args)
 			local hasCopy = false
 			m_options = op
 			m_idToIndex = {}
+			m_idToText = {}
 
 			local keybinds = nil
  
@@ -430,6 +540,10 @@ function gui.Dropdown(args)
 			
 				if m_options[i].submenu == nil then
 					m_idToIndex[m_options[i].id] = i
+				else
+					for _,subOption in ipairs(m_options[i].submenu) do
+						m_idToText[subOption.id] = subOption.text
+					end
 				end
 
 				if m_options[i].keybind ~= nil then
@@ -495,7 +609,12 @@ function gui.Dropdown(args)
 	local options = args.options
 	args.options = nil
  
-	local idChosen = args.idChosen or args.optionChosen
+	local idChosen = args.idChosen
+    
+    if idChosen == nil then
+        idChosen = args.optionChosen
+    end
+
 	args.idChosen = nil
 	args.optionChosen = nil
  
@@ -519,16 +638,14 @@ function gui.Dropdown(args)
 		dropdownParent.idChosen = id
 		dropdownParent:FireEvent("change")
 	end
-
-	--Safety net for the theme rollout: when /safetheme is on, every dropdown
-	--gets the theme rules merged under its own styles so missing conversions
-	--show up instead of rendering unstyled.
+ 
+	-- TODO: THEME_PATCH
 	if ThemeEngine.ForceSafety() then
 		if arguments.styles == nil then arguments.styles = {} end
 		arguments.styles = ThemeEngine.MergeStyles(arguments.styles)
 	end
-
-	dropdownParent = gui.Panel(arguments)
+	--the options/idChosen properties come from the get/set handlers in arguments.
+	dropdownParent = gui.Panel(arguments) --[[@as Dropdown]]
 
 	if options ~= nil then
 		dropdownParent.options = options

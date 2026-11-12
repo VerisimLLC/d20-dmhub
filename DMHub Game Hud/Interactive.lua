@@ -1,7 +1,11 @@
 local mod = dmhub.GetModLoading()
 
-RegisterGameType("InteractiveContainer")
-RegisterGameType("Interactive")
+--- @class InteractiveContainer: GameType
+--- @field new fun(o?: table): InteractiveContainer
+InteractiveContainer = RegisterGameType("InteractiveContainer")
+--- @class Interactive: GameType
+--- @field new fun(o?: table): Interactive
+Interactive = RegisterGameType("Interactive")
 
 local g_registry = {}
 
@@ -27,6 +31,38 @@ function InteractiveContainer.GetTypes()
 
     table.sort(result, function(a,b) return a.text < b.text end)
     return result
+end
+
+--Which of the Interactable component's optional panel fields (sound,
+--soundVolume, squishIntensity) the given type uses. The engine's
+--GetFieldDisplayInfo calls this to hide the rest, so each type only shows
+--the controls it reads. rawget: reading an undeclared field on a game-type
+--class table raises.
+function InteractiveContainer.FieldEnabled(id, fieldName)
+    local info = g_registry[id]
+    if info == nil then
+        return false
+    end
+    local fields = rawget(info, "panelFields")
+    if fields == nil then
+        return false
+    end
+    return fields[fieldName] == true
+end
+
+--Which of the Interactable component's standard fields (locked, distance) the
+--given type hides, from its hiddenFields table. The engine's
+--GetFieldDisplayInfo calls this; types without hiddenFields show them all.
+function InteractiveContainer.FieldHidden(id, fieldName)
+    local info = g_registry[id]
+    if info == nil then
+        return false
+    end
+    local fields = rawget(info, "hiddenFields")
+    if fields == nil then
+        return false
+    end
+    return fields[fieldName] == true
 end
 
 function InteractiveContainer:Construct(id)

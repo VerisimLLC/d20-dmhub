@@ -1,19 +1,33 @@
 local mod = dmhub.GetModLoading()
 
+local function track(eventType, fields)
+	if dmhub.GetSettingValue("telemetry_enabled") == false then
+		return
+	end
+	fields.type = eventType
+	fields.userid = dmhub.userid
+	fields.gameid = dmhub.gameid
+	fields.version = dmhub.version
+	analytics.Event(fields)
+end
+
 local Selection = dmhub.Selection
 
 local CreateClipboard
 
 DockablePanel.Register{
 	name = "Clipboard",
-
-	icon = mod.images.clipboardIcon,
+	icon = "icons/standard/Icon_App_Clipboard.png",
 	vscroll = false,
     dmonly = true,
 	minHeight = 250,
 	maxHeight = 250,
 	folder = "Map Editing",
 	content = function()
+		track("panel_open", {
+			panel = "Clipboard",
+			dailyLimit = 30,
+		})
 		return CreateClipboard{
 			title = "Clipboard",
 		}
@@ -33,6 +47,8 @@ CreateClipboard = function(options)
     local previewImage = nil
 
     local selectionEditor = CreateSettingsEditor("selectiontool")
+    --"selectiontool" is registered (DMHub Titlescreen/Settings.lua) with an editor, so this is a panel.
+    ---@cast selectionEditor -nil
 
     contentPanel = gui.Panel{
         id = "ClipboardPanel",
@@ -64,8 +80,9 @@ CreateClipboard = function(options)
         width = "100%",
         height = "auto",
 
-        --focus events can fire while this panel isn't parented inside a
-        --dockablePanel, so the parent lookup may come back nil.
+        --The dockablePanel ancestor can be nil: panel content can be hosted
+        --outside the dock (the document system's PanelDocument bridge), and
+        --focus events can fire while detached. Guard like Objects.lua does.
         childfocus = function(element)
             local dockPanel = element:FindParentWithClass("dockablePanel")
             if dockPanel ~= nil then
@@ -320,6 +337,7 @@ local CreateClipboardFolder = function(folderid)
 			classes = {"folderLabel"},
 			text = folder.description,
 			change = function(element)
+				---@cast element Label
 				element.editable = false
 				if element.text == "" then
 					element.text = folder.description
@@ -415,7 +433,6 @@ local CreateClipboardFolder = function(folderid)
                         bgimage = k,
                         width = 96,
                         height = 96,
-                        halign = "center",
                         vmargin = 4,
                         halign = "left",
                         draggable = true,
@@ -712,7 +729,8 @@ ShowClippingProperties = function(asset)
             text = "Clipping Properties",
         },
 
-		gui.CloseButton{
+		gui.Button{
+            classes = {"closeButton"},
 			halign = "right",
 			valign = "top",
 			floating = true,

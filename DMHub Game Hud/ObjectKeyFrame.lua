@@ -1,6 +1,8 @@
 local mod = dmhub.GetModLoading()
 
-RegisterGameType("KeyFrameComponent")
+--- @class KeyFrameComponent: GameType
+--- @field new fun(o?: table): KeyFrameComponent
+KeyFrameComponent = RegisterGameType("KeyFrameComponent")
 
 dmhub.CreateKeyFrameComponent = function()
     return KeyFrameComponent.new()
@@ -87,10 +89,9 @@ function KeyFrameComponent.CreatePropertiesEditor(component)
                             end,
                         },
 
-                        gui.DeleteItemButton{
+                        gui.Button{
+                            classes = {"deleteButton", "sizeXs"},
                             halign = "right",
-                            width = 12,
-                            height = 12,
                             click = function(element)
                                 component:DeleteKeyFrame(i)
 

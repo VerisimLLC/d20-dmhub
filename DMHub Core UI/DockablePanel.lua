@@ -9,6 +9,41 @@ setting{
     storage = "transient",
 }
 
+--The icon-rail ("New Experimental UI") mode toggle. Registered HERE
+--rather than in DocumentSystem (which owns the rail itself) because this
+--file loads long before it and the setting is read at STARTUP: the title
+--bar is built at CodexTitleBar.lua load time and sizes its search box
+--via DockablePanel.EffectiveDockScale, and reading a not-yet-registered
+--setting logs an engine "Could not find setting" error. The behavior
+--stays in DocumentSystem: its rail/dock sync work is reached through the
+--IconRailSettingChanged global it defines. rawget because the global is
+--nil until DocumentSystem loads -- harmless, since the setting can only
+--change from UI that exists well after load.
+--
+--Defaults ON: the rail is now the intended UI, and resetCount forces it
+--back to the default ONCE for everyone -- users who had opted out (or
+--never opted in, back when the default was false) are switched on at the
+--first launch after this ships. The engine implements it in
+--CoreAssets/Lua/settings.txt: it keeps a companion "iconrail_resets"
+--preference and only resets while that counter is below resetCount, so a
+--user who turns the rail off AFTER the migration keeps it off. Bump
+--resetCount only to deliberately force everyone back to the default again.
+setting{
+    id = "iconrail",
+    description = "New Experimental UI",
+    help = "Experimental: replace the side docks with icon rails on the screen edges, and summon panels as floating windows from them.",
+    storage = "preference",
+    editor = "check",
+    default = true,
+    resetCount = 1,
+    onchange = function()
+        local fn = rawget(_G, "IconRailSettingChanged")
+        if fn ~= nil then
+            fn()
+        end
+    end,
+}
+
 setting{
     id = "dockscale",
     description = "Dock Scale",
@@ -19,10 +54,18 @@ setting{
     default = 1.0,
     min = 0.5,
     max = 1.5,
+    --The icon-rail UI ignores dock scaling entirely (docks are slid away
+    --there and every reader goes through DockablePanel.EffectiveDockScale,
+    --which reads 1 while iconrail is on), so hide the slider with it. The
+    --stored preference is kept and comes back when the rail is turned off.
+    visible = function()
+        return dmhub.GetSettingValue("iconrail") ~= true
+    end,
+    monitorVisible = {"iconrail"},
     onchange = function()
         --Apply the new scale live to any docks that already exist. Docks are
         --only created once a game is active; bail out otherwise.
-        if gamehud == nil or rawget(gamehud, "leftDock") == nil then
+        if rawget(_G, "gamehud") == nil or rawget(gamehud, "leftDock") == nil then
             return
         end
         for _,dock in ipairs(gamehud:Docks()) do
@@ -42,7 +85,9 @@ local dockablePanelsDMSetting = "dockablepanelsgm_v2"
 local g_dockGap = 0
 
 function GetDockablePanelsSetting()
-	return cond(dmhub.isDM, dockablePanelsDMSetting, dockablePanelsPlayerSetting)
+	--DirectorUIVisible rather than dmhub.isDM: a Director presenting as a
+	--player (Encounter of the Week host) loads the player dock layout.
+	return cond(GameHud.DirectorUIVisible(), dockablePanelsDMSetting, dockablePanelsPlayerSetting)
 end
 
 local GetPanelsConfig = function()
@@ -72,7 +117,7 @@ setting{
 
 setting{
 	id = dockablePanelsDMSetting,
-	description = "Dockable Panels set up for Director view.",
+	description = "Dockable Panels set up for DM view.",
 	help = "",
 	storage = "pergamepreference",
 	default = {
@@ -93,6 +138,7 @@ function GameHud:CreateSingleDock(params)
     local floating = params.floating or false
     params.floating = nil
 
+	---@type Panel
 	local resultPanel = nil
 
 	local offscreenSetting = string.format("%sdockoffscreen", params.halign)
@@ -168,7 +214,7 @@ function GameHud:CreateSingleDock(params)
 	--NOTE: DockHeight is captured as an upvalue by fitChildren/sizeChild below;
 	--the setScale event reassigns it so those closures pick up the new value.
 	local baseDockHeight = (params.height or 1080)
-	local dockScale = cond(floating, 1, dmhub.GetSettingValue("dockscale") or 1)
+	local dockScale = cond(floating, 1, DockablePanel.EffectiveDockScale())
 	local DockHeight = baseDockHeight / dockScale
 	--The dock is created at base size / uiscale 1 / default pivot, then setScale
 	--is fired once after construction to apply the real scale+pivot+height. This
@@ -199,6 +245,13 @@ function GameHud:CreateSingleDock(params)
 		}
 	end
 
+	---@class DockableVerticalResizingInfo
+	---@field heights number[]
+	---@field index integer|nil
+	---@field childElement Panel|nil
+	---@field nextElement Panel|nil
+
+	---@type DockableVerticalResizingInfo
 	local verticalResizingInfo = nil
 
 	--functions to compress and expand the vertical size of panels. We have deltaPixels to work with
@@ -374,7 +427,7 @@ function GameHud:CreateSingleDock(params)
 			if floating then
 				return
 			end
-			dockScale = dmhub.GetSettingValue("dockscale") or 1
+			dockScale = DockablePanel.EffectiveDockScale()
 			DockHeight = baseDockHeight / dockScale
 			element.data.DockHeight = DockHeight
 			--Set pivot in selfStyle (the form that actually takes effect) and
@@ -775,37 +828,21 @@ end
 
 function GameHud:CreateDocks()
 
-	--Dock heights are computed against a hardcoded 1080 reference, but the
-	--engine anchors the hud dialog BELOW the title bar strip, shrinking it
-	--by the bar's height (1048 tall when the 32px bar is mounted). So
-	--subtracting TitleBar.Reserve() here converts the 1080 reference into
-	--the actual dialog height; it is NOT an offset for the bar's position.
-	--Reserve() is 0 when the bar could not mount (older engine without
-	--titleBarContainer), where the dialog is the full 1080. The hud's
-	--top-left button block additionally reserves dockTopReserve, and only
-	--the LEFT dock sits under that. (rawget: reading an unset field on a
-	--game type errors.)
-	local titleReserve = 0
-	if rawget(_G, "TitleBar") ~= nil then
-		titleReserve = TitleBar.Reserve()
-	end
-	local topReserve = (rawget(self, "dockTopReserve") or 0) + titleReserve
-
 	self.leftDock = self:CreateSingleDock{
-		height = 1080 - topReserve - g_dockGap,
+		height = 1080 - 32 - g_dockGap,
 		id = "leftDock",
 		halign = "left",
 		valign = "bottom",
 	}
 	self.rightDock = self:CreateSingleDock{
-		height = 1080 - titleReserve - g_dockGap,
+		height = 1080 - 32 - g_dockGap,
 		id = "rightDock",
 		halign = "right",
 		valign = "bottom",
 	}
 
     self.floatingDock = self:CreateSingleDock{
-		height = 1080 - titleReserve - g_dockGap,
+		height = 1080 - 32 - g_dockGap,
         id = "floatingDock",
         halign = "center",
         valign = "bottom",
@@ -977,7 +1014,7 @@ CreateDockablePanelTabbedContainer = function(options)
 		--renders at dockscale (via uiscale) and its logical height is the screen
 		--height divided by that scale, so a panel needs a proportionally larger
 		--logical max height to still stretch to the full screen when scaled down.
-		local dockScale = dmhub.GetSettingValue("dockscale") or 1
+		local dockScale = DockablePanel.EffectiveDockScale()
 
 		return {
 			minHeight = min + tabSpacing, -- + panelSpacing*2,
@@ -987,8 +1024,12 @@ CreateDockablePanelTabbedContainer = function(options)
 
 	local metrics = CalculatePanelMetrics()
 
+	--Set by the "dock" event, which addPanel/addPanelNoSize fire right after every
+	--container is built, so no UI handler below can run before it is set.
+	---@type Panel
 	local dock = nil
 
+	---@type Panel
 	local resultPanel
 
 	local beginDragY = nil
@@ -1305,6 +1346,8 @@ CreateDockablePanelTabbedContainer = function(options)
 		classes = {"verticalDragDivider"},
 		floating = true,
 		interactable = false,
+		--a handler for the custom "draggable" event (FireEventTree above), not the engine's draggable bool.
+		---@diagnostic disable-next-line: assign-type-mismatch
 		draggable = function(element, isdraggable)
 			element:SetClass("collapsed", not isdraggable)
 		end,
@@ -1706,7 +1749,10 @@ CreateDockablePanelTabbedContainer = function(options)
 		end,
 	}
 
+    --The floating panel is always sized in pixels (DockWidth, then dragging), never "auto".
+    ---@type number
     local m_baseWidth = 0
+    ---@type number
     local m_baseHeight = 0
 
     local dragHandle = gui.Panel{
@@ -1723,14 +1769,14 @@ CreateDockablePanelTabbedContainer = function(options)
         thinkTime = 1.0,
         think = function(element)
             if not element.dragging then
-                m_baseWidth = resultPanel.selfStyle.width
-                m_baseHeight = resultPanel.selfStyle.height
+                m_baseWidth = resultPanel.selfStyle.width --[[@as number]]
+                m_baseHeight = resultPanel.selfStyle.height --[[@as number]]
             end
         end,
         draggable = true,
         drag = function(element)
-            m_baseWidth = resultPanel.selfStyle.width
-            m_baseHeight = resultPanel.selfStyle.height
+            m_baseWidth = resultPanel.selfStyle.width --[[@as number]]
+            m_baseHeight = resultPanel.selfStyle.height --[[@as number]]
         end,
         dragging = function(element)
             resultPanel.selfStyle.width = math.max(DockablePanel.DockWidth, m_baseWidth + element.dragDelta.x)
@@ -1768,15 +1814,11 @@ CreateDockablePanelTabbedContainer = function(options)
 	--of the container's child list so the focus poll can class it.
 	local panelFrame = gui.Panel{
 		bgimage = true,
-		--97% solid: just a hint of the map shows through (5e preference;
-		--the codex ships e9 / 91%).
-		bgcolor = "#222222f7",
+		bgcolor = "#222222e9",
 		flow = "vertical",
 		height = string.format("100%%-%d", round(g_dockGap + cond(g_dockGap == 0, -1, 0))),
 		width = "100%",
-		--The codex uses its Styles.Gold02 constant, which 5e does not
-		--define; resolve the scheme border color instead.
-		borderColor = ThemeEngine.ResolveTokens("@border"),
+		borderColor = Styles.Gold02,
 		border = {x1 = 0, x2 = 0, y1 = 1, y2 = 0},
 
 		dragGhost,
@@ -2183,12 +2225,84 @@ end
 
 
 
+--May THIS user have this panel at all? devonly panels need dev mode, dmonly
+--panels need the Director, hostonly panels the Director or a player host.
+--
+--This has to be asked everywhere a panel is instantiated, not just where the
+--Panels menu is built. It previously guarded only the menu, so a player who
+--had docked a Director-only panel BEFORE it was flagged kept getting it
+--restored from their saved layout on every launch -- report XRA4WE35, a
+--player's dock listing the Director's encounter rosters, monster counts, EV
+--and all. Hiding the menu entry does nothing for a panel that is already
+--docked.
+--
+--Checking dmhub.isDM here is no more fragile than what the layout already
+--does: GetDockablePanelsSetting picks which saved layout to read from the
+--same flag, so if it were unresolved the wrong dock config would load
+--wholesale. Player and Director layouts are separate settings, so a panel
+--dropped from a player's layout can never cost a Director theirs.
+local function CustomInterfaceSuppresses(name)
+	return GameHud.CustomInterfaceSuppressesPanel(name) == true
+end
+
+local PanelPermittedForUser = function(p)
+	if p == nil then
+		--unknown identifier (a mod that is not loaded): leave it to the
+		--caller, which finds no registration and adds nothing.
+		return true
+	end
+	if p.devonly and not devmode() then
+		return false
+	end
+	--DirectorUIVisible rather than dmhub.isDM so dmonly panels also hide for
+	--a Director presenting as a player (Encounter of the Week host). Panel
+	--background processes (DockablePanel.StartProcess) are independent of
+	--this gate, so the EotW host still runs the Monster AI headless.
+	if p.dmonly and not GameHud.DirectorUIVisible() then
+		return false
+	end
+	--hostonly: the Director's UI, or the host of a game with no Director, who
+	--holds the Director's tools there (dmhub.playerHostMode).
+	if p.hostonly and not (GameHud.DirectorUIVisible() or dmhub.playerHostMode) then
+		return false
+	end
+	--a mod-enforced custom interface can suppress panels by name
+	--(GameHud.RegisterCustomInterface); this gate covers every discovery
+	--surface that respects registrations -- menus, toolbar, rail, search.
+	--(pcall of a named function, not a closure: the icon rails run this per panel
+	--several times a second.)
+	if p.name ~= nil then
+		local ok, suppressed = pcall(CustomInterfaceSuppresses, p.name)
+		if ok and suppressed then
+			return false
+		end
+	end
+	return true
+end
+
 DockablePanel = {}
 
 DockablePanel = {
+	--Exposed because the icon rail and the panel windows restore panels from
+	--their own saved config, not from the docks, and must apply the same rule.
+	PanelPermittedForUser = PanelPermittedForUser,
+
 	ContentWidth = 364,
 	DockWidth = 364,
     FloatingDockMargin = 100,
+
+	--The dock scale actually in effect. The icon-rail UI ignores the Dock
+	--Scale setting (the docks are slid away there and the slider is hidden
+	--from the settings screen), so it reads as 1 while iconrail is on; the
+	--stored preference is untouched and applies again when the rail is
+	--turned off. All dockscale readers must go through this rather than
+	--reading the setting directly.
+	EffectiveDockScale = function()
+		if dmhub.GetSettingValue("iconrail") == true then
+			return 1
+		end
+		return dmhub.GetSettingValue("dockscale") or 1
+	end,
 
 	--args: name, icon, content(), vscroll, minHeight/maxHeight (content
 	--bounds used by the dock AND as vertical bounds for the panel's
@@ -2197,11 +2311,20 @@ DockablePanel = {
 	--Standalone-window extras: resizableWidth/resizableHeight = false
 	--lock window resizing on that axis (default: both freely resizable);
 	--minWidth/maxWidth bound the window's width.
+	--popoutHeight (content px) gives the panel's native OS popout window
+	--its own default height, instead of inheriting the in-app window's
+	--footprint when popping out.
 	--preferFloating = true opens the panel on the floating (center) dock
 	--as a window over the map instead of claiming a side dock;
 	--floatingHalign = "right" places that window on the right.
 	--menu = "codex"|"game"|"tools" lists the panel in that title-bar menu
 	--INSTEAD of the Panels menu.
+	--launch = function() makes this an ACTION registration instead of a
+	--panel: activating it (menu row, icon-rail button, ShowPanelByName)
+	--runs launch() and no window ever opens. Give it no content; it still
+	--gets an icon, menu placement, dmonly/devonly gating, and rail
+	--membership like any panel. First client: the Body Banks, which
+	--launches the companion app.
 	Register = function(args)
 		--if args.dmonly and not dmhub.isDM then
 		--	return
@@ -2294,7 +2417,7 @@ DockablePanel = {
 	--Views feature to capture the working layout.
 	GetDockPanels = function(side)
 		local result = {}
-		if gamehud == nil or rawget(gamehud, "leftDock") == nil then
+		if rawget(_G, "gamehud") == nil or rawget(gamehud, "leftDock") == nil then
 			return result
 		end
 		local dock = cond(side == "right", gamehud.rightDock, gamehud.leftDock)
@@ -2317,7 +2440,7 @@ DockablePanel = {
 	--mechanics as Deserialize. Used by the icon rail so a dock opened from
 	--the rail carries that rail side's panels.
 	SetDockPanels = function(side, names)
-		if gamehud == nil or rawget(gamehud, "leftDock") == nil then
+		if rawget(_G, "gamehud") == nil or rawget(gamehud, "leftDock") == nil then
 			return
 		end
 		local dock = cond(side == "right", gamehud.rightDock, gamehud.leftDock)
@@ -2351,7 +2474,7 @@ DockablePanel = {
 
 		for _,name in ipairs(names) do
 			for k,p in pairs(dockablePanels) do
-				if string.lower(p.name) == string.lower(name) then
+				if string.lower(p.name) == string.lower(name) and PanelPermittedForUser(p) then
 					local instance = existing[p.identifier]
 					existing[p.identifier] = nil
 					if instance == nil or not instance.valid then
@@ -2381,10 +2504,7 @@ DockablePanel = {
 		local result = {}
 		for k,p in pairs(dockablePanels) do
 
-			local available = (not p.devonly) or devmode()
-            if p.dmonly and not dmhub.isDM then
-                available = false
-            end
+			local available = PanelPermittedForUser(p)
 
 			--A panel may hide itself from the menus in this context --
 			--Maps, for one, which players only get when there is a map
@@ -2440,9 +2560,20 @@ DockablePanel = {
                     
                     ---@param operation nil|'toggle'|'show'|'hide'
 					click = function(operation)
+						-- Action registration: activating it IS the action.
+						-- No dock, rail, or window is touched, so this works
+						-- from the lobby too. "hide" means the caller wants
+						-- it gone, which for an action is a no-op.
+						if p.launch ~= nil then
+							if operation ~= "hide" then
+								p.launch()
+							end
+							return
+						end
+
 						-- Docks are only created once a game is active. Bail out
 						-- silently when invoked from the lobby.
-						if gamehud == nil or rawget(gamehud, "leftDock") == nil then
+						if rawget(_G, "gamehud") == nil or rawget(gamehud, "leftDock") == nil then
 							return
 						end
 
@@ -2566,7 +2697,7 @@ DockablePanel = {
 
 
 	FindInstance = function(identifier)
-        if gamehud == nil or rawget(gamehud,"leftDock") == nil then
+        if rawget(_G, "gamehud") == nil or rawget(gamehud,"leftDock") == nil then
             return nil
         end
 		for _,dock in ipairs({gamehud.leftDock, gamehud.rightDock, gamehud.floatingDock}) do
@@ -2674,19 +2805,19 @@ DockablePanel = {
 					--try to find the panel with this identifier and create it.
 					
 					for _,panelid in ipairs(panelInfo.tabs) do
-					
-						if existingInstances[panelid] ~= nil then
-							panelInstances[#panelInstances+1] = existingInstances[panelid]
-							existingInstances[panelid] = nil
-						else
-							for k,p in pairs(dockablePanels) do
-								--Registration no longer filters DM/dev-only
-								--panels, so a player's saved layout could name
-								--one; refuse to build panels this user may not
-								--see (same rule the panels menu applies).
-								local allowed = ((not p.devonly) or devmode()) and ((not p.dmonly) or dmhub.isDM)
-								if p.identifier == panelid and allowed then
-									panelInstances[#panelInstances+1] = CreateDockablePanelInstance(p)
+
+						--Skipping rather than dropping the entry: any live
+						--instance stays in existingInstances and is destroyed
+						--by the cleanup at the end of this function.
+						if PanelPermittedForUser(dockablePanels[panelid]) then
+							if existingInstances[panelid] ~= nil then
+								panelInstances[#panelInstances+1] = existingInstances[panelid]
+								existingInstances[panelid] = nil
+							else
+								for k,p in pairs(dockablePanels) do
+									if p.identifier == panelid then
+										panelInstances[#panelInstances+1] = CreateDockablePanelInstance(p)
+									end
 								end
 							end
 						end
@@ -2916,7 +3047,7 @@ end
 --with layout and the scaled dock drifts off its edge. See the setScale dock
 --event and the note in CreateSingleDock.
 local function ApplyDockScale()
-	if gamehud == nil or rawget(gamehud, "leftDock") == nil then
+	if rawget(_G, "gamehud") == nil or rawget(gamehud, "leftDock") == nil then
 		return
 	end
 	for _,dock in ipairs(gamehud:Docks()) do

@@ -1,5 +1,361 @@
 local mod = dmhub.GetModLoading()
 
+-- True when this client has real DM/hosting status, INCLUDING a "player host"
+-- (dmhub.playerHostMode, e.g. the Encounter of the Week host): a machine that
+-- hosts the game -- runs setup and the Monster AI -- while its user is
+-- presented and treated as a player (dmhub.isDM reads false). Use this
+-- instead of dmhub.isDM at sites that need hosting CAPABILITY; keep dmhub.isDM
+-- for sites about the Director-vs-player EXPERIENCE (UI, vision, rules
+-- enforcement exemptions). Falls back to dmhub.isDM on engine builds without
+-- the isDMOrPlayerHost API (unknown userdata members read as nil).
+function IsDMOrPlayerHost()
+    local result = dmhub.isDMOrPlayerHost
+    if result == nil then
+        return dmhub.isDM
+    end
+    return result
+end
+
+--- False in a directorless game (Encounter of the Week): there is no Director
+--- to show a Director-only or dice-tower roll to, so those choices are not
+--- offered there and the "privaterolls" preference is ignored. The preference
+--- belongs to the user, not the game: a host who hides monster rolls in their
+--- own campaigns would otherwise hide every roll their machine makes -- the
+--- Monster AI's included -- from the whole table. The engine's own default for
+--- dmhub.Roll applies the same rule (DiceHarness.cs).
+--- @return boolean
+function RollPrivacyAllowed()
+    return dmhub.directorlessGame ~= true
+end
+
+--- The visibility this client's rolls get by default: the "privaterolls"
+--- preference ("visible", "dm" or "dicetower"), or always "visible" where
+--- RollPrivacyAllowed() is false.
+--- @return string
+function GetRollVisibility()
+    if not RollPrivacyAllowed() then
+        return "visible"
+    end
+    return dmhub.GetSettingValue("privaterolls")
+end
+
+--- Elevate the RUNNING COROUTINE to host permissions: while elevated,
+--- dmhub.isDM reports this client's real hosting status even on a player host,
+--- so player rules enforcement (strict:movement and friends) does not bind
+--- work the machine is doing as host -- above all the Monster AI moving
+--- monsters. The elevation follows the coroutine: the engine parks it while
+--- the coroutine is yielded and restores it on resume, so nothing else --
+--- rendering, vision, UI -- ever sees it, and it dies with the coroutine even
+--- if DropHostPermissions() is never reached. No-op on engine builds without
+--- the API (unknown userdata members read as nil), which is exactly the
+--- pre-existing behavior.
+--- Do NOT wrap UI or presentation code in this: it restores Director
+--- CAPABILITY, and Director chrome or Director vision on a player host is a bug.
+function ElevateToHostPermissions()
+    if dmhub.PushHostPermissions ~= nil then
+        dmhub.PushHostPermissions()
+    end
+end
+
+--- Drops one level of ElevateToHostPermissions().
+function DropHostPermissions()
+    if dmhub.PopHostPermissions ~= nil then
+        dmhub.PopHostPermissions()
+    end
+end
+
+--- True when the "Strictly Enforce Rolls" game setting binds THIS client. It
+--- withdraws the roll dialog's result-editing affordances: the Re-roll button,
+--- the editable dice expression, click-a-tier-row overrides, the modifier chips
+--- and the edge/bane bar (both become read-outs, and only the modifiers that
+--- actually apply are listed), and the ability card's close button once the
+--- cast has committed to paying.
+--- Gated on dmhub.isDM, NOT IsDMOrPlayerHost(): isDM is the Director-EXPERIENCE
+--- flag, so a player host is bound by rules enforcement exactly like any other
+--- player, and only a Director is exempt. This matches strict:resources,
+--- strict:targeting and strict:inventory -- see PERMISSIONS_MODEL_REFERENCE.md.
+function StrictRollsEnforced()
+    return (not dmhub.isDM) and dmhub.GetSettingValue("strict:rolls") == true
+end
+
+--- True when the "Strictly Enforce Action Economy and Resource Costs" game
+--- setting binds THIS client. Same Director-only exemption as
+--- StrictRollsEnforced(): a player host is bound like any other player.
+--- Under it a hostile trigger prompt (e.g. Bleeding's damage) cannot be
+--- dismissed -- see ActiveTrigger:CanDismiss().
+function StrictActionEconomyEnforced()
+    return (not dmhub.isDM) and dmhub.GetSettingValue("strict:resources") == true
+end
+
+--- True when the "Automatic Rule Adjudication" game setting is on: rules calls
+--- the table would normally make by hand (e.g. "do you have cover here?") are
+--- decided by the game instead of prompting. Unlike the strict:* settings this
+--- is automation, not a restriction, so it applies to the Director too.
+--- Content reads it through the AutomaticRuleAdjudication GoblinScript symbol.
+function AutomaticRuleAdjudication()
+    return dmhub.GetSettingValue("strict:autoadjudicate") == true
+end
+
+--- True when the user may still back out of the embedded roll `dialog` -- the
+--- ability card's close (X) button and ESC. "Strictly Enforce Rolls" withdraws
+--- that the moment the cast behind the roll has committed to paying its cost:
+--- ActivatedAbility:CommitToPaying sets options.pay, and the cast stashes its
+--- options on the dialog as data.castOptions
+--- (CharacterPanel.AcquireAbilityRollDialog). The resources are spent by then,
+--- so a cancel would be a free undo. A roll with no cast behind it (standalone
+--- and table rolls carry no castOptions) stays cancellable, as does every roll
+--- for a Director.
+--- A roll shown with `noCancelOnceThrown` (Encounter of the Week's montage
+--- tests), and every roll the Monster AI drives, also withdraws it, for
+--- everyone, once its dice are thrown: the dialog sets data.cancelWithdrawn
+--- on submit. A roll shown with `noCancel`
+--- (a monster's roll request to a player under "Strictly Enforce Rolls")
+--- has it set from the start.
+--- Deliberately NOT applied to dialog.data.Cancel() itself: system teardown
+--- paths -- restoreFromBackup, the request-rolls and roll-table cleanups --
+--- call that directly and must always work.
+function RollDialogCancelOffered(dialog)
+    if dialog == nil or not dialog.valid or dialog.data == nil then
+        return false
+    end
+    if dialog.data.cancelWithdrawn then
+        return false
+    end
+    if not StrictRollsEnforced() then
+        return true
+    end
+    local castOptions = dialog.data.castOptions
+    return castOptions == nil or not castOptions.pay
+end
+
+-- True when the USER controls this token in their own right -- they own it,
+-- it is in their party, or they are the Director. Since 2026-09-06 the engine's
+-- tok.canControl is elevation-aware on a player host (dmhub.playerHostMode):
+-- outside the Monster AI's elevated coroutines it already answers as a player,
+-- so in un-elevated UI code this and tok.canControl agree. Keep using THIS for
+-- "is this token mine to drive?" -- it stays false even inside an elevated
+-- window, and it carries the old-engine fallback below (older builds report
+-- canControl host-WIDE, true for every monster the client merely hosts).
+function TokenControlledByUser(tok)
+    if tok == nil then
+        return false
+    end
+    local result = tok.canControlAsUser
+    if result ~= nil then
+        return result
+    end
+
+    --Engine build without the canControlAsUser API: fall back to the same
+    --ownership discriminator the prompt predicates use (RequireDCDialog,
+    --DSRequestRollsDialog). It misses party-owned tokens, which the engine
+    --property handles; every other game reads tok.canControl as before.
+    if dmhub.playerHostMode == true then
+        return tok.ownerId ~= nil and tok.ownerId == dmhub.loginUserid
+    end
+
+    return tok.canControl
+end
+
+--- The rect to cut a token's card art with, at a panel's aspect (width /
+--- height). Use it wherever card art shows: a look with its own card framing
+--- (the Hero sheet's Appearance tab) is cut by that; any other look gets the
+--- crop cut from its token framing. Engine builds without card framing read
+--- token.cardZoom as nil and get the token-framing crop.
+--- @param tok CharacterToken
+--- @param aspect number width / height
+--- @param portrait? string the picture to cut; defaults to the token's portrait
+--- @return Vector4
+function CardPortraitRect(tok, aspect, portrait)
+    if tok.cardZoom ~= nil then
+        return tok:GetCardRectForAspect(aspect, portrait)
+    end
+    return tok:GetPortraitRectForAspect(aspect, portrait)
+end
+
+--- A string that changes when a token's card art would cut differently: for
+--- redraw checks that skip work while nothing changed.
+--- @param tok CharacterToken
+--- @return string
+function CardPortraitSignature(tok)
+    local offset = tok.portraitOffset
+    local result = string.format("%s|%s|%s|%s,%s", tostring(tok.offTokenPortrait), tostring(tok.portrait),
+        tostring(tok.portraitZoom), tostring(offset and offset.x), tostring(offset and offset.y))
+    if tok.cardZoom ~= nil then
+        local card = tok.cardOffset
+        result = string.format("%s|%s|%s,%s", result, tostring(tok.cardZoom), tostring(card and card.x), tostring(card and card.y))
+    end
+    return result
+end
+
+-- The userid that should answer this token's prompts, or nil if this client should.
+-- Use this instead of tok.activeControllerId when routing prompts. They differ only for
+-- a party-owned follower (a retainer or mount): the engine leaves its prompts with
+-- whichever client raised them, often the Director's. Here they go to the player who
+-- owns its mentor hero, while that player is online.
+--- @param tok CharacterToken
+--- @return string|nil
+function TokenPromptControllerId(tok)
+    local props = tok.properties
+    if tok.ownerId == "PARTY" and props ~= nil then
+        local mentor = props:GetMentor()
+        local mentorToken = mentor ~= nil and dmhub.LookupToken(mentor) or nil
+        local ownerId = mentorToken ~= nil and mentorToken.ownerId or nil
+        if ownerId ~= nil and ownerId ~= "" and ownerId ~= "PARTY" then
+            --We are the mentor's player, so we answer.
+            if ownerId == dmhub.userid then
+                return nil
+            end
+            --The mentor's controller is its owner only while that player is online (or the
+            --Director is playing them in a second window). Otherwise use the usual routing.
+            ---@cast mentorToken -nil
+            if mentorToken.activeControllerId == ownerId then
+                return ownerId
+            end
+        end
+    end
+    return tok.activeControllerId
+end
+
+-- Macro registration infrastructure. Defined here in Utils so it is available
+-- to every module (Utils loads first in main.lua).
+Commands._macros = Commands._macros or {}
+
+function Commands.RegisterMacro(args)
+    local name = args.name
+    local fn = args.command
+    local doc = args.doc
+    local summary = args.summary
+
+    if doc ~= nil then
+        Commands[name] = function(str)
+            if str == "help" then
+                dmhub.Log(doc)
+                return
+            end
+            return fn(str)
+        end
+    else
+        Commands[name] = fn
+    end
+
+    Commands._macros[name] = {
+        doc = doc,
+        summary = summary,
+        completions = args.completions,
+
+        -- Optional: surface this macro in the no-code command builder's
+        -- browsable command list (CommandBuilder.lua). Shape:
+        --   commandInfo = {
+        --     name = "Screen Shake",       -- display name shown to the user
+        --     description = "...",         -- one-line description for the list
+        --     params = {                   -- optional; ordered arguments
+        --       { name = "Duration", min = 0.1, max = 3, default = 0.3,
+        --         round = 0.05, labelFormat = "%.2f" },
+        --       ...
+        --     },
+        --     dmonly = true,               -- optional; hide from non-directors
+        --     broadcast = "always",        -- optional; see below
+        --   }
+        --
+        -- Params are baked into the recorded command as arguments in params
+        -- order. Three kinds, by the param's `type`:
+        --   (none)    a number on a slider. min/max/default/round/labelFormat.
+        --   "choices" a dropdown. `options` ({{id=,text=}, ...}) if given,
+        --             otherwise the macro's OWN `completions` function is
+        --             reused -- the same list the chat input offers. Values
+        --             must be single-token ids; nothing is quoted.
+        --   "audio"   the app's sound picker (gui.AudioEditor). Bakes the
+        --             audio asset id. Prefer this over a "choices" list of
+        --             sounds: it names and previews them, and can upload a
+        --             new sound in place.
+        --   "text"    a free-text input. `placeholder` for the empty hint.
+        --             Text params must come last: everything after the
+        --             positional args belongs to them. A blank one is
+        --             dropped. A `joiner` (e.g. "|") is emitted just before
+        --             the value, which is how a macro that takes one
+        --             free-form line with an internal separator is split
+        --             into several labelled fields.
+        -- `required = true` on any param keeps Add Step / Apply disabled
+        -- until it has a value.
+        --
+        -- dmonly: set when the command's own body bails out on
+        -- `not dmhub.isDM`. The browser omits the row entirely for players so
+        -- they cannot record a step that would silently do nothing for them.
+        --
+        -- broadcast: set when the command only affects the client that runs
+        -- it. A journal command button executes on the presser's machine
+        -- alone (RichMacro.press -> dmhub.Execute), so a purely local effect
+        -- -- a screen shake, a sound, a banner -- never reaches the table
+        -- unless the step is wrapped in /broadcast. Values:
+        --   "always" -- always recorded as "broadcast <command>"; no choice.
+        --   "on"     -- offer a "Send to all players" check, checked.
+        --   "off"    -- offer it unchecked.
+        --   nil      -- no option; the command already networks its effect.
+        commandInfo = args.commandInfo,
+    }
+end
+
+function Commands.GetMacroInfo(name)
+    return Commands._macros[name]
+end
+
+function Commands.GetAllMacros()
+    return Commands._macros
+end
+
+-- Parse the text after a /command into structured argument info.
+-- Returns macroName, args (completed args), partial (current partial arg), argIndex
+function Commands.GetCurrentArg(text)
+    local macroName = string.match(text, "^/([%w_]+)%s")
+    if macroName == nil then
+        return nil
+    end
+    local afterCommand = string.match(text, "^/%S+%s(.*)$") or ""
+    local args = {}
+    local current = {}
+    local inQuote = false
+    for i = 1, #afterCommand do
+        local c = string.sub(afterCommand, i, i)
+        if c == '"' then
+            inQuote = not inQuote
+            current[#current+1] = c
+        elseif c == ' ' and not inQuote then
+            if #current > 0 then
+                args[#args+1] = table.concat(current)
+                current = {}
+            end
+        else
+            current[#current+1] = c
+        end
+    end
+    local partial = table.concat(current)
+    local argIndex = #args + 1
+    return macroName, args, partial, argIndex
+end
+
+-- Register documentation for a command the codex does not implement, without
+-- overriding its execution. Two kinds qualify: C# commands (CommandController's
+-- [GameCommand] methods, e.g. /delay) and the engine's core-asset Lua commands
+-- (Assets/CoreAssets/Lua/commands.txt, which populates the Commands table
+-- before the codex loads, e.g. /roll). Only populates _macros, so the ChatPanel
+-- UI shows summary, doc and argument completions and the command builder can
+-- surface it -- assigning Commands[name] here instead would SHADOW the
+-- core-asset implementation.
+function Commands.RegisterBuiltinDoc(args)
+    Commands._macros[string.lower(args.name)] = {
+        doc = args.doc,
+        summary = args.summary,
+        completions = args.completions,
+
+        --optional no-code command builder surfacing; same shape as in
+        --Commands.RegisterMacro above.
+        commandInfo = args.commandInfo,
+    }
+end
+
+--- @param table table
+--- @param element any
+--- @return boolean
 function table.contains(table, element)
     for _, value in pairs(table) do
         if value == element then
@@ -9,6 +365,8 @@ function table.contains(table, element)
     return false
 end
 
+--- @param t table
+--- @return number
 function table.count_elements(t)
     local count = 0
     for _, _ in pairs(t) do
@@ -17,11 +375,23 @@ function table.count_elements(t)
     return count
 end
 
+--- @param t table
+--- @param element any
 function table.remove_value(t, element)
+    local result = false
     for i=#t, 1, -1 do
         if t[i] == element then
             table.remove(t, i)
+            result = true
         end
+    end
+
+    return result
+end
+
+function table.resize_array(t, size)
+    for i=#t, size + 1, -1 do
+        t[i] = nil
     end
 end
 
@@ -29,10 +399,22 @@ function table.empty(t)
     return next(t) == nil
 end
 
+--- The keys of t as an array, in pairs() order. Replaces lua-core's table.keys.
+---@generic K
+---@param t table<K, any>
+---@return K[]
 function table.keys(t)
     local keys = {}
     for k, _ in pairs(t) do
         keys[#keys+1] = k
+    end
+    return keys
+end
+
+function table.mapped_keys(t, fn)
+    local keys = {}
+    for k, _ in pairs(t) do
+        keys[#keys+1] = fn(k)
     end
     return keys
 end
@@ -45,6 +427,38 @@ function table.values(t)
     return values
 end
 
+function table.set_to_ordered_csv(set, emptyText)
+    --this file's table.keys (the one that runs) never returns nil; the lua-core one it replaces can.
+    local list = table.keys(set) --[[@as any[] ]]
+    table.sort(list)
+    if #list == 0 then
+        return emptyText or ""
+    end
+    return table.concat(list, ", ")
+end
+
+function table.shallow_copy_into_dest(src, dest)
+    for k,v in pairs(src) do
+        dest[k] = v
+    end
+
+    for k,v in pairs(dest) do
+        if src[k] == nil then
+            dest[k] = nil
+        end
+    end
+end
+
+function table.shallow_copy_with_meta(t)
+    local result = {}
+    for k,v in pairs(t) do
+        result[k] = v
+    end
+    setmetatable(result, getmetatable(t))
+
+    return result
+end
+
 function table.shallow_copy(t)
     local result = {}
     for k,v in pairs(t) do
@@ -54,8 +468,46 @@ function table.shallow_copy(t)
     return result
 end
 
+function table.sort_and_return(s)
+    table.sort(s)
+    return s
+end
+
+function table.append_arrays(t1, t2)
+    local result = {}
+
+    for _, v in ipairs(t1 or {}) do
+        result[#result+1] = v
+    end
+
+    for _, v in ipairs(t2 or {}) do
+        result[#result+1] = v
+    end
+
+    return result
+end
+
+function map(t, f)
+    local result = {}
+    for i, v in ipairs(t or {}) do
+        result[i] = f(v)
+    end
+    return result
+end
+
+function filter(t, f)
+    local result = {}
+    for k, v in pairs(t) do
+        if f(v) then
+            result[k] = v
+        end
+    end
+    return result
+end
+
 function sorted_pairs(t)
     local keys = table.keys(t)
+    ---@cast keys -nil
     table.sort(keys)
     local nextKey = {}
     for i, key in ipairs(keys) do
@@ -128,16 +580,21 @@ function math.clamp01(x)
     return x
 end
 
-
-function MatchesSearchRecursive(obj, search)
+function DebugMatchesSearchRecursive(obj, search, depth, path)
+    if depth > 6 then
+        return false
+    end
     if type(obj) == "table" then
         for k,v in pairs(obj) do
-            if MatchesSearchRecursive(k, search) or MatchesSearchRecursive(v, search) then
+            local fullpath = path .. "/" .. tostring(k)
+            if DebugMatchesSearchRecursive(k, search, depth+1, fullpath) or DebugMatchesSearchRecursive(v, search, depth+1, fullpath) then
                 return true
             end
         end
     elseif type(obj) == "string" then
-        if string.find(string.lower(obj), search) ~= nil then
+        --search without any pattern matching etc, just verbatim substring match
+        if string.find(string.lower(obj), search, 1, true) ~= nil then
+            print("SEARCH MATCH:", path, string.lower(obj), "matches", search)
             return true
         end
     end
@@ -145,10 +602,159 @@ function MatchesSearchRecursive(obj, search)
     return false
 end
 
-function SearchTableForText(t, search)
+-- =============================================================================
+-- Shared text matcher.
+-- One normalisation + substring + highlight path used by every search/filter
+-- surface (compendium filter, global search, feature filters) so they all
+-- behave consistently. The legacy MatchesSearchRecursive / SearchTableHasMatch
+-- / SearchTableForText globals are kept below as thin wrappers over these so
+-- existing callers are unchanged.
+--
+-- Contract: the Matches*/MatchKeys functions assume an already-NORMALISED
+-- needle (run it through Search.Normalize once, then reuse) so the lowering is
+-- not repeated per candidate. They lower the haystack themselves. The legacy
+-- wrappers preserve the old contract (needle used verbatim, not normalised).
+-- =============================================================================
+
+Search = {}
+
+--- Normalise a user-entered needle: lowercase + trim surrounding whitespace.
+--- @param text string|nil
+--- @return string
+function Search.Normalize(text)
+    if text == nil then
+        return ""
+    end
+    return (string.lower(text):match("^%s*(.-)%s*$"))
+end
+
+-- Single-entry memo for term splitting: search sweeps test thousands of
+-- candidates against ONE needle, so cache the last split rather than
+-- re-splitting per candidate.
+local g_lastTermsNeedle = nil
+local g_lastTerms = nil
+
+--- Split a needle into its whitespace-separated terms for multi-term AND
+--- matching. Returns nil for a single-term needle so callers keep the plain
+--- single-substring fast path.
+--- @param needle string|nil
+--- @return table|nil
+function Search.SplitTerms(needle)
+    if needle == nil or string.find(needle, " ", 1, true) == nil then
+        return nil
+    end
+    if needle == g_lastTermsNeedle then
+        return g_lastTerms
+    end
+    local terms = {}
+    for term in string.gmatch(needle, "%S+") do
+        terms[#terms+1] = term
+    end
+    g_lastTermsNeedle = needle
+    if #terms < 2 then
+        g_lastTerms = nil
+    else
+        g_lastTerms = terms
+    end
+    return g_lastTerms
+end
+
+--- Substring test of a single string against a (normalised) needle. An empty
+--- needle matches everything so "no filter" shows all rows. A multi-term
+--- needle ("fire damage") matches when EVERY term appears, in any order, so
+--- word order never hides a result.
+--- @param haystack any
+--- @param needle string
+--- @return boolean
+function Search.MatchesText(haystack, needle)
+    if needle == nil or needle == "" then
+        return true
+    end
+    if type(haystack) ~= "string" then
+        return false
+    end
+    return Search.MatchesLoweredText(string.lower(haystack), needle)
+end
+
+--- Same test as Search.MatchesText but for a haystack that has ALREADY been
+--- lowercased by the caller, so the per-call string.lower is skipped. Use this
+--- on hot paths where a long haystack is matched repeatedly against differing
+--- needles and a pre-lowered copy can be stored once at build time. The needle
+--- is assumed normalised (lowercased) like every other Search entry point.
+--- @param loweredHaystack any expected to be an already-lowercased string
+--- @param needle string
+--- @return boolean
+function Search.MatchesLoweredText(loweredHaystack, needle)
+    if needle == nil or needle == "" then
+        return true
+    end
+    if type(loweredHaystack) ~= "string" then
+        return false
+    end
+    local terms = Search.SplitTerms(needle)
+    if terms == nil then
+        return string.find(loweredHaystack, needle, 1, true) ~= nil
+    end
+    for _,term in ipairs(terms) do
+        if string.find(loweredHaystack, term, 1, true) == nil then
+            return false
+        end
+    end
+    return true
+end
+
+-- Single-needle recursive walk; the multi-term AND lives in the public
+-- Search.MatchesObject wrapper so recursion never re-splits the needle.
+local function MatchesObjectSingle(obj, needle, depth)
+    depth = depth or 0
+    if depth > 6 then
+        return false
+    end
+    if type(obj) == "table" then
+        for k,v in pairs(obj) do
+            if MatchesObjectSingle(k, needle, depth+1) or MatchesObjectSingle(v, needle, depth+1) then
+                return true
+            end
+        end
+    elseif type(obj) == "string" then
+        if string.find(string.lower(obj), needle, 1, true) ~= nil then
+            return true
+        end
+    end
+
+    return false
+end
+
+--- Recursive object match: true if any string key or value anywhere in obj (to
+--- depth 6) contains the needle. Verbatim substring, no pattern matching. A
+--- multi-term needle requires every term to match SOMEWHERE in the object
+--- (different fields may satisfy different terms).
+--- @param obj any
+--- @param needle string
+--- @param depth number|nil
+--- @return boolean
+function Search.MatchesObject(obj, needle, depth)
+    local terms = Search.SplitTerms(needle)
+    if terms == nil then
+        return MatchesObjectSingle(obj, needle, depth)
+    end
+    for _,term in ipairs(terms) do
+        if not MatchesObjectSingle(obj, term, depth) then
+            return false
+        end
+    end
+    return true
+end
+
+--- Returns the list of keys in table t whose entry (key or value) matches the
+--- needle. Iterates unhidden_pairs so soft-deleted rows are skipped.
+--- @param t table
+--- @param needle string
+--- @return table list of keys
+function Search.MatchKeys(t, needle)
     local results = {}
-    for k,v in pairs(t) do
-        if MatchesSearchRecursive(v, search) then
+    for k,v in unhidden_pairs(t) do
+        if Search.MatchesObject(k, needle, 0) or Search.MatchesObject(v, needle, 0) then
             results[#results+1] = k
         end
     end
@@ -156,133 +762,518 @@ function SearchTableForText(t, search)
     return results
 end
 
--- =============================================================================
--- Macro registration infrastructure (ported from the Draw Steel Codex).
--- The Commands table is created by the engine's core Lua (commands.txt) before
--- mods load; create it defensively in case the load order ever changes.
--- =============================================================================
+--- Wrap each case-insensitive occurrence of the (normalised) needle in text
+--- with theme-accent emphasis markup, so matched runs stand out in a list. The
+--- colour is resolved from a theme token (default @accent) at call time, never
+--- hard-coded; if the theme engine is not available the text is returned
+--- unchanged (no markup) rather than falling back to a literal colour.
+--- @param text string
+--- @param needle string
+--- @param colorToken string|nil theme token, defaults to "@accent"
+--- @return string
+function Search.Highlight(text, needle, colorToken)
+    if type(text) ~= "string" or needle == nil or needle == "" then
+        return text
+    end
 
-if rawget(_G, "Commands") == nil then
-    Commands = {}
+    if ThemeEngine == nil or ThemeEngine.ResolveTokens == nil then
+        return text
+    end
+
+    local lower = string.lower(text)
+    local terms = Search.SplitTerms(needle)
+
+    -- Collect every match range (per term for multi-term needles), then merge
+    -- overlapping/adjacent ranges so nested markup is never emitted.
+    local ranges = {}
+    for _,term in ipairs(terms or {needle}) do
+        local pos = 1
+        while true do
+            local s = string.find(lower, term, pos, true)
+            if s == nil then
+                break
+            end
+            ranges[#ranges+1] = {a = s, b = s + #term - 1}
+            pos = s + 1
+        end
+    end
+
+    if #ranges == 0 then
+        return text
+    end
+
+    table.sort(ranges, function(x,y) return x.a < y.a end)
+    local merged = {ranges[1]}
+    for i=2,#ranges do
+        local r = ranges[i]
+        local last = merged[#merged]
+        if r.a <= last.b + 1 then
+            if r.b > last.b then
+                last.b = r.b
+            end
+        else
+            merged[#merged+1] = r
+        end
+    end
+
+    local color = ThemeEngine.ResolveTokens(colorToken or "@accent")
+    local out = {}
+    local pos = 1
+    for _,r in ipairs(merged) do
+        out[#out+1] = string.sub(text, pos, r.a-1)
+        out[#out+1] = "<color=" .. color .. "><b>" .. string.sub(text, r.a, r.b) .. "</b></color>"
+        pos = r.b + 1
+    end
+    out[#out+1] = string.sub(text, pos)
+
+    return table.concat(out)
 end
 
-Commands._macros = Commands._macros or {}
+-- Relevance score for a candidate name against a (normalised) needle. Mirrors
+-- the title-bar idiom: exact 100, prefix 75, substring 50; a multi-term needle
+-- whose terms all appear but not as the contiguous phrase scores 25 (ranks
+-- below any whole-phrase match); none 0. Shared so every provider ranks
+-- consistently. Assumes the needle is already normalised.
+--- @param text any
+--- @param needle string
+--- @return number
+function Search.Score(text, needle)
+    if type(text) ~= "string" or needle == nil or needle == "" then
+        return 0
+    end
+    local h = string.lower(text)
+    if h == needle then
+        return 100
+    elseif string.starts_with(h, needle) then
+        return 75
+    elseif string.find(h, needle, 1, true) ~= nil then
+        return 50
+    end
 
-function Commands.RegisterMacro(args)
-    local name = args.name
-    local fn = args.command
-    local doc = args.doc
-    local summary = args.summary
-
-    if doc ~= nil then
-        Commands[name] = function(str)
-            if str == "help" then
-                dmhub.Log(doc)
-                return
+    local terms = Search.SplitTerms(needle)
+    if terms ~= nil then
+        for _,term in ipairs(terms) do
+            if string.find(h, term, 1, true) == nil then
+                return 0
             end
-            return fn(str)
         end
+        return 25
+    end
+    return 0
+end
+
+-- =============================================================================
+-- Global-search provider registry.
+-- Appearing in global (title-bar) search = registering a PROVIDER. The system
+-- cannot auto-derive this (it can't tell user-facing data from internal, nor
+-- know the click action), so each domain opts in. Two forms:
+--
+--   One-liner (standard GetTable content):
+--     Search.RegisterProvider{
+--         id = "...", bucket = "compendium",
+--         tableName = "...", nameField = "name",     -- nameField defaults to "name"
+--         typeLabel = "...",                          -- shown as the result's source label
+--         activate = function(item, key) ... end,     -- optional click action
+--     }
+--
+--   Full provider (bespoke / computed data):
+--     Search.RegisterProvider{
+--         id = "...", bucket = "ingame", typeLabel = "...",
+--         enumerate = function(needle)                -- needle is normalised
+--             return { { name=, score=, typeLabel=, activate=function() end }, ... }
+--         end,
+--     }
+--
+-- `bucket` is one of Search.Buckets (display labels are owned by the search UI).
+-- Same path for first-party and third-party module devs; no core changes.
+-- =============================================================================
+
+-- Stable bucket ids. The title-bar search owns the display labels and order.
+Search.Buckets = { "compendium", "rulebooks", "ingame", "apptools" }
+
+-- Providers with a needle shorter than this are skipped: a single character
+-- matches almost everything and floods the results / wastes the render budget.
+Search.MinProviderQueryLength = 2
+
+local g_searchProviders = {}
+
+--- @param spec table provider spec (see header above); must carry a unique id
+function Search.RegisterProvider(spec)
+    if spec == nil or spec.id == nil then
+        return
+    end
+    g_searchProviders[spec.id] = spec
+end
+
+--- @param id string
+function Search.UnregisterProvider(id)
+    g_searchProviders[id] = nil
+end
+
+--- Run every registered provider against a (normalised) needle and return a
+--- flat list of result rows. Each row carries: name, score, bucket, typeLabel,
+--- and an activate() click action. A provider that errors is skipped rather
+--- than breaking the whole search.
+--- @param needle string normalised needle (see Search.Normalize)
+--- @return table list of result rows
+function Search.CollectProviderResults(needle)
+    local results = {}
+    if needle == nil or #needle < Search.MinProviderQueryLength then
+        return results
+    end
+
+    for _,spec in pairs(g_searchProviders) do
+        --a mod-enforced custom interface can hide whole result buckets
+        --(e.g. no compendium results in Encounter of the Week games).
+        --pcall + rawget: Utils loads before the GameHud hook exists.
+        local bucketSuppressed = false
+        pcall(function()
+            local ghud = rawget(_G, "GameHud")
+            bucketSuppressed = ghud ~= nil and ghud.CustomInterfaceSuppressesSearchBucket(spec.bucket) == true
+        end)
+        if bucketSuppressed then
+            --skip this provider entirely
+        elseif spec.enumerate ~= nil then
+            local ok, list = pcall(spec.enumerate, needle)
+            if ok and type(list) == "table" then
+                for _,r in ipairs(list) do
+                    r.bucket = r.bucket or spec.bucket
+                    r.typeLabel = r.typeLabel or spec.typeLabel
+                    results[#results+1] = r
+                end
+            end
+        elseif spec.tableName ~= nil then
+            local t = dmhub.GetTable(spec.tableName) or {}
+            local nameField = spec.nameField or "name"
+            for k,v in unhidden_pairs(t) do
+                local name = (type(v) == "table" and rawget(v, nameField)) or nil
+                if type(name) == "string" and Search.MatchesText(name, needle) then
+                    local capturedItem, capturedKey = v, k
+                    results[#results+1] = {
+                        name = name,
+                        score = Search.Score(name, needle),
+                        bucket = spec.bucket,
+                        typeLabel = spec.typeLabel,
+                        activate = function()
+                            if spec.activate ~= nil then
+                                spec.activate(capturedItem, capturedKey)
+                            end
+                        end,
+                    }
+                end
+            end
+        end
+    end
+
+    return results
+end
+
+-- =============================================================================
+-- Context-sensitive search providers.
+-- When an artifact (PDF viewer, map, character sheet, journal, encounter) is
+-- open in the main Codex view, it can expose a search scoped to itself.
+-- Global search surfaces the results as ONE group pinned ABOVE the intent
+-- buckets ("In this document", "On this map", ...). The group is ADDITIVE -
+-- it never replaces global reach.
+--
+-- Registration is PRESENCE-based: register when the artifact's panel is
+-- created, unregister in its destroy. Never key off gui focus - the search
+-- input itself holds focus while the user types. When several artifacts are
+-- open at once the HIGHEST-priority provider wins (topmost artifact):
+-- modal viewers (PDF) ~100, sheet/journal/encounter ~50, map ~10.
+--
+--   Search.RegisterContextProvider{
+--       id = "pdf-viewer", priority = 100, label = "In this document",
+--       enumerate = function(needle)          -- needle is normalised
+--           return { {name=, subLabel=, score=, activate=function() end}, ... },
+--                  pendingBoolean             -- true = async search still running
+--       end,
+--   }
+-- =============================================================================
+
+local g_contextProviders = {}
+
+--- @param spec table context provider spec (see header above); unique id required
+function Search.RegisterContextProvider(spec)
+    if spec == nil or spec.id == nil then
+        return
+    end
+    g_contextProviders[spec.id] = spec
+end
+
+--- @param id string
+function Search.UnregisterContextProvider(id)
+    g_contextProviders[id] = nil
+end
+
+--- Run the highest-priority registered context provider against a (normalised)
+--- needle. Returns nil when no context is active, otherwise
+--- {label, results, pending}; pending=true means the provider is still
+--- searching asynchronously and the caller should repeat the search shortly.
+--- @param needle string normalised needle (see Search.Normalize)
+--- @return table|nil
+function Search.CollectContextResults(needle)
+    if needle == nil or #needle < Search.MinProviderQueryLength then
+        return nil
+    end
+
+    local best = nil
+    for _,spec in pairs(g_contextProviders) do
+        if best == nil or (spec.priority or 0) > (best.priority or 0) then
+            best = spec
+        end
+    end
+    if best == nil then
+        return nil
+    end
+
+    local ok, results, pending = pcall(best.enumerate, needle)
+    if not ok or type(results) ~= "table" then
+        return nil
+    end
+    table.sort(results, function(a,b) return (a.score or 0) > (b.score or 0) end)
+    return {label = best.label or "In this view", results = results, pending = (pending == true)}
+end
+
+-- Global-search query broadcast (search redesign ch6). The title-bar search
+-- publishes its current query here; surfaces that want to ECHO the live search
+-- (the tac-panel Features glow) subscribe. Decoupled so the title bar needs no
+-- knowledge of its listeners, and so multiple listeners (several open panels)
+-- coexist -- listeners are keyed by an arbitrary handle (their panel element).
+-- Weak keys so a listener whose panel is collected without an explicit
+-- unregister self-prunes (destroy is the normal path; this is a backstop).
+Search._queryListeners = setmetatable({}, { __mode = "k" })
+Search._globalQuery = ""
+
+--- Publish the current global-search query to all listeners. Idempotent: a
+--- repeat of the same query is a no-op.
+--- @param text string the current query (empty string when cleared)
+function Search.SetGlobalQuery(text)
+    text = text or ""
+    if Search._globalQuery == text then return end
+    Search._globalQuery = text
+    for _,fn in pairs(Search._queryListeners) do
+        pcall(fn, text)
+    end
+end
+
+--- @return string the last published global-search query
+function Search.GetGlobalQuery()
+    return Search._globalQuery
+end
+
+--- Subscribe to global-search query changes. The listener fires with the new
+--- query string whenever it changes. Key by a stable handle (e.g. the
+--- subscribing panel element) and pass the same handle to unregister.
+--- @param key any
+--- @param fn function (text) -> nil
+function Search.RegisterQueryListener(key, fn)
+    if key == nil or type(fn) ~= "function" then return end
+    Search._queryListeners[key] = fn
+end
+
+--- @param key any
+function Search.UnregisterQueryListener(key)
+    if key == nil then return end
+    Search._queryListeners[key] = nil
+end
+
+-- Legacy wrappers. The needle is still used verbatim (not normalised) and the
+-- haystack is lowered, as before. NOTE: behaviour is identical only for
+-- single-word needles. A multi-word needle now matches AND-of-terms (every
+-- whitespace-separated term must appear SOMEWHERE in the object, in any order)
+-- rather than as one contiguous substring, because these delegate to the shared
+-- Search.MatchesObject. Callers that still pass raw multi-word queries (e.g. the
+-- class-editor feature filter, LanguageRelation) therefore match more broadly
+-- than they used to -- a deliberate consequence of unifying on the shared matcher.
+
+function MatchesSearchRecursive(obj, search, depth)
+    return Search.MatchesObject(obj, search, depth)
+end
+
+function SearchTableHasMatch(t, search)
+    for k,v in unhidden_pairs(t) do
+        if Search.MatchesObject(k, search, 0) or Search.MatchesObject(v, search, 0) then
+            return true
+        end
+    end
+    return false
+end
+
+function SearchTableForText(t, search)
+    return Search.MatchKeys(t, search)
+end
+
+function DebugSearchTableForText(t, search, debugName)
+    local results = {}
+    for k,v in unhidden_pairs(t) do
+        local path = debugName .. "/" .. tostring(k)
+        if DebugMatchesSearchRecursive(k, search, 0, path) or DebugMatchesSearchRecursive(v, search, 0, path) then
+            results[#results+1] = k
+        end
+    end
+
+    return results
+end
+
+function debug_and_return(item)
+    return item
+end
+
+--- Expands the `{goblinscript}` expressions in str against symbols. Nil only for a nil str.
+--- @overload fun(str: string, symbols?: any, depth?: number): string
+--- @param str string|nil
+--- @param symbols? any
+--- @param depth? number
+--- @return string|nil
+function StringInterpolateGoblinScript(str, symbols, depth)
+    if str == nil then
+        return nil
+    end
+
+    if string.find(str, "\n") ~= nil then
+        str = string.gsub(str, "\r\n", "\n")
+        local lines = string.split(str, "\n")
+        local result = ""
+        for _,line in ipairs(lines) do
+            result = result .. StringInterpolateGoblinScript(line, symbols, depth) .. "\n"
+        end
+        return result
+    end
+
+    depth = depth or 0
+    if depth > 16 then
+        return str
+    end
+    local match = regex.MatchGroups(str, "^(?<prefix>[^{]*)\\{(?<formula>[^}]+?)(?<alt>\\|[^}]+)?\\}(?<postfix>.*)$")
+    if match == nil then
+        return str
+    end
+
+    if type(symbols) == "table" then
+        symbols = symbols:LookupSymbol{}
+    end
+
+    local value
+    if symbols == nil then
+        value = match.alt or match.formula
+        value = string.gsub(value, "|", "")
     else
-        Commands[name] = fn
+        value = ExecuteGoblinScript(match.formula, symbols, value, "formula substitution")
     end
 
-    Commands._macros[name] = {
-        doc = doc,
-        summary = summary,
-        completions = args.completions,
-    }
+    return string.format("%s%s%s", match.prefix, tostring(value), StringInterpolateGoblinScript(match.postfix, symbols, depth+1))
 end
 
---Splits a macro argument string into an array of arguments. Arguments are
---separated by whitespace; double-quoted sections become a single argument
---with the quotes removed.
-if Commands.SplitArgs == nil then
-    function Commands.SplitArgs(str)
-        local args = {}
-        local i = 1
-        str = str or ""
-        while i <= #str do
-            local c = str:sub(i, i)
-            if c:match("%s") then
-                i = i + 1
-            elseif c == '"' then
-                local closing = str:find('"', i + 1, true)
-                if closing == nil then
-                    args[#args+1] = str:sub(i + 1)
-                    i = #str + 1
-                else
-                    args[#args+1] = str:sub(i + 1, closing - 1)
-                    i = closing + 1
-                end
-            else
-                local spacePos = str:find("%s", i)
-                local last = (spacePos or (#str + 1)) - 1
-                args[#args+1] = str:sub(i, last)
-                i = last + 1
-            end
+Utils = {}
+
+--- @param guid string
+--- @return number
+Utils.HashGuidToNumber = function(guid)
+    local hash = 0
+    for i = 1, #guid do
+        hash = (hash * 31 + string.byte(guid, i)) % 2^32
+    end
+    return hash
+end
+
+Utils.DropdownIdToText = function(id, enumEntries)
+    for _, entry in ipairs(enumEntries) do
+        if entry.id == id then
+            return entry.text
         end
-        return args
     end
+
+    return id
 end
 
--- =============================================================================
--- EventUtils (ported from the Draw Steel Codex). The legacy DMHub_Core_UI mod's
--- Utils.lua also defines an identical EventUtils; redefining it here would
--- reset the handler registry and strand any handlers registered against the
--- earlier table, so only define it when it is absent.
--- =============================================================================
-
-if rawget(_G, "EventUtils") == nil then
-
-    local g_globalEventHandlers = {}
-
-    EventUtils = {
-        FireGlobalEvent = function(eventName, ...)
-            local eventList = g_globalEventHandlers[eventName]
-            if eventList ~= nil then
-                for _,entry in ipairs(eventList) do
-                    entry.handlerfn(...)
-                end
-            end
-        end,
-
-        RegisterGlobalEventHandler = function(mod, eventName, handlerfn)
-            local guid = dmhub.GenerateGuid()
-            g_globalEventHandlers[eventName] = g_globalEventHandlers[eventName] or {}
-            local eventList = g_globalEventHandlers[eventName]
-            local entry = {
-                guid = guid,
-                handlerfn = handlerfn,
-            }
-
-            eventList[#eventList+1] = entry
-
-            local unloadfn = function()
-                local eventList = g_globalEventHandlers[eventName]
-                if eventList == nil then
-                    return
-                end
-                local newEventList = {}
-                for _,entry in ipairs(eventList) do
-                    if entry.guid ~= guid then
-                        newEventList[#newEventList+1] = entry
-                    end
-                end
-
-                g_globalEventHandlers[eventName] = newEventList
-            end
-
-            mod.unloadHandlers[#mod.unloadHandlers+1] = unloadfn
-            entry.Deregister = unloadfn
-            return entry
-        end,
-    }
-
+Utils.ResolveGoblinScriptObject = function(obj)
+    if type(obj) == "function" then
+        return obj("self")
+    end
+    return obj
 end
 
---split that keeps empty entries ("a||b" -> {"a", "", "b"}), unlike
---string.split which drops them. Ported from the codex utils for the
---markdown document system.
+function string.replace_insensitive(s, target, replacement, startIndex)
+    local start_index, end_index = string.find(string.lower(s), string.lower(target), startIndex or 1)
+    if start_index == nil then
+        return s
+    end
+
+    local newString = s:sub(1, start_index - 1) .. replacement .. s:sub(end_index + 1)
+    return string.replace_insensitive(newString, target, replacement, start_index + #replacement)
+end
+
+function string.upper_first(str)
+    if str == nil or #str == 0 then
+        return str
+    end
+
+    return string.upper(str:sub(1, 1)) .. str:sub(2)
+end
+
+function CountLoggedInUsers()
+    local count = 0
+    for i,userid in ipairs(dmhub.users) do
+        local info = dmhub.GetSessionInfo(userid)
+        if (not info.loggedOut) and info.timeSinceLastContact < 120 then
+            count = count + 1
+        end
+    end
+
+    return count
+end
+
+function table.find_self_references(t, visited, path)
+    path = path or "/"
+    visited = visited or {}
+
+    if type(t) ~= "table" then
+        return false
+    end
+
+    if visited[t] then
+        return path
+    end
+
+    visited[t] = true
+    for k,v in pairs(t) do
+        local result = table.find_self_references(v, visited, path.."/"..tostring(k))
+        if result then
+            return result
+        end
+    end
+
+    return false
+end
+
+function table.list_to_set(t)
+    local result = {}
+    for _,v in ipairs(t or {}) do
+        result[v] = true
+    end
+    return result
+end
+
+function table.set_to_list(t)
+    local result = {}
+    for k,_ in pairs(t or {}) do
+        result[#result+1] = k
+    end
+    return result
+end
+
+function string.split (inputstr, sep)
+        if sep == nil then
+                sep = "%s"
+        end
+        local t={}
+        for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+                table.insert(t, str)
+        end
+        return t
+end
+
 function string.split_allow_duplicates(inputstr, sep)
         if sep == nil then
                 sep = "%s"
@@ -294,8 +1285,6 @@ function string.split_allow_duplicates(inputstr, sep)
         return t
 end
 
---split on sep, but ignore separators inside [square brackets] so markdown
---table cells can contain [[links|with pipes]]. Ported from the codex utils.
 function string.split_with_square_brackets(inputstr, sep)
     local result = {}
     local chars = {}
@@ -320,8 +1309,15 @@ function string.split_with_square_brackets(inputstr, sep)
     return result
 end
 
---keep only the elements of array t for which f returns true. (Used by
---the title bar's Panels menu.)
+function GoblinScriptTrue(val)
+    if type(val) == "number" then
+        return val > 0
+    else
+        return val ~= nil and val ~= false
+    end
+end
+
+
 function table.filter(t, f)
     local result = {}
     for _, v in ipairs(t or {}) do
@@ -332,8 +1328,6 @@ function table.filter(t, f)
     return result
 end
 
---stable sort: equal elements keep their original order, which table.sort
---does not guarantee. Ported from the codex utils.
 function table.stable_sort(t, cmp)
     -- decorate with original indices
     local decorated = {}
@@ -352,8 +1346,460 @@ function table.stable_sort(t, cmp)
         end
     end)
 
-    -- write back
-    for i, d in ipairs(decorated) do
-        t[i] = d.value
+    -- undecorate
+    for i = 1, #t do
+        t[i] = decorated[i].value
     end
+end
+
+
+function DeepReplaceGuids(obj, guidMap, key)
+    key = key or "guid"
+    if type(obj) ~= "table" then
+        return
+    end
+
+    guidMap = guidMap or {}
+
+    local guid = rawget(obj, key)
+
+    if guid ~= nil then
+        guidMap[guid] = guidMap[guid] or dmhub.GenerateGuid()
+        obj[key] = guidMap[guid]
+    end
+
+    for k,v in pairs(obj) do
+        if type(v) == "table" then
+            DeepReplaceGuids(v, guidMap, key)
+        elseif type(v) == "string" and guidMap[v] ~= nil then
+            obj[k] = guidMap[v]
+        end
+    end
+end
+
+function safe_toint(val)
+    local num = tonumber(val)
+    if num == nil then
+        return nil
+    end
+
+    if type(val) == "string" and not val:match("^%d+$") then
+        return nil
+    elseif math.floor(num) ~= num then
+        return nil
+    end
+
+    return num
+end
+
+function FindObjectPathByGuid(guid, obj, path)
+    path = path or {}
+    
+    -- Check if current object has matching guid
+    if type(obj) == "table" and (rawget(obj, "guid") == guid or rawget(obj, "id") == guid) then
+        return true
+    end
+    
+    -- _tmp fields are skipped: they hold live runtime state (tokens, caches)
+    -- that can be cyclic, and never the stored copy of a compendium object.
+    if type(obj) == "table" and #path < 16 then
+        for k, v in pairs(obj) do
+            if k ~= "_luaTable" and type(v) == "table" and not string.starts_with(tostring(k), "_tmp") then
+                path[#path+1] = k
+                local found = FindObjectPathByGuid(guid, v, path)
+                if found then
+                    return true
+                end
+                path[#path] = nil
+            end
+        end
+    end
+    
+    return false
+end
+
+function GetObjectAtPath(obj, path)
+    local current = obj
+    for i = 1, #path do
+        if current == nil or type(current) ~= "table" then
+            return nil
+        end
+        current = rawget(current, path[i])
+    end
+    return current
+end
+
+function SetObjectAtPath(obj, path, value)
+    if #path == 0 then
+        return false
+    end
+    
+    local current = obj
+    for i = 1, #path - 1 do
+        if current == nil or type(current) ~= "table" then
+            return false
+        end
+        current = rawget(current, path[i])
+    end
+    
+    if current == nil or type(current) ~= "table" then
+        return false
+    end
+    
+    current[path[#path]] = value
+    return true
+end
+
+--Tables that can own an ability, most likely first, so the common cases (class
+--features, band malice, kit signatures) don't walk every table in the game.
+local g_abilityOwnerTables = {
+    "classes",
+    "standardAbilities",
+    "MonsterGroup",
+    "kits",
+    "titles",
+    "races",
+    "careers",
+    "cultures",
+    "cultureAspects",
+    "complications",
+    "feats",
+    "tbl_Gear",
+    "charConditions",
+    "characterOngoingEffects",
+    "backgrounds",
+    "featurePrefabs",
+    "downtimeActivities",
+}
+
+--- Finds the compendium entry that owns the object with the given guid.
+--- Returns the TOP-LEVEL table item -- what dmhub.SetAndUploadTableItem expects --
+--- plus the path down to the match, so an edit can be written back. Use this
+--- rather than FindAbilityParentByGuid, which needs a domain hint and so only
+--- ever resolved class abilities.
+--- @param guid string guid (or id) of the object to locate
+--- @return nil|table item top-level compendium entry that owns the guid
+--- @return nil|string tableid the data table the entry lives in
+--- @return nil|string key the entry's key within that table
+--- @return nil|table path field names leading from the entry to the match
+function FindCompendiumItemOwningGuid(guid)
+    if guid == nil then
+        return nil, nil, nil, nil
+    end
+
+    local searched = {}
+
+    local function SearchTable(tableid)
+        if searched[tableid] then
+            return nil
+        end
+        searched[tableid] = true
+
+        local t = dmhub.GetTable(tableid)
+        if t == nil then
+            return nil
+        end
+
+        for key, obj in unhidden_pairs(t) do
+            if type(obj) == "table" and not string.starts_with(tostring(key), "_tmp") then
+                if key == guid or rawget(obj, "guid") == guid or rawget(obj, "id") == guid then
+                    return obj, tableid, key, {}
+                end
+
+                local path = {}
+                if FindObjectPathByGuid(guid, obj, path) then
+                    return obj, tableid, key, path
+                end
+            end
+        end
+
+        return nil
+    end
+
+    for _, tableid in ipairs(g_abilityOwnerTables) do
+        local obj, resultTable, key, path = SearchTable(tableid)
+        if obj ~= nil then
+            return obj, resultTable, key, path
+        end
+    end
+
+    for _, tableid in ipairs(dmhub.GetTableTypes()) do
+        local obj, resultTable, key, path = SearchTable(tableid)
+        if obj ~= nil then
+            return obj, resultTable, key, path
+        end
+    end
+
+    return nil, nil, nil, nil
+end
+
+function FindAbilityParentByGuid(guid)
+    local function FindInObject(obj, targetGuid, visited, parent)
+
+        if type(obj) ~= "table" then
+            return nil
+        end
+        
+        --Avoid infinite loops
+        if visited[obj] then
+            return nil
+        end
+        visited[obj] = true
+        
+        --Check if this object has the guid we're looking for (check both guid and id fields)
+        if rawget(obj, "guid") == targetGuid or rawget(obj, "id") == targetGuid then
+            --Return the parent instead of the object itself
+            return parent
+        end
+        
+        --Recursively search in child objects
+        for k, v in pairs(obj) do
+            if type(v) == "table" and not string.starts_with(tostring(k), "_tmp") then
+                local result = FindInObject(v, targetGuid, visited, obj)
+                if result then
+                    return result
+                end
+            end
+        end
+        
+        return nil
+    end
+    
+    --Search through all tables in the system
+    local tables = dmhub.GetTableTypes()
+    for _, tableid in ipairs(tables) do
+        local t = dmhub.GetTable(tableid) or {}
+        for key, obj in unhidden_pairs(t) do
+            --Check if the key itself matches the guid
+            --If found at top level, return the object itself as it has no parent
+            if key == guid then
+                return obj, tableid
+            end
+            
+            --recursively search within the object
+            if type(obj) == "table" and not string.starts_with(tostring(key), "_tmp") then
+                local visited = {}
+                local result = FindInObject(obj, guid, visited, obj)
+                if result then
+                    return result, tableid
+                end
+            end
+        end
+    end
+    
+    return nil, nil
+end
+
+Commands.RegisterMacro{
+    name = "updateimplementationvalues",
+    summary = "fix implementation flags",
+    doc = "Usage: /updateimplementationvalues\nScans all data tables and resets implementation=4 fields to 0.",
+    command = function(str)
+        local function UpdateInObject(obj, visited)
+            if type(obj) ~= "table" then
+                return
+            end
+
+            -- Avoid infinite loops
+            if visited[obj] then
+                return
+            end
+            visited[obj] = true
+
+            -- Check if this object has implementation field with value 4
+            if rawget(obj, "implementation") == 4 then
+                print("Updating implementation for object:", json(obj))
+                obj.implementation = 0
+            end
+
+            -- Recursively search in child objects
+            for k, v in pairs(obj) do
+                if type(v) == "table" and not string.starts_with(tostring(k), "_tmp") then
+                    UpdateInObject(v, visited)
+                end
+            end
+        end
+
+        -- Search through all tables in the system
+        local tables = dmhub.GetTableTypes()
+        for _, tableid in ipairs(tables) do
+            local t = dmhub.GetTable(tableid) or {}
+            for key, obj in unhidden_pairs(t) do
+                if type(obj) == "table" and not string.starts_with(tostring(key), "_tmp") then
+                    local visited = {}
+                    UpdateInObject(obj, visited)
+                end
+            end
+        end
+    end,
+}
+
+local function DeepCopyInternal(t, visited)
+    local t_type = type(t)
+    if t_type ~= "table" then
+        if t_type == "userdata" then
+            return dmhub.DeepCopy(t)
+        end
+        return t
+    end
+
+    if visited[t] then
+        return visited[t]
+    end
+
+    local copy = {}
+    visited[t] = copy
+    for k, v in next, t do
+        local vtype = type(v)
+        --Most fields are plain values, which copy as they are; only tables and userdata
+        --need the _tmp_ test (byte 95 is "_", checked first because string.sub is slow).
+        if vtype ~= "table" and vtype ~= "userdata" then
+            copy[k] = v
+        elseif type(k) == "string" and string.byte(k, 1) == 95 and string.sub(k,1,5) == "_tmp_" then
+            copy[k] = v
+        else
+            copy[k] = DeepCopyInternal(v, visited)
+        end
+    end
+
+    local mt = getmetatable(t)
+    if mt ~= nil then
+        setmetatable(copy, mt)
+    end
+
+    return copy
+end
+
+local g_profileDeepCopy = dmhub.ProfileMarker("LuaDeepCopy")
+--- A deep copy of t: tables recursively (shared references and metatables kept),
+--- userdata through dmhub.DeepCopy, anything else returned as is.
+--- @generic T
+--- @param t T
+--- @return T
+function DeepCopy(t)
+    local _ = g_profileDeepCopy.Begin
+    local result = DeepCopyInternal(t, {})
+    local _ = g_profileDeepCopy.End
+    return result
+end
+
+-- Checks whether a table contains any circular references.
+-- Returns nil if no self-references are found.
+-- Returns a string tracing the path of keys that form the cycle otherwise.
+function DebugCheckTableSelfReference(t)
+    local visited = {}
+
+    local function check(obj, path)
+        if type(obj) ~= "table" then
+            return nil
+        end
+
+        if visited[obj] then
+            return path .. " -> " .. visited[obj] .. " (cycle)"
+        end
+
+        visited[obj] = path
+
+        for k, v in pairs(obj) do
+            if type(k) == "string" and string.sub(k, 1, 5) == "_tmp_" then
+                -- skip transient fields
+            elseif type(v) == "table" then
+                local key_str = tostring(k)
+                local child_path = path .. "." .. key_str
+                local result = check(v, child_path)
+                if result then
+                    return result
+                end
+            end
+        end
+
+        return nil
+    end
+
+    return check(t, "root")
+end
+
+-- Traceback helpers: parse a string returned by debug.traceback() into numbered frame
+-- descriptors and produce a decorated version of the trace suitable for tooltips.
+-- Mirrors the parsing in Assets/StyleDebuggerInterface.cs (the F7 panel inspector) so that
+-- debug UIs can offer the same "hover to see the trace, press 1..9 to jump to that frame"
+-- affordance, via dmhub.OpenModFileAtLine.
+--
+-- DMHub Lua chunks are loaded with a chunkname of "ModName : FileName", so tracebacks look
+-- like:
+--     [string "Draw Steel V : HeroesPanel"]:1304: in function ...
+-- where the mod/file segment lives between the quotes and the line number is the integer
+-- after the closing quote+bracket. Spaces around the inner colon are tolerated (and stripped).
+--
+-- Input:  any string, typically debug.traceback() output.
+-- Output: a table with:
+--           .decorated : the trace with each `[string "` rewritten to `[N string "` so the
+--                        user can visually associate each frame with a number key.
+--           .frames    : array (1-based) of { mod = string, file = string, line = number }
+--                        up to 9 entries. Index is the number the user presses.
+function FormatTracebackForDebug(trace)
+    local result = { decorated = trace, frames = {} }
+    if type(trace) ~= "string" or trace == "" then
+        return result
+    end
+
+    local function trim(s) return (s:match("^%s*(.-)%s*$")) end
+
+    local decoratedParts = {}
+    local cursor = 1
+    local n = 1
+
+    while true do
+        -- Find the next `[string "IDENT"]:LINE` header. IDENT is everything up to the
+        -- next closing quote; LINE is the digits after `]:`.
+        local headStart, quoteEnd, ident, line = string.find(trace, '%[string "([^"]*)"%]:(%d+)', cursor)
+        if headStart == nil then
+            decoratedParts[#decoratedParts + 1] = string.sub(trace, cursor)
+            break
+        end
+
+        -- Emit everything up to the match verbatim.
+        decoratedParts[#decoratedParts + 1] = string.sub(trace, cursor, headStart - 1)
+
+        local colonPos = string.find(ident, ":", 1, true)
+        local modName = colonPos and trim(string.sub(ident, 1, colonPos - 1)) or nil
+        local fileName = colonPos and trim(string.sub(ident, colonPos + 1)) or nil
+        local lineNum = tonumber(line)
+
+        if modName and fileName and lineNum and modName ~= "" and fileName ~= "" and n <= 9 then
+            result.frames[n] = { mod = modName, file = fileName, line = lineNum }
+            -- Rewrite: `[string "IDENT"]:LINE` -> `[N] [string "IDENT"]:LINE`
+            decoratedParts[#decoratedParts + 1] = string.format('[%d] [string "%s"]:%d', n, ident, lineNum)
+            n = n + 1
+        else
+            -- Couldn't parse cleanly; leave verbatim.
+            decoratedParts[#decoratedParts + 1] = string.sub(trace, headStart, quoteEnd)
+        end
+
+        cursor = quoteEnd + 1
+    end
+
+    result.decorated = table.concat(decoratedParts)
+    return result
+end
+
+-- Given a parsed traceback (output of FormatTracebackForDebug), open frame N (1-based) in
+-- the user's default editor. Returns true if the open request was issued.
+-- Tolerant of older DMHub builds that don't yet have dmhub.OpenModFileAtLine: prints a
+-- helpful message and returns false instead of raising a nil-call error.
+function OpenTracebackFrame(parsed, n)
+    if type(parsed) ~= "table" or type(parsed.frames) ~= "table" then return false end
+    local f = parsed.frames[n]
+    if f == nil then
+        print(string.format("OpenTracebackFrame: no frame #%d (have %d)", n, #parsed.frames))
+        return false
+    end
+    if type(dmhub.OpenModFileAtLine) ~= "function" then
+        print("OpenTracebackFrame: dmhub.OpenModFileAtLine is missing -- requires a C# rebuild.")
+        return false
+    end
+    local ok = dmhub.OpenModFileAtLine(f.mod, f.file, f.line)
+    print(string.format("OpenTracebackFrame: #%d %s/%s:%d -> %s",
+        n, tostring(f.mod), tostring(f.file), f.line, tostring(ok)))
+    return ok == true
 end

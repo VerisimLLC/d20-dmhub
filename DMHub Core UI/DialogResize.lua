@@ -47,6 +47,8 @@ end
 --      resize-event contract hold regardless.
 --  minWidth/maxWidth/minHeight/maxHeight: window-size clamps applied
 --      while dragging (nil = unbounded above a small hard floor).
+--  onResizeBegin(dialog): called when a resize drag starts (any edge), for
+--      callers that swap in something cheaper to lay out while it runs.
 --  onResized(dialog, moved): called when a resize drag completes.
 --      moved is true when the drag changed the window's x/y (left/top
 --      handles), for callers that track window position (icon rail pins).
@@ -177,6 +179,9 @@ function gui.WindowResizePanel(doc, dialogWidth, dialogHeight, options)
                     grabOffsetX = w - element.data.homeX,
                     grabOffsetY = h - element.data.homeY,
                 }
+                if options.onResizeBegin ~= nil then
+                    options.onResizeBegin(dialog)
+                end
             end,
 
             dragging = function(element)
@@ -300,6 +305,7 @@ function gui.WindowResizePanel(doc, dialogWidth, dialogHeight, options)
     return parentPanel
 end
 
+--- @param self table Holder whose _tmp_location records the dialog's placement (a document, or a scratch table).
 function gui.DialogResizePanel(self, dialogWidth, dialogHeight)
 
     local parentPanel

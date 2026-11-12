@@ -1,38 +1,54 @@
 local mod = dmhub.GetModLoading()
 
+local function track(eventType, fields)
+	if dmhub.GetSettingValue("telemetry_enabled") == false then
+		return
+	end
+	fields.type = eventType
+	fields.userid = dmhub.userid
+	fields.gameid = dmhub.gameid
+	fields.version = dmhub.version
+	analytics.Event(fields)
+end
+
 local CreateTimeOfDayPanel
 
-DockablePanel.Register{
+DockablePanel.Register {
 	name = "Time of Day/Lighting",
-	icon = mod.images.timeOfDayIcon,
+	icon = "icons/standard/Icon_App_TimeofDay.png",
 	notitle = true,
 	vscroll = false,
-    dmonly = true,
+	dmonly = true,
 	minHeight = 100,
-    maxHeight = 100,
+	maxHeight = 100,
 	content = function()
+		track("panel_open", {
+			panel = "Time of Day/Lighting",
+			dailyLimit = 30,
+		})
 		return CreateTimeOfDayPanel()
 	end,
 }
 
 local ShowTimeOfDaySettingsDialog
+---@type fun()
 local UploadTimeBasis = nil
 
 function UploadDayNightInfo()
 	UploadTimeBasis()
 end
 
-local g_solarLatitude = setting{
-    id = "solarlatitude",
-    description = "Solar Latitude",
-    storage = "game",
-    editor = "slider",
-    default = 0.5,
-    min = -1,
-    max = 1,
+local g_solarLatitude = setting {
+	id = "solarlatitude",
+	description = "Solar Latitude",
+	storage = "game",
+	editor = "slider",
+	default = 0.5,
+	min = -1,
+	max = 1,
 }
 
-setting{
+setting {
 	id = "sunbrightness",
 	description = "Sunlight/Moonlight",
 	storage = "game",
@@ -43,7 +59,7 @@ setting{
 	max = 1,
 }
 
-setting{
+setting {
 	id = "ambientlight",
 	description = "Ambient Light",
 	storage = "game",
@@ -54,7 +70,7 @@ setting{
 	max = 1,
 }
 
-local advancetimeSetting = setting{
+local advancetimeSetting = setting {
 	id = "advancetime",
 	description = "Advance Time",
 	storage = "game",
@@ -76,7 +92,7 @@ local advancetimeSetting = setting{
 	},
 }
 
-setting{
+setting {
 	id = "timepauseduringinitiative",
 	description = "Pause Time During Combat",
 	storage = "game",
@@ -87,7 +103,7 @@ setting{
 
 }
 
-setting{
+setting {
 	id = "timemultiplier",
 	description = "Time Multiplier",
 	storage = "game",
@@ -95,8 +111,8 @@ setting{
 	percent = false,
 	default = 1,
 	min = 0,
-	max = math.log(3600)/math.log(2),
-	monitorVisible = {'advancetime'},
+	max = math.log(3600) / math.log(2),
+	monitorVisible = { 'advancetime' },
 	onchange = function()
 		UploadTimeBasis()
 	end,
@@ -115,7 +131,7 @@ setting{
 	},
 }
 
-setting{
+setting {
 	id = "undergroundillumination",
 	description = "Illumination",
 	onchange = function() end,
@@ -137,10 +153,6 @@ end
 function CalculateGameDateAndTime()
 	local gametime = dmhub.GetSettingValue("gametime")
 
-	if GetDayTypeKey() == "underground" then
-		return gametime
-	end
-
 	local initiativeQueue = dmhub.initiativeQueue
 	if initiativeQueue ~= nil and (not initiativeQueue.hidden) and dmhub.GetSettingValue("timepauseduringinitiative") then
 		return gametime
@@ -151,8 +163,8 @@ function CalculateGameDateAndTime()
 		return gametime
 	end
 
-	local realtime = (dmhub.serverTime - dmhub.GetSettingValue("gametimebasis"))/(24*60*60)
-	local t = gametime + realtime*(2^dmhub.GetSettingValue("timemultiplier"))
+	local realtime = (dmhub.serverTime - dmhub.GetSettingValue("gametimebasis")) / (24 * 60 * 60)
+	local t = gametime + realtime * (2 ^ dmhub.GetSettingValue("timemultiplier"))
 	return t
 end
 
@@ -169,14 +181,14 @@ local g_dateAndTimeSet = nil
 local g_dateAndTime = nil
 local g_dateAndTimeSeeking = false
 
-local g_seekSpeed = setting{
+local g_seekSpeed = setting {
 	id = "timeofdayseekspeed",
 	description = "Time of Day Seek Speed",
 	storage = "game",
 	default = 0.2,
 }
 
-local g_maximumSeekTime = setting{
+local g_maximumSeekTime = setting {
 	id = "timeofdayseekmax",
 	description = "Time of Day Maximum Seek Duration",
 	storage = "game",
@@ -201,15 +213,15 @@ local CalculateGameDateAndTimeSeek = function()
 
 	g_dateAndTimeSeeking = false
 
-	local seek = delta*(g_seekSpeedOverride or g_seekSpeed:Get())
+	local seek = delta * (g_seekSpeedOverride or g_seekSpeed:Get())
 	g_dateAndTimeSet = dmhub.Time()
 	if math.abs(g_dateAndTime - res) <= seek then
 		g_dateAndTime = res
 		g_seekSpeedOverride = nil
 	else
-		if g_seekSpeedOverride == nil and math.abs(g_dateAndTime - res)/g_seekSpeed:Get() > g_maximumSeekTime:Get() then
-			g_seekSpeedOverride = min(2, math.abs(g_dateAndTime - res)/g_maximumSeekTime:Get())
-			seek = delta*g_seekSpeedOverride
+		if g_seekSpeedOverride == nil and math.abs(g_dateAndTime - res) / g_seekSpeed:Get() > g_maximumSeekTime:Get() then
+			g_seekSpeedOverride = min(2, math.abs(g_dateAndTime - res) / g_maximumSeekTime:Get())
+			seek = delta * g_seekSpeedOverride
 		end
 
 		if g_dateAndTime < res then
@@ -229,6 +241,68 @@ local CalculateGameTimeSeek = function()
 	return t - math.floor(t), isSeeking
 end
 
+local g_dayNightGradient = gui.Gradient {
+			point_a = { x = 0, y = 0 },
+			point_b = { x = 1, y = 0 },
+			stops = {
+				{
+					position = 0, --midnight.
+					color = '#312c5a',
+				},
+				{
+					position = 5 / 24, --5am / sun starts to rise..
+					color = '#4253a1',
+				},
+				{
+					position = 6 / 24, --6am / dawn.
+					color = '#ffc869',
+				},
+				{
+					position = 7 / 24, --7am / sun above horizon.
+					color = '#faec70',
+				},
+				{
+					position = 12 / 24, --midday. Sun high in sky
+					color = '#ffffff',
+				},
+				{
+					position = 17 / 24, --5pm. Sun starting to go down
+					color = '#ffb861',
+				},
+				{
+					position = 18 / 24, --6pm. Sun setting.
+					color = '#ff9c8c',
+				},
+				{
+					position = 19 / 24, --7pm. Sun below horizon..
+					color = '#4253a1',
+				},
+				{
+					position = 1, --midnight.
+					color = '#312c5a',
+				},
+			},
+		}
+
+local g_undergroundGradient = gui.Gradient {
+			point_a = { x = 0, y = 0 },
+			point_b = { x = 1, y = 0 },
+			stops = {
+				{
+					position = 0,
+					color = '#000000',
+				},
+				{
+					position = 1,
+					color = '#ffffff',
+				},
+			},
+		}
+
+
+
+local g_colorGray = core.Color { r = 0.5, g = 0.5, b = 0.5 }
+local g_shadowVec = core.Vector2(0,0)
 local DayTypes = {
 	daynight = {
 		description = "Above Ground",
@@ -236,21 +310,20 @@ local DayTypes = {
 		outside = true,
 		illumination = 1.0,
 		GetShadows = function(t)
+			local lengthMultiplier = 1
 
-            local lengthMultiplier = 1
+			--normalized position of sun during the day.
+			local r = (t - 5 / 24) / (19 / 24 - 5 / 24)
 
-            --normalized position of sun during the day.
-			local r = (t - 5/24) / (19/24 - 5/24)
-
-			if t < 5/24 or t > 19/24 then
-                --at night normalize between dusk and dawn instead.
-                if t > 19/24 then
-                    r = (t - 19/24)/(10/24)
-                else
-                    r = (t+5/24)/(10/24)
-                end
-                r = 1-r
-                lengthMultiplier = 0.4
+			if t < 5 / 24 or t > 19 / 24 then
+				--at night normalize between dusk and dawn instead.
+				if t > 19 / 24 then
+					r = (t - 19 / 24) / (10 / 24)
+				else
+					r = (t + 5 / 24) / (10 / 24)
+				end
+				r = 1 - r
+				lengthMultiplier = 0.4
 			end
 
 
@@ -262,58 +335,18 @@ local DayTypes = {
 			--controls how long shadows should be east/west.
 			local shadowConstant = 3
 
-			local shadowLength = lengthMultiplier * shadowConstant * math.tan((r - 0.5)*math.pi/2)
+			local shadowLength = lengthMultiplier * shadowConstant * math.tan((r - 0.5) * math.pi / 2)
 
+            g_shadowVec.x = shadowLength
+            g_shadowVec.y = shadowNorth
 
 			return {
-				dir = core.Vector2(shadowLength, shadowNorth),
-				color = core.Color{r = 0.5, g = 0.5, b = 0.5},
+				dir = g_shadowVec,
+				color = g_colorGray,
 			}
 		end,
 
-		gradient = core.Gradient{
-			point_a = {x = 0, y = 0},
-			point_b = {x = 1, y = 0},
-			stops = {
-				{
-					position = 0, --midnight.
-                    color = '#312c5a',
-                },
-                {
-                    position = 5/24, --5am / sun starts to rise..
-                    color = '#4253a1',
-                },
-                {
-                    position = 6/24, --6am / dawn.
-                    color = '#ffc869',
-                },
-                {
-                    position = 7/24, --7am / sun above horizon.
-                    color = '#faec70',
-                },
-                {
-                    position = 12/24, --midday. Sun high in sky
-                    color = '#ffffff',
-                },
-                {
-                    position = 17/24, --5pm. Sun starting to go down
-                    color = '#ffb861',
-                },
-                {
-                    position = 18/24, --6pm. Sun setting.
-                    color = '#ff9c8c',
-                },
-                {
-                    position = 19/24, --7pm. Sun below horizon..
-                    color = '#4253a1',
-                },
-                {
-                    position = 1, --midnight.
-                    color = '#312c5a',
-                },
-			},
-		},
-		
+		gradient = g_dayNightGradient,
 	},
 	underground = {
 		var = "undergroundillumination",
@@ -326,20 +359,7 @@ local DayTypes = {
 			return nil
 		end,
 
-		gradient = core.Gradient{
-			point_a = {x = 0, y = 0},
-			point_b = {x = 1, y = 0},
-			stops = {
-				{
-					position = 0,
-					color = '#000000',
-				},
-				{
-					position = 1,
-					color = '#ffffff',
-				},
-			},
-		},
+        gradient = g_undergroundGradient,
 	},
 }
 
@@ -350,7 +370,7 @@ end
 
 local daytimeInfo = DayTypes.daynight
 
-PreviewLightingTypes = {"Day", "Evening", "Night"}
+PreviewLightingTypes = { "Day", "Evening", "Night" }
 
 local previewLighting = {
 	["Day"] = {
@@ -388,19 +408,42 @@ UploadTimeBasis = function()
 	end
 end
 
-function MoveGameTime(days)
+--- Advance the calendar by `days`, animating at most `visible` of them.
+--- The lighting seeks from g_dateAndTime toward the real time, so a jump of a
+--- week used to sweep through every dawn in between. Moving the value it seeks
+--- FROM up to the last day leaves the calendar untouched and shows one dawn
+--- instead of seven; the seek still converges on the real time as it always did.
+--- @param days number days to advance; negative moves the calendar back
+--- @param visible nil|number days of animation to allow, default 1
+function MoveGameTime(days, visible)
 	currentGameDateAndTime = currentGameDateAndTime + days
 	UploadTimeBasis()
+
+	--Never animate further than the move itself, or the seek would start past
+	--its own target and walk backwards to reach it. Zero days animates nothing,
+	--which is what a no-op move should look like.
+	visible = math.min(visible or 1, math.abs(days))
+
+	--nil means the lighting has not sampled yet, and its first sample snaps to
+	--the real time - already what is wanted here.
+	if g_dateAndTime ~= nil then
+		--Any override belongs to the seek this replaces; leaving it set would
+		--animate the short hop at a speed calculated for the long one.
+		g_seekSpeedOverride = nil
+		g_dateAndTime = currentGameDateAndTime - (days >= 0 and visible or -visible)
+	end
 end
 
-
+local g_lightingColor = core.Color { r = 1, g = 1, b = 1 }
+local g_shadowColor = core.Color { r = 1, g = 1, b = 1 }
 dmhub.GetLightingInfo = function(floorid)
 	local dayInfo = GetDayType(floorid)
 
 	--if the initiative bar state changes put a short embargo on recalculating lighting info
-	local haveInitiativeBar = dmhub.initiativeQueue ~= nil and (not dmhub.initiativeQueue.hidden) and dmhub.GetSettingValue("timepauseduringinitiative")
+	local haveInitiativeBar = dmhub.initiativeQueue ~= nil and (not dmhub.initiativeQueue.hidden) and
+	dmhub.GetSettingValue("timepauseduringinitiative")
 	if initiativeBarState ~= nil and initiativeBarState ~= haveInitiativeBar then
-		timeChangeEmbargo = dmhub.Time()+0.25
+		timeChangeEmbargo = dmhub.Time() + 0.25
 	end
 	initiativeBarState = haveInitiativeBar
 
@@ -413,6 +456,8 @@ dmhub.GetLightingInfo = function(floorid)
 	end
 
 
+	--the embargo is only set once initiativeBarState is known, so the first call always samples.
+	---@cast currentGameDateAndTime -nil
 	local t = currentGameDateAndTime - math.floor(currentGameDateAndTime)
 
 	if dayInfo.var then
@@ -423,19 +468,16 @@ dmhub.GetLightingInfo = function(floorid)
 	local shadows = dayInfo.GetShadows(t)
 	if dayInfo.outside then
 		local sunlight = dmhub.GetSettingValue("sunbrightness")
-		color = core.Color{
-			r = color.r*sunlight,
-			g = color.g*sunlight,
-			b = color.b*sunlight,
-		}
+		color.r = color.r * sunlight
+		color.g = color.g * sunlight
+		color.b = color.b * sunlight
 
 		if shadows ~= nil then
 			local ambient = dmhub.GetSettingValue("ambientlight")
-			shadows.color = core.Color{
-				r = ambient,
-				g = ambient,
-				b = ambient,
-			}
+			g_shadowColor.r = ambient
+			g_shadowColor.g = ambient
+			g_shadowColor.b = ambient
+			shadows.color = g_shadowColor
 		end
 	end
 
@@ -453,12 +495,13 @@ CreateTimeOfDayPanel = function()
 		return nil
 	end
 
-	local sunPanel = gui.Panel{
+	local sunPanel = gui.Panel {
+		classes = {"image"},
 		width = 80,
 		height = 80,
 		y = -14,
 		bgimage = mod.images.Sun,
-		bgcolor = "white",
+		saturation = 0,
 		floating = true,
 		halign = "center",
 		valign = "center",
@@ -468,43 +511,43 @@ CreateTimeOfDayPanel = function()
 		end,
 
 		tick = function(element, val)
-			local angle = -math.rad((val-0.25)*360)
+			local angle = -math.rad((val - 0.25) * 360)
 			local y = math.sin(angle)
 			local x = math.cos(angle)
 
 
-			element.x = x*100
-			element.y = 36 + y*50
-
+			element.x = x * 100
+			element.y = 36 + y * 50
 		end,
 
 	}
 
-	local moonPanel = gui.Panel{
+	local moonPanel = gui.Panel {
+		classes = {"image"},
 		width = 80,
 		height = 80,
 		y = -14,
 		bgimage = mod.images.Moon,
-		bgcolor = "white",
 		floating = true,
 		halign = "center",
 		valign = "center",
+		saturation = 0,
 
 		outside = function(element, val)
 			element:SetClass("hidden", not val)
 		end,
 
 		tick = function(element, val)
-			local angle = -math.rad((val+0.25)*360)
+			local angle = -math.rad((val + 0.25) * 360)
 			local y = math.sin(angle)
 			local x = math.cos(angle)
 
-			element.x = x*100
-			element.y = 36 + y*50
+			element.x = x * 100
+			element.y = 36 + y * 50
 		end,
 	}
 
-	local dayTextLabel = gui.Label{
+	local dayTextLabel = gui.Label {
 		fontSize = 18,
 		text = "1",
 		hmargin = 4,
@@ -513,20 +556,21 @@ CreateTimeOfDayPanel = function()
 		change = function(element)
 			local number = round(tonumber(element.text))
 			if type(number) == "number" then
-
 				local time = CalculateGameTime()
 
-				currentGameDateAndTime = (number-1) + time
+				currentGameDateAndTime = (number - 1) + time
 				UploadTimeBasis()
 			end
 		end,
 	}
-	local dayLabel = gui.Panel{
+	local dayLabel = gui.Panel {
 		floating = true,
 		flow = "horizontal",
 		halign = "left",
 		valign = "top",
-		gui.Label{
+		lmargin = 7,
+		vmargin = 2,
+		gui.Label {
 			fontSize = 18,
 			text = "Day",
 		},
@@ -539,12 +583,12 @@ CreateTimeOfDayPanel = function()
 			if dayTextLabel.editing then
 				return
 			end
-			dayTextLabel.text = string.format("%d", CalculateGameDate()+1)
+			dayTextLabel.text = string.format("%d", CalculateGameDate() + 1)
 		end,
 	}
 
 
-	return gui.Panel{
+	return gui.Panel {
 		selfStyle = {
 			vmargin = 0,
 			halign = 'center',
@@ -554,15 +598,9 @@ CreateTimeOfDayPanel = function()
 			flow = 'vertical',
 		},
 
-		styles = {
-			{
-				bgcolor = 'white',
-			},
-		},
-
 		children = {
 
-			gui.Panel{
+			gui.Panel {
 				id = 'timeofdaypanel',
 				bgimage = "panels/square.png",
 				clip = true,
@@ -581,75 +619,63 @@ CreateTimeOfDayPanel = function()
 					sunPanel,
 					moonPanel,
 
-					gui.Panel{
+					gui.Panel {
 						width = '100%',
 						height = '100%',
 						flow = 'none',
 						halign = "center",
 						valign = 'top',
 
-					--gui.Label{
-					--	text = '',
---
-					--	thinkTime = 0.25,
---
-					--	style = {
-					--		vpad = 2,
-					--		fontSize = 12,
-					--		width = 'auto',
-					--		height = 'auto',
-					--		halign = 'center',
-					--	},
-					--	events = {
-					--		create = 'think',
-					--		think = function(element)
-					--			local dayInfo = GetDayType()
-					--			if dayInfo.timeLabel then
-					--				element.text = dayInfo.description
-					--			end
-					--		end,
-					--	},
-					--	
-					--},
+						--gui.Label{
+						--	text = '',
+						--
+						--	thinkTime = 0.25,
+						--
+						--	style = {
+						--		vpad = 2,
+						--		fontSize = 12,
+						--		width = 'auto',
+						--		height = 'auto',
+						--		halign = 'center',
+						--	},
+						--	events = {
+						--		create = 'think',
+						--		think = function(element)
+						--			local dayInfo = GetDayType()
+						--			if dayInfo.timeLabel then
+						--				element.text = dayInfo.description
+						--			end
+						--		end,
+						--	},
+						--	
+						--},
 
-						gui.Panel{
-							bgimage = 'ui-icons/skills/98.png',
-							blend = "add",
-							halign = 'right',
-							valign = 'top',
-							width = 16,
-							height = 16,
-							hmargin = 6,
-							styles = {
-								{
-									selectors = {'hover'},
-									brightness = 2,
-								},
-								{
-									selectors = {'press'},
-									brightness = 1.5,
-								},
-							},
-
+						gui.Button {
+							classes = {"settingsButton"},
+							halign = "right",
+							valign = "top",
+							rmargin = 4,
+							vmargin = 3,
 							click = function(element)
 								ShowTimeOfDaySettingsDialog()
 							end,
 						},
 					},
 
-					gui.Slider{
-						bgimage = 'panels/square.png',
+					gui.Slider {
+						bgimage = true,
+						bgcolor = "white",
 						halign = "center",
 						valign = "bottom",
 						handleSize = "130%",
 						labelWidth = 0,
 						sliderWidth = 340,
-                        wrap = true,
+						wrap = true,
 						notchAlign = "top",
-						notchColor = Styles.textColor,
+						notchColor = "black",
 						notchHeight = 3,
-						fillColor = Styles.textColor,
-						labelFormat = '',
+						fillColor = "black",
+						labelFormat = "",
 						selfStyle = {
 						},
 						data = {
@@ -720,9 +746,9 @@ CreateTimeOfDayPanel = function()
 
 									--detect wrapping and creating a new date.
 									if elementval < time - 0.7 then
-										date = date+1
+										date = date + 1
 									elseif elementval > time + 0.7 then
-										date = date-1
+										date = date - 1
 									end
 
 									dmhub.PreviewSettingValue("gametime", date + element.value)
@@ -744,7 +770,7 @@ CreateTimeOfDayPanel = function()
 									--make sure seeking is turned off and we can jump straight there after a drag.
 									g_dateAndTimeSet = nil
 									g_dateAndTime = nil
-									g_dateAndTimeSeeking = nil
+									g_dateAndTimeSeeking = false
 								end
 
 								element.data.previewing = false
@@ -759,9 +785,9 @@ CreateTimeOfDayPanel = function()
 
 									--detect wrapping and creating a new date.
 									if elementval < time - 0.7 then
-										date = date+1
+										date = date + 1
 									elseif elementval > time + 0.7 then
-										date = date-1
+										date = date - 1
 									end
 
 									currentGameDateAndTime = date + element.value
@@ -780,7 +806,7 @@ CreateTimeOfDayPanel = function()
 						},
 					},
 
-					gui.Panel{
+					gui.Panel {
 
 						thinkTime = 0.25,
 						events = {
@@ -799,7 +825,7 @@ CreateTimeOfDayPanel = function()
 								height = 16,
 							},
 							{
-								selectors = {'icon'},
+								selectors = { 'icon' },
 								halign = 'center',
 								height = '100%',
 								width = '100% height',
@@ -807,26 +833,26 @@ CreateTimeOfDayPanel = function()
 						},
 						children = {
 
-							gui.Panel{
+							gui.Panel {
 								bgimage = 'icons/icon_weather/icon_weather_18.png',
-								classes = {'icon'},
+								classes = { 'icon' },
 							},
 
-							gui.Panel{
+							gui.Panel {
 								bgimage = 'icons/icon_weather/icon_weather_3.png',
-								classes = {'icon'},
+								classes = { 'icon' },
 							},
-							gui.Panel{
+							gui.Panel {
 								bgimage = 'icons/icon_weather/icon_weather_1.png',
-								classes = {'icon'},
+								classes = { 'icon' },
 							},
-							gui.Panel{
+							gui.Panel {
 								bgimage = 'icons/icon_weather/icon_weather_4.png',
-								classes = {'icon'},
+								classes = { 'icon' },
 							},
-							gui.Panel{
+							gui.Panel {
 								bgimage = 'icons/icon_weather/icon_weather_18.png',
-								classes = {'icon'},
+								classes = { 'icon' },
 							},
 
 						}
@@ -843,22 +869,34 @@ local m_dayNightSettingsDialog = nil
 
 ShowTimeOfDaySettingsDialog = function()
 	if not m_dayNightSettingsDialog then
-
+		---@type fun()
 		local UpdateTime = nil
 
-		local hoursLabel = gui.Label{
+		local hoursLabel = gui.Label {
+			classes = {"sizeL"},
 			editable = true,
 			characterLimit = 2,
+			width = 24,
+			height = 24,
+			textAlignment = "right",
 			change = function() UpdateTime() end,
 		}
-		local minutesLabel = gui.Label{
+		local minutesLabel = gui.Label {
+			classes = {"sizeL"},
 			editable = true,
 			characterLimit = 2,
+			width = 24,
+			height = 24,
+			textAlignment = "right",
 			change = function() UpdateTime() end,
 		}
-		local secondsLabel = gui.Label{
+		local secondsLabel = gui.Label {
+			classes = {"sizeL"},
 			editable = true,
 			characterLimit = 2,
+			width = 24,
+			height = 24,
+			textAlignment = "right",
 			change = function() UpdateTime() end,
 		}
 
@@ -867,28 +905,26 @@ ShowTimeOfDaySettingsDialog = function()
 			local minutes = tonumber(minutesLabel.text)
 			local seconds = tonumber(secondsLabel.text)
 
-			if hours == nil or minutes == nil or seconds == nil or hours < 0 or minutes < 0 or seconds < 0 or hours > 23 or hours > 59 or seconds > 59 then
+			if hours == nil or minutes == nil or seconds == nil or hours < 0 or minutes < 0 or seconds < 0 or hours > 23 or minutes > 59 or seconds > 59 then
 				return
 			end
 
-			currentGameDateAndTime = CalculateGameDate() + hours/24 + minutes/(24*60) + seconds/(24*60*60)
+			currentGameDateAndTime = CalculateGameDate() + hours / 24 + minutes / (24 * 60) + seconds / (24 * 60 * 60)
 			UploadTimeBasis()
 		end
 
-		m_dayNightSettingsDialog = gui.Panel{
-			classes = {'framedPanel', 'hidden'},
-			
-			halign = 'center',
-			valign = 'center',
+		m_dayNightSettingsDialog = gui.Panel {
+			classes = {"framedPanel", "hidden"},
 
-			width = 400,
+			halign = "center",
+			valign = "center",
+
+			width = 480,
 			height = 400,
 
-			flow = 'vertical',
+			flow = "vertical",
 
-			styles = {
-				Styles.Panel,
-			},
+			styles = ThemeEngine.GetStyles(),
 
 			draggable = true,
 			drag = function(element)
@@ -896,46 +932,54 @@ ShowTimeOfDaySettingsDialog = function()
 				element.y = element.ydrag
 			end,
 
-			gui.CloseButton{
+			gui.Button {
+				classes = {"closeButton"},
+				floating = true,
+				halign = "right",
+				valign = "top",
+				margin = 8,
 				click = function(element)
-					m_dayNightSettingsDialog:SetClass('hidden', true)
+					--this button lives inside the dialog, so the dialog exists when it is clicked.
+					---@cast m_dayNightSettingsDialog Panel
+					m_dayNightSettingsDialog:SetClass("hidden", true)
 				end,
 			},
 
+			gui.Panel{height = 20, width = "80%"},
 			CreateSettingsEditor("sunbrightness", {
-				width = '65%',
+				width = "300",
 			}),
 
-            CreateSettingsEditor("solarlatitude", {
-                width = '65%',
-            }),
+			CreateSettingsEditor("solarlatitude", {
+				width = "25%",
+			}),
 
 			CreateSettingsEditor("ambientlight", {
-				width = '65%',
+				width = "25%",
 			}),
 
 			--display the time in conventional format.
-			gui.Panel{
-				flow = 'horizontal',
-				halign = 'center',
-				valign = 'top',
-				width = 'auto',
-				height = 'auto',
+			gui.Panel {
+				flow = "horizontal",
+				halign = "center",
+				valign = "top",
+				width = "auto",
+				height = "auto",
 
 				events = {
 					create = function(element)
-						element:FireEvent('monitor')
-						element:FireEvent('tick')
+						element:FireEvent("monitor")
+						element:FireEvent("tick")
 					end,
 
 					tick = function(element)
-						element:ScheduleEvent('tick', 0.1)
+						element:ScheduleEvent("tick", 0.1)
 
 						local t = CalculateGameTime()
 
-						local hour = math.floor(t*24)
-						local minute = math.floor(t*24*60)%60
-						local second = math.floor(t*24*60*60)%60
+						local hour = math.floor(t * 24)
+						local minute = math.floor(t * 24 * 60) % 60
+						local second = math.floor(t * 24 * 60 * 60) % 60
 
 						if not hoursLabel.editing then
 							hoursLabel.text = string.format("%02d", hour)
@@ -946,28 +990,18 @@ ShowTimeOfDaySettingsDialog = function()
 						if not secondsLabel.editing then
 							secondsLabel.text = string.format("%02d", second)
 						end
-						--show the time even if underground.
-						--element:SetClass('collapsed', GetDayTypeKey() ~= 'daynight')
 					end,
-				},
-				
-				styles = {
-					selectors = {'label'},
-					priority = 10,
-					color = 'white',
-					fontSize = 20,
-					width = 24,
-					height = 24,
-					textAlignment = 'right',
 				},
 
 				hoursLabel,
-				gui.Label{
+				gui.Label {
+					classes = {"sizeL"},
 					width = 10,
 					text = ":",
 				},
 				minutesLabel,
-				gui.Label{
+				gui.Label {
+					classes = {"sizeL"},
 					width = 10,
 					text = ":",
 				},
@@ -975,46 +1009,40 @@ ShowTimeOfDaySettingsDialog = function()
 			},
 
 			CreateSettingsEditor("advancetime", {
+				valign = "top",
 				panelStyle = {
-					priority = 10,
-					valign = 'top',
-					height = 24,
-				},
-				valign = 'top',
-				style = {
-					fontSize = '80%',
-					width = 200,
-					height = 24,
-					valign = 'top',
-					halign = 'center',
-					margin = 0,
+					selectors = {"dropdown"},
+					width = "60%",
 				},
 			}),
-			
-			
+
 			CreateSettingsEditor("timepauseduringinitiative", {
-				width = '65%',
+				width = "55%",
 			}),
 
 			CreateSettingsEditor("timemultiplier", {
-				style = {
-					fontSize = '80%',
-					width = 200,
-					height = 24,
-					valign = 'center',
-					halign = 'center',
-					margin = 0,
-				},
+				width = "55%",
 			}),
 
 		}
 
 		gui.DialogPanel():AddChild(m_dayNightSettingsDialog)
+
+		ThemeEngine.OnThemeChanged(mod, function()
+			if m_dayNightSettingsDialog ~= nil and m_dayNightSettingsDialog.valid then
+				m_dayNightSettingsDialog.styles = ThemeEngine.GetStyles()
+			end
+		end)
+
+		mod.unloadHandlers[#mod.unloadHandlers + 1] = function()
+			if m_dayNightSettingsDialog ~= nil and m_dayNightSettingsDialog.valid then
+				m_dayNightSettingsDialog:DestroySelf()
+			end
+		end
 	end
 
-	m_dayNightSettingsDialog:SetClass('hidden', not m_dayNightSettingsDialog:HasClass('hidden'))
+	m_dayNightSettingsDialog:SetClass("hidden", not m_dayNightSettingsDialog:HasClass("hidden"))
 	if not m_dayNightSettingsDialog:HasClass("hidden") then
 		m_dayNightSettingsDialog:PulseClass("fadein")
 	end
 end
-

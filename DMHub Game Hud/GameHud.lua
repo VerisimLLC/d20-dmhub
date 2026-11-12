@@ -6,6 +6,15 @@ function GameHud:Think()
 		table.remove(self.interactionQueue, 1)
 		f()
 	end
+
+	--Keep the world-space selection action buttons alive. They key off the token
+	--selection rather than off game state, so unlike the other world-space huds
+	--nothing else will create them; this is their heartbeat. Guarded because the
+	--ruleset is not present in every build.
+	local minions = rawget(_G, "DrawSteelMinion")
+	if minions ~= nil and minions.SelectionActionsHud ~= nil then
+		minions.SelectionActionsHud()
+	end
 end
 
 function GameHud:QueueInteraction(f)
@@ -14,6 +23,9 @@ end
 
 --is the player currently available to interact with something that pops up?
 function GameHud.AvailableToInteract(self)
+	if self.dialog.sheet == nil then
+		return false
+	end
 	return ActivatedAbility.IsCasting() == false and not self.dialog.sheet.modalDialog
 end
 
@@ -28,14 +40,29 @@ function GameHud.ToggleInventory(self, token)
 	self.inventoryDialog.data.toggleOpen(token)
 end
 
-function GameHud.Refresh(self)
-	self.dialog.sheet:FireEventTree('refresh')
+--Counts whole-hud refresh passes; inRefreshPass is true during one. Panel refresh handlers
+--only read game state, so lookups they repeat across many panels can cache per pass
+--(InitiativeQueue.GetTokensForInitiativeId does).
+GameHud.refreshPass = 0
+GameHud.inRefreshPass = false
 
-	if self:try_get("hasRefreshed", false) == false then
-		self.hasRefreshed = true
-		if dmhub.isDM and dmhub.GetSettingValue("showtutorial") then
-			LaunchablePanel.GetOrLaunchPanel("Tutorial")
-		end
+function GameHud.Refresh(self)
+	GameHud.refreshPass = GameHud.refreshPass + 1
+	GameHud.inRefreshPass = true
+	local ok, err = pcall(function()
+		self.dialog.sheet:FireEventTree('refresh')
+	end)
+	GameHud.inRefreshPass = false
+	if not ok then
+		error(err, 0)
+	end
+
+	--panels popped out into native OS windows are unparented from the hud
+	--tree, so the broadcast above never reaches them; extend it to each
+	--popout window so selection-following panels (Character, Triggers)
+	--stay live there too.
+	if PanelDocument ~= nil and PanelDocument.FireEventTreeOnPopouts ~= nil then
+		PanelDocument.FireEventTreeOnPopouts('refresh')
 	end
 end
 
@@ -56,13 +83,580 @@ function GameHud.ClearMapTooltip(self)
 	self.dialog.sheet.tooltip = nil
 end
 
+-------------------------------------------------------------------------------
+-- Tooltip suppression.
+--
+-- A general switch any mod can hold to silence tooltips for a phase of play:
+-- panel hover tooltips, map/tile tooltips, and the token-drag movement tooltip
+-- along with the movement cross-section diagram it carries. Keyed, so several
+-- mods can hold it independently and tooltips only come back when the last key
+-- is released.
+--
+-- The engine half (dmhub.tooltipsSuppressed) is what refuses to DISPLAY a
+-- tooltip panel -- any tooltip, from any source -- and it lives on the game
+-- session, so a mod that forgets to release its key can never break tooltips
+-- beyond that game. The Lua half here additionally stops the map tooltip being
+-- built and the cross-section diagram being RENDERED at all; the engine gate
+-- alone would still pay for the offscreen render texture behind a tooltip
+-- nobody ever sees.
+-------------------------------------------------------------------------------
+
+--one table rather than two file-level locals; this chunk is close to Lua's
+--200-local ceiling.
+local g_tooltipSuppression = {
+	keys = {},
+	active = false,
+}
+
+--- Is any mod currently suppressing tooltips?
+---@return boolean
+function GameHud.TooltipsSuppressed()
+	return g_tooltipSuppression.active
+end
+
+--- Hold or release tooltip suppression under a key of your own. While at least
+--- one key is held no tooltips are shown. Releasing a key that was never held
+--- is a no-op, so this is safe to call every poll tick with a computed value.
+---@param key string identifies the suppressor -- one key per feature.
+---@param suppressed boolean
+function GameHud.SetTooltipsSuppressed(key, suppressed)
+	if suppressed then
+		g_tooltipSuppression.keys[key] = true
+	else
+		g_tooltipSuppression.keys[key] = nil
+	end
+
+	local active = next(g_tooltipSuppression.keys) ~= nil
+	if active == g_tooltipSuppression.active then
+		return
+	end
+
+	g_tooltipSuppression.active = active
+
+	--the engine setter also dismisses any tooltip already on screen, so a
+	--suppression that starts under a resting mouse takes effect immediately.
+	dmhub.tooltipsSuppressed = active
+end
+
+-------------------------------------------------------------------------------
+-- Movement cross-section diagram.
+--
+-- A small side-on schematic shown inside the token-drag movement tooltip that
+-- illustrates the vertical profile of the proposed move: terraced ground built
+-- from per-tile altitudes, a square tile grid, walls climbed over or flown
+-- over, the movement arrow, the mover's token avatar plus a ghost at the
+-- resting spot, any other tokens the path crosses (red ring when passed
+-- through), and a fall at the end of the move.
+--
+-- The diagram is rendered by a C#/Unity offscreen scene into a RenderTexture
+-- (see MovementCrossSection.cs); the Lua side just asks the engine to build it
+-- and displays the returned image key. dmhub.SetMovementCrossSection builds/
+-- updates the scene and returns { image, width, height } (or nil for a move
+-- with no drawable cross-section); dmhub.ClearMovementCrossSection releases it.
+--
+-- Driven entirely by the LuaPath in the "tiletooltip" event args: TokenMoving
+-- adds movingToken/movingPath to the args it fires (see DSHud.lua). Events
+-- without those fields (e.g. the ruler tool) just collapse the diagram.
+-------------------------------------------------------------------------------
+
+local g_diagramWidth = 300
+local g_diagramHeight = 120
+
+--The diagram never displays wider than this; a wider render texture is scaled
+--down uniformly (x and y together) so tiles stay square on screen.
+local g_diagramMaxWidth = 340
+
+--A cheap identity for the proposed move so the diagram only rebuilds when the
+--path actually changes, not every time the tooltip event fires. Includes the
+--lower-tier jump alternates (if any) so a hover that changes only the
+--shortfall outcomes still re-renders, and the damage-number annotations so a
+--hover that changes only the predicted damage does too.
+local function DiagramPathSignature(token, path, alternates, damages)
+	local parts = {
+		token.charid,
+		path.movementType,
+		tostring(path.valid),
+		tostring(path.teleport),
+		tostring(path.fallDistance),
+		tostring(path.jumpHeight),
+		--mounting/dismounting a saddle changes the diagram (the rider is drawn on top of the
+		--mount) without changing any step, so it has to be part of the identity: hovering the
+		--saddle marker on a tile the mover could also just walk onto toggles only this.
+		tostring(path.mount),
+		tostring(damages ~= nil and damages.collision or nil),
+		tostring(damages ~= nil and damages.fall or nil),
+	}
+
+	local steps = path.steps
+	if steps ~= nil then
+		for _,step in ipairs(steps) do
+			parts[#parts+1] = step.str .. "@" .. tostring(step.altitude)
+		end
+	end
+
+	if alternates ~= nil then
+		for _,alt in ipairs(alternates) do
+			local landing = ""
+			if alt.path ~= nil and alt.path.destination ~= nil then
+				landing = alt.path.destination.str
+			end
+			parts[#parts+1] = string.format("alt:%s:%s", tostring(alt.label), landing)
+		end
+	end
+
+	return table.concat(parts, "|")
+end
+
+--Extracts the vertical profile of the path. Returns nil when the path has no
+--vertical interest (flat ground, no climbing/walls/falls and no other tokens
+--encountered), or when it spans multiple floors WITHOUT ending in a downward
+--fall and WITHOUT being a stairs traversal (an ordinary cross-floor move has no
+--single cross-section -- the tooltip's floor-delta arrow covers it; a fall off a
+--ledge to a lower floor is drawn, and so is a walk up/down a stairway).
+local function DiagramProfileFromPath(token, path)
+	local steps = path.steps
+	if steps == nil or #steps < 2 then
+		return nil
+	end
+
+	local n = #steps
+
+	local multiFloor = false
+	for i = 2, n do
+		if steps[i].floor ~= steps[1].floor then
+			multiFloor = true
+			break
+		end
+	end
+
+	--A STAIRS traversal (ObjectComponentStairs): every floor change enters the new floor
+	--through a stairway portal, marked by the UpFloor/DownFloor cost flag on the entering
+	--step. The C# harness stacks the involved floors and draws a staircase glyph at each
+	--transition (see MovementCrossSection.cs), so these are allowed -- and inherently
+	--vertically interesting.
+	local stairsTraversal = false
+
+	if multiFloor then
+		stairsTraversal = true
+		for i = 2, n do
+			if steps[i].floor ~= steps[i-1].floor then
+				local hasStair = false
+				--path.steps is 1-based in lua; the engine's per-step tables are 0-based.
+				local flags = path:GetStepFlags(i-1)
+				if flags ~= nil then
+					for _,f in ipairs(flags) do
+						if f == "UpFloor" or f == "DownFloor" then
+							hasStair = true
+						end
+					end
+				end
+				if not hasStair then
+					stairsTraversal = false
+					break
+				end
+			end
+		end
+	end
+
+	if multiFloor and not stairsTraversal then
+		--A cross-floor FALL (walk/pushed along one floor, then fall to a lower floor -- e.g.
+		--shoved off a balcony) still has a meaningful vertical cross-section: the C# harness
+		--stacks the floors and draws the drop with the upper floor as a thin platform and a
+		--dotted, labeled guide line per floor plane (see MovementCrossSection.cs). Allow it only
+		--when the path ends in a downward fall; any OTHER multi-floor shape has no single
+		--cross-section and is left to the tooltip's floor-delta arrow.
+		local endsInFall = false
+		local lastFlags = path:GetStepFlags(n-1)
+		if lastFlags ~= nil then
+			for _,f in ipairs(lastFlags) do
+				if f == "Fall" then
+					endsInFall = true
+				end
+			end
+		end
+
+		if not (endsInFall and steps[1]:FloorDifference(steps[n]) < 0) then
+			return nil
+		end
+	end
+
+	local entries = {}
+	for i = 1, n do
+		local step = steps[i]
+		local entry = {
+			alt = step.altitude,
+			ground = step.withGroundAltitude.altitude,
+			--true when the mover stands on the deck of a platform object (a bridge / walkway):
+			--the diagram draws the deck as a thin slab over the real ground beneath it.
+			onPlatform = step.platformAltitude ~= nil and step.platformAltitude == step.altitude,
+			flags = {},
+		}
+
+		if i > 1 then
+			--path.steps is 1-based in lua; the engine's per-step tables are 0-based.
+			local flags = path:GetStepFlags(i-1)
+			if flags ~= nil then
+				for _,f in ipairs(flags) do
+					entry.flags[f] = true
+				end
+			end
+
+			entry.climbWall = path:GetClimbOverWallHeight(i-1)
+			entry.wall = path:GetStepWallHeight(i-1)
+		end
+
+		entries[i] = entry
+	end
+
+	--other tokens whose columns the path passes through, deduped so a token
+	--occupying several path tiles gets one marker at the middle of its overlap
+	--with the path.
+	local othersByCharid = {}
+	local others = {}
+	for i = 1, n do
+		local toks = game.GetTokensAtLoc(steps[i])
+		if toks ~= nil then
+			for _,tok in ipairs(toks) do
+				if tok.charid ~= token.charid then
+					local record = othersByCharid[tok.charid]
+					if record == nil then
+						record = {
+							token = tok,
+							alt = tok.loc.altitude,
+							firstStep = i,
+							lastStep = i,
+							through = false,
+						}
+						othersByCharid[tok.charid] = record
+						others[#others+1] = record
+					else
+						record.lastStep = i
+					end
+
+					--the path passes through this token's space when their
+					--vertical extents overlap at this step; passing above or
+					--below is conveyed by the marker's vertical position.
+					local moverAlt = entries[i].alt
+					if moverAlt < record.alt + 1 and record.alt < moverAlt + 1 then
+						record.through = true
+					end
+				end
+			end
+		end
+	end
+
+	--A creature that is airborne (its altitude sits above the ground beneath it) while its
+	--path crosses an aura is a vertically interesting event on its own -- the cross-section
+	--shows the flyer passing over or into the aura band even on otherwise flat ground.
+	--game.GetAurasAtLoc is footprint-based (altitude ignored), so an aura the flyer passes
+	--over or under still counts; it is a superset of the bands the C# harness draws (see
+	--MovementCrossSection.cs), so this never suppresses a diagram that would have a band.
+	local airborne = false
+	local crossesAura = false
+	for i = 1, n do
+		if entries[i].alt > entries[i].ground then
+			airborne = true
+		end
+		if not crossesAura then
+			local auras = game.GetAurasAtLoc(steps[i]) or {}
+			for _, aura in ipairs(auras) do
+				--A markup zone hidden from players (an unrevealed trap) must not pop the
+				--diagram open for them -- an empty diagram would still give it away.
+				local instance = aura.auraInstance
+				local hidden = instance ~= nil and not dmhub.isDM and instance:try_get("hiddenFromPlayers") == true
+				if not hidden then
+					crossesAura = true
+					break
+				end
+			end
+		end
+	end
+
+	--A jump is vertically interesting by definition -- it arcs up over its start ground and
+	--clears walls up to its jump distance -- so always show its cross-section, even on flat
+	--ground. So is a stairs traversal: the mover changes floors up/down a staircase. So is
+	--mounting or dismounting a saddle (path.mount covers both): the rider climbs onto the
+	--mount's back or steps down off it, which the C# harness draws by lifting that end of the
+	--path onto the mount (see MovementCrossSection.cs).
+	local interesting = #others > 0 or path.fallDistance > 0 or path.movementType == "jump" or
+	                    stairsTraversal or path.mount or (airborne and crossesAura)
+	for i = 1, n do
+		local e = entries[i]
+		--Walking along a platform deck (a bridge) is flat, but there is a drop beneath it worth
+		--showing, so it counts as interesting even with no altitude change.
+		if e.ground ~= entries[1].ground or e.alt ~= entries[1].alt or
+		   e.climbWall ~= nil or e.wall ~= nil or e.flags.Fall or e.onPlatform then
+			interesting = true
+		end
+	end
+
+	if not interesting then
+		return nil
+	end
+
+	return {
+		entries = entries,
+		others = others,
+	}
+end
+
+--Rebuilds the diagram from the current move by asking the engine to build the
+--offscreen cross-section scene (see MovementCrossSection.cs) and displaying the
+--returned render texture. The panel is sized to the render texture, scaled down
+--uniformly to fit g_diagramMaxWidth so tiles stay square. Returns true if a
+--diagram is shown, false if the move has no drawable cross-section (the caller
+--collapses in that case).
+local function DiagramRender(diagramPanel, token, path, alternates, damages)
+	--Lower-tier jump alternates -> secondaryPaths ghost outcomes. The arg is
+	--simply ignored by engine builds that predate secondaryPaths support.
+	local secondaryPaths = nil
+	if alternates ~= nil then
+		for _, alt in ipairs(alternates) do
+			if alt.path ~= nil then
+				secondaryPaths = secondaryPaths or {}
+				secondaryPaths[#secondaryPaths + 1] = { path = alt.path, label = alt.label }
+			end
+		end
+	end
+
+	--Predicted damage-number annotations (collision / fall), computed by whoever
+	--fired the tiletooltip event (they are game-system rules). Drawn as red "-N"
+	--labels in the diagram, mirroring the map's forced-move targeting labels.
+	--Ignored by engine builds that predate the args.
+	local collisionDamage = nil
+	local fallDamage = nil
+	if damages ~= nil then
+		collisionDamage = damages.collision
+		fallDamage = damages.fall
+	end
+
+	local result = dmhub.SetMovementCrossSection{token = token, path = path, secondaryPaths = secondaryPaths, collisionDamage = collisionDamage, fallDamage = fallDamage}
+	if result == nil then
+		diagramPanel:SetClass("collapsed", true)
+		dmhub.ClearMovementCrossSection()
+		return false
+	end
+
+	local scale = 1
+	if result.width > g_diagramMaxWidth then
+		scale = g_diagramMaxWidth / result.width
+	end
+
+	diagramPanel:SetClass("collapsed", false)
+	diagramPanel.selfStyle.width = result.width * scale
+	diagramPanel.selfStyle.height = result.height * scale
+	diagramPanel.selfStyle.bgcolor = "white"
+	diagramPanel.bgimage = result.image
+	return true
+end
+
+--Where to put the movement tooltip so it never covers the mover, the destination or
+--the arrow: just outside the bounding box of the whole path, on whichever side has
+--the most room inside dmhub.cameraUsableBounds -- the same rect Panel.ShowTooltip
+--clamps to, so the clamp cannot drag it back over the box. Anchoring at the box EDGE
+--makes the clearance independent of the tooltip's size. All world coordinates:
+--valign 'top' = higher world y, halign 'right' = higher world x. The returned anchor
+--is a world point, which FloatTooltipNearTile accepts in place of a Loc.
+--Shared by the drag-move flow (GameHud.TokenMoving) and ability movement targeting
+--(ShowMovementDiagram in DrawSteelActionBar.lua).
+--- @param token CharacterToken the moving token
+--- @param path LuaPath the (previewed) movement path
+--- @return Vector2 anchor, string halign, string valign
+function GameHud.MovementTooltipPlacement(token, path)
+	--Bounding box of the whole path, expanded by the mover's footprint (+ a bit for the arrow ribbon).
+	local pad = (token.tileSize or 1)*0.5 + 0.15
+	local minx, miny, maxx, maxy = nil, nil, nil, nil
+	for _,step in ipairs(path.steps) do
+		local p = token:PosAtLoc(step)
+		if minx == nil then
+			minx, miny, maxx, maxy = p.x, p.y, p.x, p.y
+		else
+			if p.x < minx then minx = p.x elseif p.x > maxx then maxx = p.x end
+			if p.y < miny then miny = p.y elseif p.y > maxy then maxy = p.y end
+		end
+	end
+	if minx == nil then
+		local p = token:PosAtLoc(path.destination)
+		minx, miny, maxx, maxy = p.x, p.y, p.x, p.y
+	end
+	minx, miny, maxx, maxy = minx - pad, miny - pad, maxx + pad, maxy + pad
+	return GameHud.TooltipPlacementOutsideBox(minx, miny, maxx, maxy)
+end
+
+--Where to put the attack cross-section tooltip during ability targeting: outside the
+--box spanning the attacker and the hovered target, so it never sits on either creature
+--or on the targeting arrow between them. Same side-picking rule as the movement tooltip.
+--- @param sourceToken CharacterToken the attacker
+--- @param targetToken CharacterToken the hovered target
+--- @return Vector2 anchor, string halign, string valign
+function GameHud.AttackTooltipPlacement(sourceToken, targetToken)
+	local minx, miny, maxx, maxy = nil, nil, nil, nil
+	for _,tok in ipairs{sourceToken, targetToken} do
+		local p = tok:PosAtLoc(tok.loc)
+		local pad = (tok.tileSize or 1)*0.5 + 0.15
+		if minx == nil then
+			minx, miny, maxx, maxy = p.x - pad, p.y - pad, p.x + pad, p.y + pad
+		else
+			if p.x - pad < minx then minx = p.x - pad end
+			if p.x + pad > maxx then maxx = p.x + pad end
+			if p.y - pad < miny then miny = p.y - pad end
+			if p.y + pad > maxy then maxy = p.y + pad end
+		end
+	end
+	return GameHud.TooltipPlacementOutsideBox(minx, miny, maxx, maxy)
+end
+
+--Picks the roomiest side of a world-space box (inside dmhub.cameraUsableBounds) for a
+--tooltip anchored just outside it. Shared by the movement and attack diagram tooltips.
+--- @return Vector2 anchor, string halign, string valign
+function GameHud.TooltipPlacementOutsideBox(minx, miny, maxx, maxy)
+	--Keep the hovered tile inside the box too: during ability targeting it can be well
+	--outside the path -- a jump that lands short at a wall while the user aims past it --
+	--and a tooltip just off the path box would then sit on the cursor. Only a pointer
+	--inside the usable map area (between the HUD docks) counts; over a dock it is not on
+	--the map. (This used dmhub.mouseLoc, which does not exist, so it never ran.)
+	local mouseLoc = dmhub.GetMouseWorldPoint()
+	local usable = dmhub.cameraUsableBounds
+	local mouseOnMap = usable == nil or not (mouseLoc.x < usable.x1 or mouseLoc.x > usable.x2 or mouseLoc.y < usable.y1 or mouseLoc.y > usable.y2)
+	if mouseOnMap then
+		local cursorPad = 1.2
+		if mouseLoc.x - cursorPad < minx then minx = mouseLoc.x - cursorPad end
+		if mouseLoc.x + cursorPad > maxx then maxx = mouseLoc.x + cursorPad end
+		if mouseLoc.y - cursorPad < miny then miny = mouseLoc.y - cursorPad end
+		if mouseLoc.y + cursorPad > maxy then maxy = mouseLoc.y + cursorPad end
+	end
+
+	local cx = (minx + maxx)*0.5
+	local cy = (miny + maxy)*0.5
+	local gap = 0.3
+
+	--rough OVER-estimate of the tooltip's world size (text + diagram), used only to pick the roomiest
+	--side. Over-estimating is safe: it just biases us away from a side that is too tight.
+	local worldPerPixel = 0.1
+	local screenDims = dmhub.screenDimensions
+	if dmhub.cameraZoom ~= nil and screenDims ~= nil and screenDims.y > 0 then
+		worldPerPixel = (dmhub.cameraZoom*2) / screenDims.y
+	end
+	local ttW = 430 * worldPerPixel
+	local ttH = 640 * worldPerPixel
+
+	--Four candidate placements: tooltip fully outside the box, one per side. `slack` is how much room is
+	--left over after fitting the tooltip on that side (positive = fits without the clamp shoving it back).
+	local halign, valign, anchorx, anchory
+	local bounds = dmhub.cameraUsableBounds
+	if bounds == nil then
+		halign, valign, anchorx, anchory = 'right', 'center', maxx + gap, cy
+	else
+		local candidates = {
+			{ slack = (bounds.x2 - maxx) - ttW, halign = 'right',  valign = 'center', anchorx = maxx + gap, anchory = cy },
+			{ slack = (minx - bounds.x1) - ttW, halign = 'left',   valign = 'center', anchorx = minx - gap, anchory = cy },
+			{ slack = (bounds.y2 - maxy) - ttH, halign = 'center', valign = 'top',    anchorx = cx, anchory = maxy + gap },
+			{ slack = (miny - bounds.y1) - ttH, halign = 'center', valign = 'bottom', anchorx = cx, anchory = miny - gap },
+		}
+		local best = candidates[1]
+		for i = 2, #candidates do
+			if candidates[i].slack > best.slack then best = candidates[i] end
+		end
+		halign, valign, anchorx, anchory = best.halign, best.valign, best.anchorx, best.anchory
+	end
+
+	return core.Vector2(anchorx, anchory), halign, valign
+end
+
+--The diagram panel that lives inside the map tooltip. Updates (or collapses)
+--in response to the "args" event fired on the tooltip tree by the tiletooltip
+--handler below.
+local function CreateMovementDiagramPanel()
+	return gui.Panel{
+		classes = {"collapsed"},
+		width = g_diagramWidth,
+		height = g_diagramHeight,
+		halign = "center",
+		flow = "none",
+		interactable = false,
+		bgimage = "panels/square.png",
+		bgcolor = "#000000aa",
+		cornerRadius = 4,
+		vmargin = 2,
+		styles = {
+			{
+				selectors = {"collapsed"},
+				collapsed = 1,
+			},
+		},
+		data = {
+			signature = nil,
+		},
+		destroy = function(element)
+			--the tooltip (and this panel) is torn down by FinishTokenMoving; release
+			--the offscreen render texture so nothing stays resident while idle.
+			dmhub.ClearMovementCrossSection()
+			dmhub.ClearAttackCrossSection()
+		end,
+		args = function(element, args)
+			--The attack cross-section (ability targeting hovering a target): the action bar
+			--has already built the engine scene and checked it is worth showing; we just
+			--display the returned image (see CrossSection.ShowAttack in DrawSteelActionBar.lua).
+			if args ~= nil and args.attackDiagram ~= nil then
+				dmhub.ClearMovementCrossSection()
+				element.data.signature = "attack"
+				if GameHud.TooltipsSuppressed() or not dmhub.GetSettingValue("showmovementcrosssection") then
+					element:SetClass("collapsed", true)
+					dmhub.ClearAttackCrossSection()
+					return
+				end
+				local result = args.attackDiagram
+				local scale = 1
+				if result.width > g_diagramMaxWidth then
+					scale = g_diagramMaxWidth / result.width
+				end
+				element:SetClass("collapsed", false)
+				element.selfStyle.width = result.width * scale
+				element.selfStyle.height = result.height * scale
+				element.selfStyle.bgcolor = "white"
+				element.bgimage = result.image
+				return
+			end
+
+			dmhub.ClearAttackCrossSection()
+
+			if args == nil or args.movingToken == nil or args.movingPath == nil or
+			   GameHud.TooltipsSuppressed() or
+			   not dmhub.GetSettingValue("showmovementcrosssection") then
+				element.data.signature = nil
+				element:SetClass("collapsed", true)
+				dmhub.ClearMovementCrossSection()
+				return
+			end
+
+			local sig = DiagramPathSignature(args.movingToken, args.movingPath, args.movingPathAlternates, args.movingPathDamages)
+			if sig == element.data.signature then
+				return
+			end
+			element.data.signature = sig
+
+			--DiagramProfileFromPath is the interest gate (skips flat moves and
+			--multi-floor paths); the C# harness re-derives what it needs to draw.
+			local profile = DiagramProfileFromPath(args.movingToken, args.movingPath)
+			if profile == nil then
+				element:SetClass("collapsed", true)
+				dmhub.ClearMovementCrossSection()
+				return
+			end
+
+			DiagramRender(element, args.movingToken, args.movingPath, args.movingPathAlternates, args.movingPathDamages)
+		end,
+	}
+end
+
 --functions called by dmhud to indicate that a token is moving or has finished moving.
+--[==[ DEAD_CODE - overridden by Draw Steel UI\DSHud.lua:4
 function GameHud.TokenMoving(self, token, path)
 	
 	local diagonals = dmhub.GetSettingValue("truediagonals") and math.floor(path.numDiagonals/2) or 0
 
 	local distance = path.numSteps + diagonals
-	distance = distance * dmhub.FeetPerTile
+	distance = distance * dmhub.unitsPerSquare
 
     local forcedText = ""
 
@@ -84,8 +678,8 @@ function GameHud.TokenMoving(self, token, path)
             text = string.format("%s\n<color=#ff0000>Pushing %d tiles, inflicting %d damage.</color>", text, path.forcedMovementTotalDistance, path.collisionSpeed)
         end
 
-        if token.properties:ForcedMoveResistance() > 0 then
-            text = string.format("%s\nNote: This creature has <b>%d stability</b>", text, token.properties:ForcedMoveResistance())
+        if token.properties:Stability() > 0 then
+            text = string.format("%s\nNote: This creature has <b>%d stability</b>", text, token.properties:Stability())
         end
     end
 
@@ -99,20 +693,20 @@ function GameHud.TokenMoving(self, token, path)
 		local moveType = token.properties:CurrentMoveType()
 		if moveType == "walk" or moveType == "swim" then
 
-			local waterSteps = math.floor(path.waterSteps) * dmhub.FeetPerTile
+			local waterSteps = math.floor(path.waterSteps) * dmhub.unitsPerSquare
 			if waterSteps > 0 and waterSteps < distance then
 				text = string.format("%s; swim %s %s", text, MeasurementSystem.NativeToDisplayString(waterSteps), string.lower(MeasurementSystem.UnitName()))
 				walkAndSwim = true
 			end
 
-			local difficultDistance = math.floor(path.difficultSteps) * dmhub.FeetPerTile
+			local difficultDistance = math.floor(path.difficultSteps) * dmhub.unitsPerSquare
 			if difficultDistance == distance and distance > 0 then
 				text = string.format("%s; all in difficult terrain", text)
 			elseif difficultDistance > 0 then
 				text = string.format("%s; %s %s in difficult terrain", text, MeasurementSystem.NativeToDisplayString(difficultDistance), string.lower(MeasurementSystem.UnitName()))
 			end
 
-			local squeezeDistance = math.floor(path.squeezeSteps) * dmhub.FeetPerTile
+			local squeezeDistance = math.floor(path.squeezeSteps) * dmhub.unitsPerSquare
 			if squeezeDistance == distance and distance > 0 then
 				text = string.format("%s; squeezing through a tight space", text)
 			elseif squeezeDistance > 0 then
@@ -167,7 +761,7 @@ function GameHud.TokenMoving(self, token, path)
 
 		local distMoved = creature:DistanceMovedThisTurn()
 		if distMoved > 0 then
-			text = string.format("%s\nAlready moved %s %s this turn.", text, MeasurementSystem.NativeToDisplayString(distMoved*dmhub.FeetPerTile), string.lower(MeasurementSystem.UnitName()))
+			text = string.format("%s\nAlready moved %s %s this turn.", text, MeasurementSystem.NativeToDisplayString(distMoved*dmhub.unitsPerSquare), string.lower(MeasurementSystem.UnitName()))
 		end
 	end
 
@@ -221,6 +815,7 @@ function GameHud.TokenMoving(self, token, path)
 		floorDelta = floorDelta,
 	})
 end
+--]==]
 
 function GameHud.FinishTokenMoving(self)
 	self.dialog.sheet.tooltip = nil
@@ -236,6 +831,32 @@ function GameHud.EditLoot(self, object)
 	self.inventoryDialog.data.open(lootobj, { isobject = true, isshop = lootobj.shop, showBasic = true })
 end
 
+--- Delete a loot container that has just been emptied (destroy on empty).
+--- The emptying is a queued change, sent on the next frame, but a delete is
+--- sent at once; deleting in the same frame let that late change re-create
+--- the object's loot part, leaving the item on the map. So this waits two
+--- frames, and skips an object already gone (a second click, another player).
+--- @param lootobj LuaObjectComponentLoot
+function GameHud.DestroyEmptiedLoot(lootobj)
+	local floorid, objid = lootobj.floorid, lootobj.objid
+	local target = dmhub.FrameCount() + 2
+	local function Check()
+		if mod.unloaded then
+			return
+		end
+		if dmhub.FrameCount() < target then
+			dmhub.Schedule(0.01, Check)
+			return
+		end
+		local floor = game.GetFloor(floorid)
+		if floor == nil or floor.objects[objid] == nil then
+			return
+		end
+		lootobj:DestroyObject()
+	end
+	dmhub.Schedule(0.01, Check)
+end
+
 --function called by DMHub to indicate that a Loot object is being looted by a player.
 function GameHud.LootContainer(self, token, object)
 	local lootobj = object:GetComponent("Loot")
@@ -247,306 +868,29 @@ function GameHud.LootContainer(self, token, object)
 	if lootobj.instantLoot then
 		GameHud.LootAll(lootobj, token)
 		if lootobj.destroyOnEmpty then
-			lootobj:DestroyObject()
+			GameHud.DestroyEmptiedLoot(lootobj)
 		end
 		return
 	end
 
 	self.inventoryDialog.data.open(token, {})
-	self.tradeInventoryDialog.data.open(lootobj, { isobject = true, isshop = lootobj.shop, title = cond(lootobj.shop, 'Shop', 'Loot'), tradewith = token })
+	self.tradeInventoryDialog.data.open(lootobj, { isobject = true, isshop = lootobj.shop, title = cond(lootobj.shop, 'Shop', lootobj.objectInstance.description), tradewith = token })
 	
 end
 
-function GameHud:CreateTopLeftButtonPanel()
+setting{
+	id = "showtips",
+	default = true,
+	storage = "preference",
+}
 
-	local CreateButtonTooltip = gui.Tooltip
-
---local undoButton = gui.HudIconButton{
---		icon = 'panels/hud/anticlockwise-rotation.png',
---		events = {
---			click = function(element)
---				if element:HasClass("disabled") then
---					return
---				end
---				dmhub.Undo()
---			end,
---			hover = function(element)
---				if element:HasClass("disabled") then
---					return
---				end
---				if dmhub.undoState.undoDescription == nil then
---					return;
---				end
---
---				local text = string.format("Undo: %s", dmhub.undoState.undoDescription)
---				gui.Tooltip(text)(element)
---			end,
---		}
---	}
-
---local redoButton = gui.HudIconButton{
---		icon = 'panels/hud/clockwise-rotation.png',
---		events = {
---			click = function(element)
---				if element:HasClass("disabled") then
---					return
---				end
---				dmhub.redo()
---			end,
---			hover = function(element)
---				if element:HasClass("disabled") then
---					return
---				end
---				if dmhub.undoState.redoDescription == nil then
---					return;
---				end
---				local text = string.format("Redo: %s", dmhub.undoState.redoDescription)
---				gui.Tooltip(text)(element)
---			end,
---		}
---	}
-
-	--With the title bar mounted, its DMHub/Game/Tools/Panels menus replace
-	--both the engine's Tools/Main menus and the hud's pinnable toolbar
-	--strip, so the whole top-left block ends up empty; on an engine
-	--without titleBarContainer the bar is absent and both stay.
-	local titleBarMounted = rawget(_G, "TitleBar") ~= nil and TitleBar.IsMounted()
-
-	local engineMenus = nil
-	if not titleBarMounted then
-		engineMenus = gui.Panel{
-			flow = "horizontal",
-			y = -12,
-			x = -2,
-			width = "auto",
-			height = "auto",
-
-			styles = {
-				{
-					hmargin = 2,
-					flow = 'horizontal',
-				}
-			},
-
-			self:CreateToolsMenu(),
-			self:CreateMainMenu(),
-		}
-	end
-
-	local topLevelButtons = {}
-
-	if not titleBarMounted then
-		topLevelButtons = {
-		self:CreateToolbarPanel(),
-
---	gui.HudIconButton{
---		icon = 'panels/hud/exit-door.png',
---		click = function(element)
---			dmhub.LeaveGame()
---		end,
---		hover = CreateButtonTooltip("Leave Game"),
---	},
---
---	gui.HudIconButton{
---		icon = 'panels/hud/gear.png',
---		click = function(element)
---			dmhub.ShowPlayerSettings()
---		end,
---		hover = CreateButtonTooltip("Player Settings"),
---	},
---	
---	undoButton,
---	redoButton,
---
---	gui.HudIconButton{
---		icon = "icons/icon_common/icon_common_51.png",
---
---		create = function(element)
---			element:SetClass('deselected', not dmhub.GetSettingValue("showgrid"))
---			if element.tooltip ~= nil then
---				--redisplay tooltip with new setting.
---				element:FireEvent('hover')
---			end
---		end,
---		click = function(element)
---			dmhub.SetSettingValue("showgrid", not dmhub.GetSettingValue("showgrid"))
---			element:FireEventTree('create')
---		end,
---
---		hover = function(element)
---			local str = string.format('Grid overlay: %s', cond(dmhub.GetSettingValue("showgrid"), 'on', 'off'))
---			if dmhub.isDM then
---				str = string.format("%s\n(Only turns the grid off or on for you. Use grid color in map settings to control the grid for all players)", str)
---			end
---			gui.Tooltip(str)(element)
---		end
---	},
-
---	gui.HudIconButton{
---		icon = "icons/icon_tool/icon_tool_41.png",
---		click = function(element)
---			dmhub.SetSettingValue("zoom", max(0, dmhub.GetSettingValue("zoom") - 0.1))
---		end,
---	},
---	gui.HudIconButton{
---		icon = "icons/icon_tool/icon_tool_40.png",
---
---		click = function(element)
---			dmhub.SetSettingValue("zoom", min(1, dmhub.GetSettingValue("zoom") + 0.1))
---		end,
---	},
-
-	--gui.HudIconButton{
-	--	icon = 'icons/icon_tool/icon_tool_101.png',
-	--	click = function(element)
-	--		gamehud:ToggleRuler()
-	--	end,
-	--	hover = function(element)
-	--		gui.Tooltip("Measure distances" .. FormatInputForCommand("measure"))(element)
-	--	end,
-	--},
-
-		engineMenus,
-		}
-	end
-
-	if dmhub.isDM and false then
-
-		--spacing
-		topLevelButtons[#topLevelButtons+1] = gui.Panel{
-			style = {
-				width = 32,
-			}
-		}
-
-		--editing mode toggle button
-		topLevelButtons[#topLevelButtons+1] = gui.Panel{
-			bgimage = 'panels/square.png',
-			escapePriority = EscapePriority.EXIT_DM_MODE, --very low priority exit from dm mode
-			styles = {
-				{
-					width = 64,
-					height = 64,
-					bgcolor = '#92332DFF',
-					borderWidth = 2,
-					borderColor = 'grey',
-					cornerRadius = 8,
-					flow = 'none',
-				},
-				{
-					selectors = 'hover',
-					brightness = 1.2,
-					borderColor = 'white',
-				},
-
-				{
-					selectors = 'press',
-					brightness = 0.6,
-				},
-				{
-					selectors = 'dm-mode',
-					inherit_selectors = true,
-					borderWidth = 2,
-					borderColor = 'white',
-					--brightness = 1.5,
-				},
-			},
-			events = {
-				click = function(element)
-					dmhub.editorMode = not dmhub.editorMode
-					element.escapeActivates = dmhub.editorMode
-				end,
-				hover = CreateButtonTooltip("Toggle DM editing mode"),
-			},
-
-			children = {
-				gui.Panel{
-					bgimage = 'ui-icons/DMHubLogo.png',
-					styles = {
-						{
-							halign = 'center',
-							valign = 'center',
-							width = '100%',
-							height = '100%',
-							bgcolor = 'white',
-							borderWidth = 0,
-						},
-
-						{
-							selectors = 'dm-mode',
-							inherit_selectors = true,
-							--brightness = 3,
-						},
-					}
-				},
-
-				gui.Panel{
-					bgimage = 'ui-icons/DMHubLogo-light.png',
-					styles = {
-						{
-							halign = 'center',
-							valign = 'center',
-							width = '100%',
-							height = '100%',
-							bgcolor = 'white',
-							borderWidth = 0,
-						},
-
-						{
-							selectors = 'dm-mode',
-							inherit_selectors = true,
-							brightness = 10,
-							transitionTime = 0.5,
-						},
-					}
-				},
-
-			}
-		}
-
-	end
-
-	local topLevelMenu = gui.Panel{
-		id = 'TopLevelMenu',
-		styles = {
-			{
-				margin = 4,
-				flow = 'horizontal',
-			}
-		},
-
-		width = "auto",
-		height = "auto",
-		--Sit at the top of the bar. Without this the buttons are centered
-		--against the taller initiative bar beside them, which leaves an
-		--empty strip above them.
-		valign = "top",
-		y = 1,
-
-		--the refreshUndo event is triggered by dmhub due to undo state having changed.
-		--We refresh the buttons to show current state.
-	--refreshUndo = function()
-	--	undoButton:SetClass('disabled', dmhub.undoState.undoDescription == nil)
-	--	redoButton:SetClass('disabled', dmhub.undoState.redoDescription == nil)
-	--
-	--	if dmhub.undoState.undoPending then
-	--		undoButton:FireEventTree("seticon", 'game-icons/cloud-upload.png')
-	--	else
-	--		undoButton:FireEventTree("seticon", 'panels/hud/anticlockwise-rotation.png')
-	--	end
-	--
-	--	if dmhub.undoState.redoPending then
-	--		redoButton:FireEventTree("seticon", 'game-icons/cloud-upload.png')
-	--	else
-	--		redoButton:FireEventTree("seticon", 'panels/hud/clockwise-rotation.png')
-	--	end
-	--end,
-
-		children = topLevelButtons,
-	}
-
-	return topLevelMenu
-end
+--Map of tip-id -> true for tips the local user has learned/dismissed.
+--Kept Lua-side (not via tutorial.*) so /tipsclear can wipe it in one call.
+setting{
+	id = "tipsLearned",
+	default = {},
+	storage = "preference",
+}
 
 setting{
 	id = "toolbarplayerconfig",
@@ -563,11 +907,29 @@ setting{
 function GameHud:CreateToolbarPanel()
     local resultPanel
 
-	local settingName = cond(dmhub.isDM, "toolbargmconfig", "toolbarplayerconfig")
+	--DirectorUIVisible rather than dmhub.isDM: a Director presenting as a
+	--player (Encounter of the Week host) gets the player toolbar.
+	local settingName = cond(GameHud.DirectorUIVisible(), "toolbargmconfig", "toolbarplayerconfig")
 
 	local SerializeToolbar
 
 	local buttons = {}
+
+	--Everything the toolbar can hold. Both registries: most of what used to
+	--be a launchable panel (Maps, the Compendium, the Measuring Tool, the
+	--dev tools) is an ordinary dockable panel now, and a toolbar the user
+	--had already configured must keep finding those by name.
+	local ToolbarCandidates = function()
+		local result = {}
+		for _,items in ipairs({LaunchablePanel.GetMenuItems(), DockablePanel.GetMenuItems()}) do
+			for _,item in ipairs(items) do
+				if item.name ~= nil then
+					result[#result+1] = item
+				end
+			end
+		end
+		return result
+	end
 
 	local CreateToolbarButton = function(item)
 		
@@ -577,7 +939,8 @@ function GameHud:CreateToolbarPanel()
 		local geticon = item.geticon
 		local getdisabled = item.getdisabled
 		local button
-		button = gui.HudIconButton{
+		button = gui.Button{
+			classes = {"sizeM"},
 			icon = item.icon,
 			monitor = item.setting,
 			events = {
@@ -599,7 +962,20 @@ function GameHud:CreateToolbarPanel()
 					end
 				end,
 				press = function()
+					--Commands.GetCommandInfo only knows the launchable-panel and
+					--command registries; panels like Maps and the Measuring Tool
+					--are dockable panels now, so fall back to the toolbar's own
+					--candidate list (which covers both registries) or the button
+					--is inert.
 					local info = Commands.GetCommandInfo(itemName)
+					if info == nil then
+						for _,candidate in ipairs(ToolbarCandidates()) do
+							if candidate.name == itemName then
+								info = candidate
+								break
+							end
+						end
+					end
 					if info ~= nil and info.click ~= nil then
 						info.click()
 					end
@@ -693,7 +1069,7 @@ function GameHud:CreateToolbarPanel()
 
 	local DeserializeToolbar = function()
 		buttons = {}
-		local menuItems = LaunchablePanel.GetMenuItems()
+		local menuItems = ToolbarCandidates()
 		local doc = dmhub.GetSettingValue(settingName)
 		for _,itemName in ipairs(doc) do
 			for _,item in ipairs(menuItems) do
@@ -706,9 +1082,8 @@ function GameHud:CreateToolbarPanel()
 
 	DeserializeToolbar()
 
-
-
-    local addButton = gui.HudIconButton{
+    local addButton = gui.Button{
+		classes = {"sizeM"},
         icon = "ui-icons/Plus.png",
 		popupPositioning = "panel",
 
@@ -730,7 +1105,7 @@ function GameHud:CreateToolbarPanel()
 					return
 				end
 
-				local menuItems = LaunchablePanel.GetMenuItems()
+				local menuItems = ToolbarCandidates()
 				local items = {}
 				for _,item in ipairs(menuItems) do
 					if item.icon then
@@ -840,83 +1215,248 @@ function GameHud:CreateToolbarPanel()
     return resultPanel
 end
 
-function GameHud:CreateTopBar()
-	local dmControlsPanel = nil
-	local layersPanel = nil
-	--dmControlsPanel = self:DMGameControlsPanel()
-	--layersPanel = self:CreateLayersPanel()
-
-	--No title bar offset needed here: the engine anchors the whole game hud
-	--dialog BELOW the 32px title bar strip (the dialog is 1048 tall on a
-	--1080 screen, top edge at screen y=32), so our y=0 already sits flush
-	--under the bar. Adding TitleBar.Reserve() here double-counts it and
-	--leaves a bar-sized gap (seen with the initiative bar, 2026-08-21).
-	self.topBarPanel = gui.Panel{
-		width = "100%",
-		valign = "top",
-		height = "auto",
-		flow = "horizontal",
-
-		self:CreateTopLeftButtonPanel(),
-		self:CreateInitiativeBar(self.tokenInfo),
-		dmControlsPanel,
-		layersPanel,
-	}
-
-	return self.topBarPanel
-end
-
---The docks that currently exist, in serialization order. The dock system
---iterates this for save/restore; rawget because the floating dock only
---exists once the DockablePanel fork is active.
 function GameHud:Docks()
-	local result = {}
-	result[#result+1] = rawget(self, "leftDock")
-	result[#result+1] = rawget(self, "rightDock")
-	result[#result+1] = rawget(self, "floatingDock")
-	return result
+    local result = {}
+    result[#result+1] = rawget(self, "leftDock")
+    result[#result+1] = rawget(self, "rightDock")
+    result[#result+1] = rawget(self, "floatingDock")
+    return result
 end
 
---Dialogs that can be presented to players by id (see RegisterPresentableDialog).
 local g_presentableDialogs = {}
-
---Registers a dialog that the DM can present to players. The document
---system's floating windows register themselves here.
-function GameHud.RegisterPresentableDialog(args)
-	g_presentableDialogs[args.id] = args
-end
 
 GameHud.instance = false
 
+local function CreateLobbyHud(dialog, tokenInfo)
+	local gamehud = GameHud.new{
+		dialog = dialog,
+		tokenInfo = tokenInfo,
+		openInventoryDialogs = {},
+		interactionQueue = {},
+	}
+
+	GameHud.instance = gamehud
+
+	--The lobby hud has no present-to-players machinery, but callers such as
+	--DocumentSystem's present button poll this on every think. Reading an
+	--undefined field on a Hud userdata raises a Lua error, so define the
+	--accessor here; nothing is ever presented in the lobby.
+	gamehud.GetCurrentlyPresentedDialog = function()
+		return nil
+	end
+
+	gamehud.GetCurrentlyPresentedDialogPanel = function()
+		return nil
+	end
+
+	local mainDialogPanel = gamehud:MainDialogPanel()
+
+    local m_recordedPopup = nil
+
+	local parentPanel = gui.Panel{
+		styles = Styles.Default,
+		selfStyle = {
+			width = dialog.width,
+			height = dialog.height,
+		},
+		thinkTime = 0.1,
+
+		events = {
+			think = function(element)
+				gamehud:Think()
+
+                m_recordedPopup = element.popup
+			end,
+			escape = function(element)
+				gui.SetFocus(nil)
+			end,
+
+			--if this ends up as a host for popups it clears them if clicked.
+			press = function(element)
+				if element.popup ~= nil and element.popup == m_recordedPopup then
+					element.popup = nil
+				end
+			end,
+
+			refreshResolution = function(element)
+				element.selfStyle.width = dialog.width
+				element.selfStyle.height = dialog.height
+			end,
+		},
+
+		children = {
+
+			gamehud:CreateDocumentsPanel(),
+			mainDialogPanel,
+			gamehud:ModalDialogPanel(),
+			gamehud:CreatePopupPanel(),
+
+			gamehud:ConnectionStatusPanel(),
+		}
+	}
+
+	gamehud.parentPanel = parentPanel
+
+	dialog.sheet = parentPanel
+
+    return gamehud
+end
+
+--The generic identity for the tracked-documents top bar when the adventure
+--cannot be named. Kept in step with the initial values CodexTitleBar.lua gives
+--the menu item itself.
+local g_adventureDocumentsIcon = "phosphor/book-open.png"
+
+--Walks a document's journal-folder ancestry and returns the description of the
+--outermost real folder (the built-in roots -- Shared/Private/Templates/map --
+--are not in the folders table, so the walk simply runs out there). Adventures
+--ship their documents under a single top-level folder named for the adventure,
+--so that folder is the adventure's name. Returns nil for a document that sits
+--loose in a built-in root.
+local function AdventureFolderNameForDoc(doc)
+    local foldersTable = assets.documentFoldersTable or {}
+    local folderId = doc.parentFolder
+    local name = nil
+    local count = 0
+    while folderId ~= nil and folderId ~= "" and count < 20 do
+        local folder = foldersTable[folderId]
+        if folder == nil then
+            break
+        end
+        if not folder.hidden then
+            name = folder.description or name
+        end
+        folderId = folder.parentFolder
+        count = count + 1
+    end
+    return name
+end
+
+--The label for the tracked-documents top bar, derived from the documents being
+--tracked: if they all live under the same adventure folder, that adventure is
+--what the director is running. Returns nil when the answer is not unanimous
+--(two adventures tracked at once, or documents with no adventure folder) --
+--TopBar.SetAdventureDocuments renders a nil name as "Adventure Documents".
+local function AdventureDocumentsLabel(documentids)
+    local documentsTable = dmhub.GetTable(CustomDocument.tableName) or {}
+    local result = nil
+    for _,docid in ipairs(documentids) do
+        local doc = documentsTable[docid]
+        if doc == nil then
+            return nil
+        end
+
+        local name = AdventureFolderNameForDoc(doc)
+        if name == nil or (result ~= nil and result ~= name) then
+            return nil
+        end
+
+        result = name
+    end
+
+    return result
+end
+
+function GameHud:CreateAdventureDocumentsManager()
+    local resultPanel
+
+    local m_docs = nil
+
+    --a dummy panel to monitor changes to the adventure documents.
+    resultPanel = gui.Panel{
+        floating = true,
+        width = 1,
+        height = 1,
+
+        monitorGame = GetCurrentAdventuresDocument().path,
+        refreshGame = function(element)
+            local doc = GetCurrentAdventuresDocument()
+            local docs = doc.data or {}
+            if dmhub.DeepEqual(m_docs, docs) then
+                return
+            end
+
+            m_docs = DeepCopy(docs)
+
+            local documentids = {}
+            for docid,info in pairs(m_docs) do
+                if docid ~= "meta" then
+                    documentids[#documentids+1] = docid
+                end
+            end
+
+            table.sort(documentids, function(a,b)
+                local ordera = m_docs[a] and m_docs[a].order or 9999
+                local orderb = m_docs[b] and m_docs[b].order or 9999
+                if ordera == orderb then
+                    return a < b
+                end
+                return ordera < orderb
+            end)
+
+            print("AdventureDoc:: MONITOR", docs, "->", documentids)
+
+            --An adventure can name its own bar with /setadventuredocumentstitle,
+            --but almost none do, and defaulting to the starter adventure's
+            --identity branded every adventure "Delian Tomb". Derive the name
+            --from the tracked documents instead, and fall back to the generic
+            --identity rather than to a specific adventure's.
+            local metaRecord = m_docs["meta"]
+            local metaName = metaRecord and metaRecord.name
+            if metaName == "" then
+                --the whole-adventure "untrack" buttons blank the title to clear
+                --it; an empty label would otherwise leave a nameless bar.
+                metaName = nil
+            end
+
+            local meta = {
+                name = metaName or AdventureDocumentsLabel(documentids),
+                icon = (metaRecord and metaRecord.icon) or g_adventureDocumentsIcon,
+            }
+
+            TopBar.SetAdventureDocuments(meta, documentids)
+        end,
+
+        create = function(element)
+            element:FireEvent("refreshGame")
+        end,
+
+        destroy = function(element)
+            TopBar.SetAdventureDocuments(nil, {})
+            print("ADVENTURE:: DESTROY DOC")
+        end,
+    }
+
+    return resultPanel
+end
+
+GameHud.InvalidateGameHud = function()
+
 dmhub.CreateGameHud = function(dialog, tokenInfo)
+
+    if dmhub.isLobbyGame then
+        --back at the lobby: the next game hud is a fresh entry, not a rebuild
+        --of this game's hud, even when it re-enters the same game (see below).
+        rawset(_G, "g_hudGameId", nil)
+        return CreateLobbyHud(dialog, tokenInfo)
+    end
 
 	local gamehud = GameHud.new{
 		dialog = dialog,
 		tokenInfo = tokenInfo,
 		openInventoryDialogs = {},
 		interactionQueue = {},
-
-		--The 5e top-left button block is 82px tall; the dock system reads
-		--this so the left dock starts below it instead of assuming the
-		--default 46px top bar. (CreateDocks also subtracts
-		--TitleBar.Reserve() from its hardcoded 1080 reference height --
-		--that compensates for the hud dialog being 32px shorter when the
-		--bar is mounted, not for the bar's position; the dialog itself is
-		--anchored below the bar.)
-		dockTopReserve = 82,
 	}
 
 	GameHud.instance = gamehud
 
-	gamehud.rollDialog = gamehud:CreateRollDialog()
-	gamehud.rollOnTableDialog = gamehud:CreateRollOnTableDialog()
 
-	gamehud.rollDialog.data.rollOnTableDialog = gamehud.rollOnTableDialog
+	gamehud.rollDialog = gamehud:CreateRollDialog()
 
 	gamehud.inventoryDialog = gamehud:CreateInventoryDialog{
 		rearrange = true, --the user can rearrange the items in the inventory by dragging it.
 		equipment = true,
-		currency = true,
+		currency = false, --switch this to true if we want to enable currencies.
 		numRows = 6,
 		numCols = 8,
 		dialogWidth = 650,
@@ -932,12 +1472,26 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 		title = 'Trade',
 		tradeInventory = true,
 		tooltipAlign = 'right',
-		currency = true,
+		currency = false, --switch this to true if we want to enable currencies.
 	}
 	gamehud.tradeInventoryDialog.x = 600
 
 	gamehud.createItemDialog = gamehud:CreateAddItemDialog{
-		
+
+	}
+
+	-- Fullscreen host for the shop/inventory screen. CreateShopScreen reads
+	-- its host's .data.dialog for sizing and parents the screen here.
+	-- interactable = false so the empty host does not eat clicks to the map;
+	-- the shop screen child is interactable in its own right.
+	gamehud.shopPanel = gui.Panel{
+		id = "shop-screen-panel",
+		width = "100%",
+		height = "100%",
+		halign = "center",
+		valign = "center",
+		interactable = false,
+		data = { dialog = dialog },
 	}
 
 	local g_settingMapTooltips = setting{
@@ -956,6 +1510,7 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 
 	local presentDialogDoc = mod:GetDocumentSnapshot("presentdialog")
 
+	---@type Label?
 	local m_tilelabel = nil
 	local m_tiletooltip = nil
 
@@ -963,51 +1518,35 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 	local m_presentedDialog = nil
 	local m_presentedDialogArgs = nil
 
-	gamehud.GetCurrentlyPresentedDialog = function()
-		return m_presentedDialogArgs
-	end
+    gamehud.GetCurrentlyPresentedDialog = function()
+        return m_presentedDialogArgs
+    end
+
+    --The presented panel itself. It is mounted on the documents layer
+    --alongside the rails and the panel windows, so anything else living
+    --there (the chat speech bubble) asks for it to work out whether it is
+    --in front of the presentation or buried behind it.
+    gamehud.GetCurrentlyPresentedDialogPanel = function()
+        if m_presentedDialog ~= nil and m_presentedDialog.valid then
+            return m_presentedDialog
+        end
+        return nil
+    end
+
 
 	--the dialog info that we have written to the cloud.
 	local m_presentDialogParentElement = nil
-	local m_presentDialog = nil
-	local m_presentDialogArgs = nil
 	local m_presentDialogUpdateTime = nil
+
+	--A map dialog this client presented, until its echo brings the server
+	--timestamp: then it is noted shown, so the tabletop late-dialog path
+	--never replays this client's own presentation (the "Draw Steel" banner).
+	local m_ownMapPresentation = nil
 
     local m_recordedPopup = nil
 
-	--Theme overrides for the hud's own chrome. The legacy stylesheet baked
-	--its gold in when it loaded, so these rules re-state the same properties
-	--in scheme colors and are listed after it to win.
-	local function HudThemeRules()
-		return ThemeEngine.MergeTokens{
-			{
-				classes = {"hudIconButton"},
-				bgcolor = "@bg",
-				borderColor = "@border",
-			},
-			{
-				classes = {"hudIconButton", "selected", "tab"},
-				bgcolor = "@bg",
-			},
-			{
-				classes = {"hudIconButtonIcon"},
-				bgcolor = "@fg",
-			},
-			--The docks are built by the engine, which bakes in the same
-			--gold. These reach them because the docks live under this panel.
-			{
-				classes = {"panelTitle"},
-				color = "@fg",
-			},
-			{
-				classes = {"verticalDragDivider"},
-				bgcolor = "@border",
-			},
-		}
-	end
-
 	local parentPanel = gui.Panel({
-		styles = { Styles.Default, HudThemeRules() },
+		styles = Styles.Default,
 		selfStyle = {
 			width = dialog.width,
 			height = dialog.height,
@@ -1019,17 +1558,6 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 		events = {
 			think = function(element)
 				gamehud:Think()
-
-				if m_presentDialog ~= nil and (m_presentDialogParentElement == nil or not m_presentDialogParentElement.valid) then
-					element:FireEvent("clearPresentDialog")
-				elseif m_presentDialog ~= nil and dmhub.Time() > m_presentDialogUpdateTime + 5 then
-					local doc = mod:GetDocumentSnapshot("presentdialog")
-					doc:BeginChange()
-					doc.data.timestamp = ServerTimestamp()
-					doc:CompleteChange("Refresh dialog timestamp")
-
-					m_presentDialogUpdateTime = dmhub.Time()
-				end
 
                 m_recordedPopup = element.popup
 			end,
@@ -1044,14 +1572,27 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 				end
 			end,
 
-			presentDialog = function(element, parentElement, dialog, args)
+			presentDialog = function(element, parentElement, dialog, args, livedata)
 				m_presentDialogParentElement = parentElement
-				m_presentDialog = dialog
-				m_presentDialogArgs = args
+				m_presentedDialog = parentElement
+				m_presentedDialogArgs = {dialog = dialog, args = args}
+
+                local args = DeepCopy(m_presentedDialogArgs)
+                m_ownMapPresentation = nil
+                if type(args.args) == "table" and args.args.mapid ~= nil then
+                    m_ownMapPresentation = DeepCopy(args)
+                end
+
+                local dialogInfo = g_presentableDialogs[dialog]
+                if dialogInfo ~= nil and not dialogInfo.keeplocal then
+                    m_presentedDialog = nil
+                    m_presentedDialogArgs = nil
+                end
 
 				local doc = mod:GetDocumentSnapshot("presentdialog")
 				doc:BeginChange()
-				doc.data.dialog = {dialog = dialog, args = args}
+				doc.data.dialog = args
+                doc.data.livedata = livedata
 				doc.data.timestamp = ServerTimestamp()
 				doc:CompleteChange("Present dialog")
 
@@ -1059,8 +1600,6 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 			end,
 
 			clearPresentDialog = function(element)
-				m_presentDialog = nil
-				m_presentDialogArgs = nil
 
 				local doc = mod:GetDocumentSnapshot("presentdialog")
 				doc:BeginChange()
@@ -1073,25 +1612,83 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 				local doc = mod:GetDocumentSnapshot("presentdialog")
 				
 				local data = doc.data
-				if TimestampAgeInSeconds(doc.timestamp) > 12 then
-					data = {}
-				end
+				--if TimestampAgeInSeconds(doc.timestamp) > 12 then
+				--	data = {}
+				--end
 
-				if m_presentedDialog ~= nil and m_presentedDialog.valid and (not dmhub.DeepEqual(m_presentedDialogArgs, data.dialog)) then
-					m_presentedDialog:FireEventTree("closePanel")
-					m_presentedDialog:DestroySelf()
+				if m_presentedDialog ~= nil and ((not m_presentedDialog.valid) or not dmhub.DeepEqual(m_presentedDialogArgs, data.dialog)) then
+                    if m_presentedDialog.valid and (not m_presentedDialog.data.persistAfterPresentation) then
+					    m_presentedDialog:FireEventTree("closePanel")
+					    m_presentedDialog:DestroySelf()
+                    end
 					m_presentedDialog = nil
 					m_presentedDialogArgs = nil
 				end
 
-				if (not dmhub.isDM) and data.dialog ~= nil then
+				if data.dialog ~= nil then
+                    --the timestamp is a placeholder string until the server echo.
+                    if m_ownMapPresentation ~= nil and type(data.timestamp) == "number"
+                            and dmhub.DeepEqual(m_ownMapPresentation, data.dialog) then
+                        Tabletop.NoteMapDialogShown(data)
+                        m_ownMapPresentation = nil
+                    end
+
+                    --past its ttl a dialog is dropped -- unless it is one for a map
+                    --this client never showed because no window showed the map
+                    --(the tabletop view): it waits for that map's window instead.
+                    if data.dialog.args.ttl ~= nil and TimestampAgeInSeconds(data.timestamp) > data.dialog.args.ttl
+                            and not Tabletop.ShowLateMapDialog(data) then
+                        return
+					end
+
+                    if data.dialog.args.mapid ~= nil and data.dialog.args.mapid ~= game.currentMapId then
+                        return
+                    end
+
+                    --A dialog presented for one map (the "Draw Steel" banner) opens
+                    --over that map, inside its map window; with no window
+                    --showing the map, wait for one.
+                    local mapHost = nil
+                    if data.dialog.args.mapid ~= nil then
+                        mapHost = Tabletop.MapOverlayHost()
+                        if mapHost == nil then
+                            return
+                        end
+                    end
+
 					if m_presentedDialog ~= nil and m_presentedDialog.valid and dmhub.DeepEqual(m_presentedDialogArgs, data.dialog) then
 						return
 					end
 
-					m_presentedDialogArgs = dmhub.DeepCopy(data.dialog)
-					if LaunchablePanel.LaunchPanelByName(data.dialog.dialog, data.dialog.args) then
+					m_presentedDialogArgs = DeepCopy(data.dialog)
+                    if data.dialog.args.mapid ~= nil then
+                        Tabletop.NoteMapDialogShown(data)
+                    end
+                    local dialogInfo = g_presentableDialogs[m_presentedDialogArgs.dialog]
+                    if dialogInfo ~= nil then
+                        m_presentedDialog = dialogInfo.create(m_presentedDialogArgs.args)
+                        if m_presentedDialog ~= nil then
+                            --on the documents layer it shares the layer with the map
+                            --windows; the class keeps it above a maximized map, which
+                            --can be built after it (PanelDocument.ABOVE_MAP_WINDOWS).
+                            if mapHost == nil then
+                                m_presentedDialog:SetClass("presentedDialog", true)
+                            end
+                            (mapHost or GameHud.instance.documentsPanel):AddChild(m_presentedDialog)
+                        end
+					elseif LaunchablePanel.LaunchPanelByName(data.dialog.dialog, data.dialog.args) then
 						m_presentedDialog = gui.GetFocus()
+						--a launched panel opens over the screen; one presented for a map
+						--(the "Draw Steel" banner) moves into that map's window.
+						if mapHost ~= nil and m_presentedDialog ~= nil and m_presentedDialog.valid then
+							m_presentedDialog:Unparent()
+							mapHost:AddChild(m_presentedDialog)
+						end
+					else
+						--panels that used to be launchable are dockable now;
+						--a remote request to present one by name still has to
+						--find them.
+						DockablePanel.ShowPanelByName(data.dialog.dialog)
 					end
 				end
 
@@ -1103,7 +1700,7 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 			end,
 
 			tiletooltip = function(element, args)
-				if not g_settingMapTooltips:Get() then
+				if GameHud.TooltipsSuppressed() or not g_settingMapTooltips:Get() then
 					return
 				end
 
@@ -1167,46 +1764,164 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 				element:FloatTooltipNearTile(loc,
 					gui.TooltipFrame(
 						gui.Panel{
-							flow = "horizontal",
+							flow = "vertical",
 							width = "auto",
 							height = "auto",
-							floorDeltaArrow,
-							m_tilelabel,
+							gui.Panel{
+								flow = "horizontal",
+								width = "auto",
+								height = "auto",
+								halign = "center",
+								floorDeltaArrow,
+								m_tilelabel,
+							},
+							CreateMovementDiagramPanel(),
 						},
 						{
 							interactable = false,
 							halign = halign,
 							valign = valign,
+
+							--Cursor dodge: while the cursor is inside the tooltip's
+							--bounds, fade the tree so the map stays readable. Opacity
+							--does not cascade, so the class goes on every panel
+							--(SetClassTree). Fading rather than hiding or moving keeps
+							--the geometry stable, so this cannot oscillate.
+							styles = {
+								{
+									selectors = {"cursor-under-tooltip"},
+									opacity = 0.1,
+									transitionTime = 0.1,
+								},
+							},
+							thinkTime = 0.05,
+							think = function(element)
+								--mousePoint is normalized within the panel; values outside
+								--(0,1) -- including the (0,0) reported when the mouse is
+								--elsewhere -- mean the cursor is not over the tooltip.
+								local p = element.mousePoint
+								local over = p ~= nil and p.x > 0 and p.x < 1 and p.y > 0 and p.y < 1
+								element:SetClassTree("cursor-under-tooltip", over)
+							end,
 						}
 					)
 				)
 
 				m_tiletooltip = element.tooltip
+				--FloatTooltipNearTile just installed the TooltipFrame as the tooltip.
+				---@cast m_tiletooltip Panel
+
+				--let the diagram (and the floor arrow) see the initial args;
+				--on reuse the FireEventTree above keeps them updated.
+				m_tiletooltip:FireEventTree("args", args)
 
 			end,
 		},
 
 		children = {
-			gamehud:CreateShapesLayer(),
+			--bottom of the stack: the table (Tabletop.lua).
+			Tabletop.CreateLayer(),
+
+            gamehud:CreateAdventureDocumentsManager(),
+			--initiative is per map: the bar moves into the live map window
+			--(Tabletop.MapHudSlot). The Director's Shapes overlay is drawn in
+			--that window too (#ShapesView), not over the whole screen.
+		    Tabletop.MapHudSlot(gamehud:CreateInitiativeBar(tokenInfo)),
+			--the Director's pre-combat bar for an encounter in prep, in the
+			--initiative bar's place until Draw Steel (EncounterPrep.lua).
+		    Tabletop.MapHudSlot(gamehud:CreateEncounterPrepBar()),
 
 			gamehud:RequireRollListenerPanel(),
-			gamehud:CreateTopBar(),
 			--gamehud:CreateSidePanel(),
-			gamehud:CreateActionBar(dialog, tokenInfo),
-			gamehud:CreateReactionBar(dialog, tokenInfo),
-			gamehud:CreateDocumentsPanel(),
 			--gamehud:CreateSessionsPanel(),
 			--gamehud:CreateChatPanel(),
-			gamehud:CreateFrozenLabel(),
 			gamehud:CreateDocks(),
+
+			--ORDER IS Z-ORDER: panels have no z-index, so a later sibling draws
+			--over an earlier one. The documents layer hosts every floating
+			--journal/panel window, and it used to sit AFTER the two roll layers,
+			--so an open window covered the ability card and its power roll --
+			--worst during montages and negotiations, where the document window is
+			--open exactly when the rolls happen. The windows' own
+			--SetAsLastSibling() only reorders within their own layer, so nothing
+			--could bring the roll card forward.
+			--
+			--Documents now come first, putting the roll UI above floating windows
+			--while still leaving it below mainDialog / modal / popup / rollDialog,
+			--so modals and the dice dialog continue to win.
+			--the Director's Screen: a band down the right of the table, under
+			--the windows that lie on it (DirectorScreen.lua).
+			DirectorScreen.CreateLayer(),
+			gamehud:CreateDocumentsPanel(),
+			--minimized tabletop map windows float on the table over the
+			--windows and journals (Tabletop.lua).
+			Tabletop.CreateButtonLayer(),
+			--the Director's Screen's tab and drop hint, over the windows.
+			DirectorScreen.CreateTabLayer(),
+			--3D dice resting on the table: the Director's dice button and the
+			--dice sync (TableDice.lua; the dice themselves draw in the engine).
+			(rawget(_G, "TableDice") ~= nil and TableDice.CreateLayer()) or gui.Panel{width = 1, height = 1, interactable = false},
+			--mode banners (e.g. the encounter builder's staging banner) sit over
+			--every window, so click-to-front on a map window cannot bury them.
+			gamehud:CreateBannerLayer(),
+			--the FROZEN label too: map windows live in the documents layer, so
+			--anywhere before it the live map window draws over the label.
+			gamehud:CreateFrozenLabel(),
+
+			--The action bar sits ABOVE the documents layer for the same reason.
+			--Everything the bar floats out of its strip -- the drawer menus, the
+			--cast controls (abilityController / Confirm), the Respite Activity
+			--drawer -- reaches up to ~900px into map space, so a window parked
+			--anywhere near the bottom centre swallowed the control AND its
+			--clicks. Reported three times over: UECH333Y (drawer cards),
+			--58DDT3EB (Confirm), TR4BXVG8 (Respite Activity).
+			--
+			--Promoting the whole bar rather than re-homing the individual popups
+			--is deliberate. The popups cannot leave the bar's subtree: drawer
+			--menus re-parent into their own drawer to position themselves and
+			--route events through FindParentWithClass("actionBar")
+			--(DrawSteelActionBar.lua, the ActionMenu "menu" handler), and the
+			--rest ride the bar's FireEventTree. renderOnTop is no help either --
+			--it draws on the top-most sorting canvas, which the raycaster does
+			--not reach, so the control would paint but stay unclickable.
+			--
+			--The price is that the bar's own strip (its gradient backdrop and the
+			--drawer buttons, ~58px tall and panelWidth wide, not full screen) now
+			--draws over the bottom of a window parked at bottom centre. That is
+			--much the smaller footprint of the two, and the bar hides itself
+			--entirely when no token is selected.
+			gamehud:CreateActionBar(dialog, tokenInfo),
+			gamehud:CreateReactionBar(dialog, tokenInfo),
 			mainDialogPanel,
+            --The roll surfaces (the ability sidebar, where rolls embed, the roll
+            --host and the group roll board) sit above the main dialog layer, so a
+            --roll started from a dialog there, such as a maximized Hero sheet,
+            --shows on top of it. All are side panels, not full screen.
+            gamehud:CreateAbilityDisplayPanel(),
+            gamehud:CreateStandaloneRollHost(),
+            gamehud:CreateGroupRollBoardLayer(),
+			gamehud.shopPanel,
 			gamehud:ModalDialogPanel(),
 			gamehud:CreatePopupPanel(),
 			gamehud:CreateRollResultPanel(),
-			gamehud.rollOnTableDialog,
 			gamehud.rollDialog,
 
-			FullscreenDisplay.Create(),
+			FullscreenDisplay.Create{aboveui = true},
+			--a maximized map or scene window's strip under the app title bar:
+			--chrome, so it is over everything the windows can be under.
+			Tabletop.CreateChromeLayer(),
+			--the Ctrl+Tab window switcher's cards, over every window and the strip.
+			WindowSwitcher.CreateLayer(),
+
+			DramaticBanner.Create(),
+
+			--headless monitor that replays squishy-object wobbles broadcast by
+			--other clients (see SquishFx in InteractiveSign.lua).
+			SquishFx.CreateMonitorPanel(),
+
+			DSVictoryScreen.Create(),
+
+			gamehud:CreateTipBanner(),
 
 			gamehud:ConnectionStatusPanel(),
 		}
@@ -1214,17 +1929,32 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 
 	gamehud.parentPanel = parentPanel
 
-	--One listener re-colors the hud chrome when the scheme changes. The
-	--docks style themselves now (DockablePanel.lua owns its own theme
-	--cascade), so only the hud's own rules need refreshing here.
-	ThemeEngine.OnThemeChanged(mod, function()
-		if parentPanel ~= nil and parentPanel.valid then
-			parentPanel.styles = { Styles.Default, HudThemeRules() }
-			parentPanel:FireEventTree("themeUpdate")
-		end
-	end)
+	--the scene display not shown over all the UI lies among the windows, as a
+	--maximized map does (FullscreenDisplay.Create).
+	gamehud.documentsPanel:AddChild(FullscreenDisplay.Create{aboveui = false})
 
 	dialog.sheet = parentPanel
+
+	--A hud rebuilt for the same game (a reload of another mod's scripts) took
+	--the icon rails and map-button bar with it; DocumentSystem only builds them
+	--on game entry or its own reload, so ask for both again here.
+	local rebuilt = rawget(_G, "g_hudGameId") == dmhub.gameid
+	rawset(_G, "g_hudGameId", dmhub.gameid)
+	if rebuilt then
+		dmhub.Schedule(0.1, function()
+			if mod.unloaded or GameHud.instance ~= gamehud then
+				return
+			end
+			local ensureRails = rawget(_G, "EnsureIconRail")
+			if ensureRails ~= nil then
+				ensureRails()
+			end
+			local mapButtons = rawget(_G, "MapButtons")
+			if mapButtons ~= nil and mapButtons.Refresh ~= nil then
+				mapButtons.Refresh()
+			end
+		end)
+	end
 
 	--if a modding merge has occurred, display info about it here.
 	if dmhub.modMergeInfo ~= nil then
@@ -1250,8 +1980,180 @@ dmhub.CreateGameHud = function(dialog, tokenInfo)
 	return gamehud
 end
 
-function GameHud.PresentDialogToUsers(parentElement, dialogid, args)
-	GameHud.instance.parentPanel:FireEvent("presentDialog", parentElement, dialogid, args)
+end
+
+GameHud.InvalidateGameHud()
+
+---@param args {id: string, create: function, keeplocal: nil|boolean}
+function GameHud.RegisterPresentableDialog(args)
+    g_presentableDialogs[args.id] = args
+end
+
+--Right margin for the right-side hosts (ability sidebar and standalone
+--roll host). With the legacy docks a fixed 364 column is reserved for
+--the right dock. In icon-rail mode the dock is gone, so the hosts sit
+--near the right edge -- clearing only the rail's button column -- and
+--slide left, as far as needed to fully clear floating panel windows
+--parked against the right edge (RailWindowsRightIntrusion), stopping
+--only when the host itself would run off the left of the screen.
+local RIGHT_HOST_LEGACY_MARGIN = 364
+--rail column: 12 edge margin + 40 button + a small gap.
+local RIGHT_HOST_RAIL_MARGIN = 60
+--breathing room between the host and whatever the rail column ends in.
+local RIGHT_HOST_RAIL_GAP = 8
+local function RightHostMargin(hostWidth)
+    if rawget(_G, "RailModeActive") == nil or not RailModeActive() then
+        return RIGHT_HOST_LEGACY_MARGIN
+    end
+    --the rail column itself. RIGHT_HOST_RAIL_MARGIN covers the ordinary
+    --button strip, but a custom-interface takeover can mount a far wider
+    --widget there -- the EotW hero roster is a stack of 132-unit cards --
+    --and the host has to clear it rather than render over the top of it.
+    local column = RIGHT_HOST_RAIL_MARGIN
+    if rawget(_G, "RailRightColumnWidth") ~= nil then
+        local w = RailRightColumnWidth()
+        if type(w) == "number" and w + RIGHT_HOST_RAIL_GAP > column then
+            column = w + RIGHT_HOST_RAIL_GAP
+        end
+    end
+    local intrusion = 0
+    if rawget(_G, "RailWindowsRightIntrusion") ~= nil then
+        --the reserve keeps the host on screen: its own width plus a
+        --left rail column's worth of clearance.
+        intrusion = RailWindowsRightIntrusion(RIGHT_HOST_LEGACY_MARGIN,
+            hostWidth + RIGHT_HOST_RAIL_MARGIN)
+    end
+    return math.max(column, intrusion)
+end
+
+--Keep a right-side host's margin tracking RightHostMargin(). Polled:
+--the inputs (the iconrail setting, window drags/opens/closes) have no
+--single change event, and the check is a handful of table reads.
+local function TrackRightHostMargin(panel)
+    --both hosts declare fixed numeric widths; fall back to the wider of
+    --the two so a non-numeric width just means a slightly shorter slide.
+    local hostWidth = panel.selfStyle.width
+    if type(hostWidth) ~= "number" then
+        hostWidth = 540
+    end
+    local currentMargin = nil
+    panel.thinkTime = 0.25
+    --panels built with no event handlers have a nil events table; reading
+    --panel.events returns nil rather than creating one, so seed it first.
+    if panel.events == nil then
+        panel.events = {}
+    end
+    panel.events.think = function(element)
+        local m = RightHostMargin(hostWidth)
+        if m ~= currentMargin then
+            currentMargin = m
+            element.selfStyle.rmargin = m
+        end
+    end
+    panel:FireEvent("think")
+end
+
+function GameHud:CreateAbilityDisplayPanel()
+    self.abilityDisplayPanel = gui.Panel{
+        styles = ThemeEngine.GetStyles(),
+        height = "100%",
+        width = 360,
+        rmargin = RIGHT_HOST_LEGACY_MARGIN,
+        halign = "right",
+        valign = "center",
+        interactable = false,
+    }
+
+    TrackRightHostMargin(self.abilityDisplayPanel)
+
+    ThemeEngine.OnThemeChanged(mod, function()
+        if self.abilityDisplayPanel ~= nil and self.abilityDisplayPanel.valid then
+            self.abilityDisplayPanel.styles = ThemeEngine.GetStyles()
+        end
+    end)
+
+    self:InitAbilityDisplayPanel(self.abilityDisplayPanel)
+
+    return self.abilityDisplayPanel
+end
+
+--[==[ DEAD_CODE - overridden by Timeline\AbilitySidebar.lua:1080
+function GameHud:InitAbilityDisplayPanel(abilityDisplayPanel)
+end
+--]==]
+
+--Host for the embedded roll dialog when there is no ability context.
+--Positioned on the right like the ability sidebar; real init lives in
+--Timeline\AbilitySidebar.lua.
+function GameHud:CreateStandaloneRollHost()
+    self.standaloneRollHostPanel = gui.Panel{
+        styles = ThemeEngine.GetStyles(),
+        width = 540,
+        height = "auto",
+        rmargin = RIGHT_HOST_LEGACY_MARGIN,
+        halign = "right",
+        valign = "center",
+        flow = "vertical",
+        interactable = true,
+    }
+
+    TrackRightHostMargin(self.standaloneRollHostPanel)
+
+    ThemeEngine.OnThemeChanged(mod, function()
+        if self.standaloneRollHostPanel ~= nil and self.standaloneRollHostPanel.valid then
+            self.standaloneRollHostPanel.styles = ThemeEngine.GetStyles()
+        end
+    end)
+
+    self:InitStandaloneRollHost(self.standaloneRollHostPanel)
+
+    return self.standaloneRollHostPanel
+end
+
+--Stub overridden by Timeline\AbilitySidebar.lua.
+function GameHud:InitStandaloneRollHost(panel)
+end
+
+--The board everyone sees while a group of creatures rolls against one ability
+--(e.g. resistance rolls). Stub overridden by Draw Steel UI\DSRequestRollsDialog.lua.
+function GameHud:CreateGroupRollBoardLayer()
+    return gui.Panel{width = 1, height = 1, interactable = false}
+end
+
+--return the presented dialog doc, if it exists and matches the given dialogid.
+function GameHud.GetPresentDialogDoc(dialogid)
+    local result = mod:GetDocumentSnapshot("presentdialog")
+    if result == nil or result.data == nil or result.data.dialog == nil or result.data.dialog.dialog ~= dialogid then
+        return nil
+    end
+    return result
+end
+
+--The presentdialog document itself, whether or not a dialog is currently on
+--screen. Hiding a dialog nils data.dialog but LEAVES data.livedata (see
+--clearPresentDialog), so a presenter can put its surface away and bring it
+--back with its state intact rather than having to tear the scene down.
+--Callers in OTHER modules must use this rather than their own
+--mod:GetDocumentSnapshot("presentdialog"): shared documents are namespaced per
+--module, so that call resolves to a different, never-changing document.
+function GameHud.GetPresentDialogDocRaw()
+	return mod:GetDocumentSnapshot("presentdialog")
+end
+
+function GameHud.PresentDialogToUsers(parentElement, dialogid, args, livedata)
+	GameHud.instance.parentPanel:FireEvent("presentDialog", parentElement, dialogid, args, livedata)
+end
+
+--The monitorGame path of the shared presentdialog document. Panels in OTHER
+--modules must use this rather than their own mod:GetDocumentPath("presentdialog"):
+--shared documents are namespaced per module, so that call would resolve to a
+--different (never-changing) document and the panel would never refresh.
+function GameHud.PresentDialogPath()
+	return mod:GetDocumentPath("presentdialog")
+end
+
+function GameHud.HidePresentedDialog()
+    GameHud.instance.parentPanel:FireEventTree("clearPresentDialog")
 end
 
 function GameHud:StatusText()
@@ -1373,7 +2275,7 @@ end
 --panel that goes next to the initiative that has some DM controls such as a rest button and require roll button.
 function GameHud:DMGameControlsPanel()
 
-	if not dmhub.isDM then
+	if not GameHud.DirectorUIVisible() then
 		return gui.Panel{
 			halign = "left",
 			width = 1,
@@ -1381,7 +2283,8 @@ function GameHud:DMGameControlsPanel()
 		}
 	end
 
-	local dmIlluminationButton = gui.HudIconButton{
+	local dmIlluminationButton = gui.Button{
+		classes = {"sizeM"},
 		icon = "icons/icon_device/icon_device_57.png",
 		create = function(element)
 			element:SetClass('deselected', not dmhub.GetSettingValue("dmillumination"))
@@ -1397,28 +2300,8 @@ function GameHud:DMGameControlsPanel()
 			end
 		end,
 		hover = function(element)
-			gui.Tooltip(string.format('GM Darkvision: %s', cond(dmhub.GetSettingValue("dmillumination"), 'on', 'off')))(element)
+			gui.Tooltip(string.format('Director Darkvision: %s', cond(dmhub.GetSettingValue("dmillumination"), 'on', 'off')))(element)
 		end,
-	}
-
-	local playerVisionOverlayButton = gui.HudIconButton{
-		icon = "icons/icon_game/icon_game_193.png",
-		create = function(element)
-			element:SetClass('deselected', dmhub.GetSettingValue("showplayervision"))
-		end,
-		click = function(element)
-			local hasOverlay = dmhub.GetSettingValue("showplayervision")
-			dmhub.SetSettingValue("showplayervision", not hasOverlay)
-			element:FireEventTree('create')
-
-			if element.tooltip ~= nil then
-				--redisplay tooltip with new setting.
-				element:FireEvent('hover')
-			end
-		end,
-		hover = function(element)
-			gui.Tooltip(string.format('Player vision overlay: %s', cond(dmhub.GetSettingValue("showplayervision"), 'off', 'on')))(element)
-		end
 	}
 
 	self.gameControlsPanel = gui.Panel{
@@ -1456,7 +2339,6 @@ function GameHud:DMGameControlsPanel()
 		--self:RestButton(),
 		--self:RequireRollPanel(),
 		dmIlluminationButton,
-		playerVisionOverlayButton,
 	}
 
 	return gui.Panel{
@@ -1480,12 +2362,27 @@ function GameHud:CreatePopupPanel()
 	return self.popupPanel
 end
 
+--The layer just above the documents (window) layer, for banners that show
+--a mode the user is in. Windows raise themselves within their own layer on
+--press, so a banner in the documents layer could end up under a map window;
+--one here cannot. It has no image, so it takes no mouse when empty.
+function GameHud:CreateBannerLayer()
+	self.bannerLayer = gui.Panel{
+		id = "hudBannerLayer",
+		width = "100%",
+		height = "100%",
+		interactable = false,
+	}
+
+	return self.bannerLayer
+end
+
 function GameHud:CreateFrozenLabel()
 
 	local freezebind = dmhub.GetCommandBinding("togglefreeze")
-	local bindtext = "(Players cannot move.)"
+	local bindtext = "(Players cannot act.)"
 	if freezebind ~= nil and dmhub.isDM then
-		bindtext = string.format("(Players cannot move. %s to toggle.)", freezebind)
+		bindtext = string.format("(Players cannot act. %s to toggle.)", freezebind)
 	end
 
 
@@ -1510,30 +2407,41 @@ function GameHud:CreateFrozenLabel()
 			},
 		},
 
+		data = {
+
+			frozen = nil
+
+		},
+
 		monitorGame = "/frozen",
 		refreshGame = function(element)
 			element:SetClassTree("frozen", dmhub.frozen)
+			if element.data.frozen ~= nil and element.data.frozen ~= dmhub.frozen then
+				if dmhub.frozen then
+					audio.FireSoundEvent("Notify.TimeFreeze_Start")
+				else
+					audio.FireSoundEvent("Notify.TimeFreeze_End")
+				end
+			end
+
+
+			element.data.frozen = dmhub.frozen
+
 		end,
 
 		press = function(element)
 			dmhub.frozen = not dmhub.frozen
+
 		end,
 		gui.Label{
 			text = "FROZEN",
 			width = "auto",
 			height = "auto",
 			halign = "center",
-@if MCDM
 			fontFace = "Colvillain",
 			fontSize = 48,
 			fontWeight = "black",
 			color = "white",
-@else
-			fontFace = "sellyoursoul",
-			fontSize = 48,
-			color = "#bbbbff",
-			bold = true,
-@end
 
 		},
 		gui.Label{
@@ -1541,22 +2449,799 @@ function GameHud:CreateFrozenLabel()
 			width = "auto",
 			height = "auto",
 			halign = "center",
-@if MCDM
 			uppercase = true,
 			fontFace = "Colvillain",
 			fontSize = 18,
 			bold = false,
-@else
-			color = "#bbbbff",
-			fontSize = 12,
-			bold = true,
-@end
 		},
 	}
 
 	return self.freezeLabel
 end
 
+
+--Horizontal alpha-fade so the banner has soft left/right edges.
+--Black fill in the middle, transparent at the ends.
+local g_tipBannerGradient = gui.Gradient{
+	point_a = {x = 0, y = 0.5},
+	point_b = {x = 1, y = 0.5},
+	stops = {
+		{position = 0,    color = "#00000000"},
+		{position = 0.12, color = "#000000d8"},
+		{position = 0.88, color = "#000000d8"},
+		{position = 1,    color = "#00000000"},
+	},
+}
+
+--Mouse-button bindings come back as "leftclick"/"rightclick"/"middleclick";
+--single-letter key bindings come back lowercase. Humanize for tip text so
+--the displayed phrase always matches what the user has actually bound.
+local function PrettifyBinding(s)
+	if s == nil or s == "" then return "?" end
+	local mouseMap = {
+		leftclick = "left mouse button",
+		rightclick = "right mouse button",
+		middleclick = "middle mouse button",
+	}
+	if mouseMap[s] ~= nil then return mouseMap[s] end
+	if #s == 1 then return string.upper(s) end
+	return s
+end
+
+local function TipAudienceOk(target)
+	target = target or "all"
+	if target == "all" then return true end
+	--presentation-aware: a Director presenting as a player (Encounter of the
+	--Week host) gets player-audience tips, not director ones.
+	if target == "director" then return GameHud.DirectorUIVisible() end
+	if target == "player" then return not GameHud.DirectorUIVisible() end
+	return true
+end
+
+--Tip registry. Tips opt in via Tip.Register{...}; the driver inside
+--CreateTipBanner's think handler scans every 5s for the highest-priority
+--eligible, not-yet-learned tip and displays it. Learned state is persisted
+--via the engine's tutorial.* bridge (PlayerPrefs under the hood).
+--Registry is stored on the Tip table so hot-reloading this file doesn't
+--drop tips registered from other modules.
+--rawget here because DMHub's Lua errors on reads of uninitialized globals.
+Tip = rawget(_G, "Tip") or {}
+Tip.registry = Tip.registry or {}
+
+---@param spec {id: string, priority: nil|number, target: nil|"all"|"director"|"player", text: string|function, eligible: nil|function, whenShown: nil|function, acted: nil|function}
+function Tip.Register(spec)
+	Tip.registry[spec.id] = spec
+end
+
+function Tip.Unregister(id)
+	Tip.registry[id] = nil
+end
+
+function Tip.IsLearned(id)
+	local t = dmhub.GetSettingValue("tipsLearned") or {}
+	return t[id] == true
+end
+
+function Tip.MarkLearned(id)
+	local t = dmhub.GetSettingValue("tipsLearned") or {}
+	t[id] = true
+	dmhub.SetSettingValue("tipsLearned", t)
+end
+
+--Wipe every tip's learned state and pull any currently-displayed tip off
+--screen without marking it learned. Used by the /tipsclear macro.
+function Tip.ResetAll()
+	dmhub.SetSettingValue("tipsLearned", {})
+	local gh = GameHud.instance
+	if not gh then return end
+	gh.activeTipId = nil
+	gh._tipState = nil
+	gh._tipLastScan = nil
+	gh.activeNoticeId = nil
+	gh._noticeDismissed = nil
+	local banner = gh:try_get("tipBanner")
+	if banner ~= nil and banner.valid then
+		banner:SetClass("visible", false)
+		banner.interactable = false
+	end
+end
+
+--Explicit dismiss from an action site. Marks the tip learned and, if it's
+--the one currently showing, takes it off screen immediately (no need to
+--wait for the next acted-poll tick).
+function Tip.Clear(id)
+	Tip.MarkLearned(id)
+	local gh = GameHud.instance
+	if not gh then return end
+	if gh:try_get("activeTipId") == id then
+		gh:_ClearActiveTip()
+	end
+end
+
+--Notice channel. A notice is a live STATUS shown on the same banner as the
+--tips ("Waiting for Shadow's Hesitation Is Weakness"), not a learn-once
+--tip: it is never marked learned, it outranks every tip, it appears within
+--a driver tick of its source returning text, and it leaves the moment the
+--source returns nil. Sources are polled by the driver at its 1Hz cadence,
+--so a source may read replicated state (a shared document, token
+--properties) without any monitor of its own. Dismiss hides only the
+--current text of the current notice; new text shows again.
+--text() may also return a controls table, re-read every tick, that decides
+--the banner buttons: {dismiss = nil|fun(), action = nil|{text, press}}.
+--With controls, Dismiss shows only when controls.dismiss is set (it runs
+--before the banner hides) and action adds a button on the left. Without
+--controls, Dismiss shows and only hides the banner.
+--Stored on Tip so hot-reloading this file keeps sources registered from
+--other modules (the Monster AI registers its "waiting on a player" notice).
+Tip.notices = Tip.notices or {}
+
+---@alias TipNoticeControls {dismiss: nil|fun(), action: nil|{text: string, press: fun()}}
+---@alias TipNoticeText fun(): string|nil, TipNoticeControls|nil
+
+---@param spec {id: string, priority: nil|number, text: TipNoticeText}
+function Tip.RegisterNotice(spec)
+	Tip.notices[spec.id] = spec
+end
+
+function Tip.UnregisterNotice(id)
+	Tip.notices[id] = nil
+end
+
+--First tip: camera movement. Cleared automatically the moment the camera
+--position changes (which only happens via the bound inputs or auto-control).
+Tip.Register{
+	id = "camera-move",
+	priority = 100,
+	target = "all",
+	text = function()
+		local up = PrettifyBinding(dmhub.GetCommandBinding("mapup"))
+		local left = PrettifyBinding(dmhub.GetCommandBinding("mapleft"))
+		local down = PrettifyBinding(dmhub.GetCommandBinding("mapdown"))
+		local right = PrettifyBinding(dmhub.GetCommandBinding("mapright"))
+		local scroll = PrettifyBinding(dmhub.GetCommandBinding("mapscroll"))
+		return string.format(
+			"Press %s, %s, %s, or %s to move the camera, or %s and drag.",
+			up, left, down, right, scroll)
+	end,
+	whenShown = function(state)
+		state.cameraPos = dmhub.cameraPosition
+	end,
+	acted = function(state)
+		if state.cameraPos == nil then return false end
+		local cur = dmhub.cameraPosition
+		if cur == nil then return false end
+		local dx = cur.x - state.cameraPos.x
+		local dy = cur.y - state.cameraPos.y
+		return (dx * dx + dy * dy) > 0.01
+	end,
+}
+
+--Camera zoom: shown after camera-move is learned. Cleared when the
+--orthographic size changes (mouse wheel zoom and zoomin/zoomout keys
+--all converge on the same camera property). "mouse wheel" stays
+--hardcoded -- wheel input isn't a rebindable command in the engine.
+Tip.Register{
+	id = "camera-zoom",
+	priority = 90,
+	target = "all",
+	text = function()
+		local zin = PrettifyBinding(dmhub.GetCommandBinding("zoomin"))
+		local zout = PrettifyBinding(dmhub.GetCommandBinding("zoomout"))
+		return string.format(
+			"Use mouse wheel or press %s/%s to zoom in and out.",
+			zin, zout)
+	end,
+	whenShown = function(state)
+		state.zoom = dmhub.cameraZoom
+	end,
+	acted = function(state)
+		if state.zoom == nil then return false end
+		local cur = dmhub.cameraZoom
+		if cur == nil then return false end
+		return math.abs(cur - state.zoom) > 0.0001
+	end,
+}
+
+--Token movement: shown when the user has a single token selected outside
+--of combat or a frozen state. Cleared once that token's location changes.
+--If the user deselects or combat starts while the tip is up, the driver's
+--eligible re-check suppresses it without marking learned, so it returns
+--the next time the context is right.
+Tip.Register{
+	id = "token-drag-move",
+	priority = 80,
+	target = "all",
+	text = "Click and drag your token to move it.",
+	eligible = function()
+		if dmhub.frozen then return false end
+		local q = dmhub.initiativeQueue
+		if q ~= nil and not q.hidden then return false end
+		local sel = dmhub.selectedTokens
+		if sel == nil or #sel ~= 1 then return false end
+		--(a creature selected off the board, a tabletop card's, has no token here.)
+		if not sel[1].onBoard then return false end
+		return true
+	end,
+	whenShown = function(state)
+		local tok = dmhub.selectedTokens[1]
+		state.tokenId = tok.charid
+		state.startLoc = { x = tok.loc.x, y = tok.loc.y }
+	end,
+	acted = function(state)
+		if state.startLoc == nil then return false end
+		for _, tok in ipairs(dmhub.selectedTokens) do
+			if tok.charid == state.tokenId then
+				local dx = tok.loc.x - state.startLoc.x
+				local dy = tok.loc.y - state.startLoc.y
+				return (dx * dx + dy * dy) > 0.01
+			end
+		end
+		return false
+	end,
+}
+
+--Use-light prompt. Eligible when the user has a single token selected
+--underground, in a dark area, with a light style configured but not yet
+--equipped (selectedLoadout != 1). The {light-btn} tutorial highlight
+--draws a cursor around the light toggle button in MCDMCharacterPanel.
+--Note: GetEquippedLightSource() returns the *currently chosen* light
+--item id even when initLight hasn't been set (it falls back to default).
+Tip.Register{
+	id = "use-light",
+	priority = 70,
+	target = "all",
+	text = function()
+		local lkey = PrettifyBinding(dmhub.GetCommandBinding("light"))
+		local lightName = "light"
+		local sel = dmhub.selectedTokens
+		if sel ~= nil and #sel == 1 then
+			local lightId = sel[1].properties:GetEquippedLightSource()
+			if lightId ~= nil then
+				local gearTable = dmhub.GetTable("tbl_Gear")
+				if gearTable ~= nil and gearTable[lightId] ~= nil and gearTable[lightId].name ~= nil then
+					lightName = gearTable[lightId].name
+				end
+			end
+		end
+		return string.format(
+			"Press %s or press the light button to take out your %s.",
+			lkey, lightName)
+	end,
+	eligible = function()
+		if dmhub.frozen then return false end
+		local sel = dmhub.selectedTokens
+		if sel == nil or #sel ~= 1 then return false end
+		if not sel[1].onBoard then return false end
+		local tok = sel[1]
+		local lightId = tok.properties:GetEquippedLightSource()
+		if lightId == nil then return false end
+		if tok.properties:try_get("selectedLoadout", 0) == 1 then return false end
+		--Above-ground floors use dynamic outdoor lighting; the "very dark"
+		--threshold belongs only to the underground illumination setting.
+		if game.FloorIsAboveGround(tok.floorid) then return false end
+		local ambient = dmhub.GetSettingValue("undergroundillumination") or 1.0
+		if ambient >= 0.3 then return false end
+		return true
+	end,
+	whenShown = function(state)
+		state.tokenId = dmhub.selectedTokens[1].charid
+		--Highlight by id, not class: the "light-btn" class is unfortunately
+		--reused for the unrelated look-up-between-floors button in
+		--MCDMCharacterPanel.lua, so class targeting hits the wrong element
+		--(or both) and the cursor lands inconsistently. The id is stable.
+		tutorial.SetTutorial{
+			name = "tip-use-light",
+			entries = {
+				{ target = "#char-panel-light-btn", text = "" },
+			},
+		}
+	end,
+	whenHidden = function(state)
+		tutorial.ClearTutorial()
+	end,
+	acted = function(state)
+		if state.tokenId == nil then return false end
+		for _, tok in ipairs(dmhub.selectedTokens) do
+			if tok.charid == state.tokenId then
+				return tok.properties:try_get("selectedLoadout", 0) == 1
+			end
+		end
+		return false
+	end,
+}
+
+--Beastheart "Call companion" prompt. Eligible when the user has a single
+--Beastheart selected with a chosen companion that isn't currently nearby
+--(matches the visibility of the Call button in DSBeastheart.lua). Cleared
+--when the companion ends up near the beastheart -- which is what pressing
+--Call accomplishes via CallCompanion(). CALL_RANGE_TILES is duplicated
+--from DSBeastheart.lua (kept in sync deliberately).
+local TIP_CALL_RANGE_TILES = 3
+
+local function BeastheartCompanionIsNearby(tok)
+	if tok == nil or not tok.valid or tok.properties == nil then return false end
+	local companionToken = tok.properties:GetCompanionToken()
+	if companionToken == nil or not companionToken.loc.isOnMap then return false end
+	return companionToken.loc:DistanceInTiles(tok.loc) <= TIP_CALL_RANGE_TILES
+end
+
+Tip.Register{
+	id = "beastheart-call",
+	priority = 60,
+	target = "all",
+	text = function()
+		local beastname = "companion"
+		local sel = dmhub.selectedTokens
+		if sel ~= nil and #sel == 1 then
+			local companionType = sel[1].properties:GetCompanionType()
+			if companionType ~= nil then
+				local monster = assets.monsters[companionType]
+				if monster ~= nil and monster.name ~= nil then
+					beastname = monster.name
+				end
+			end
+		end
+		return string.format("Press the Call button to summon your %s.", beastname)
+	end,
+	eligible = function()
+		local sel = dmhub.selectedTokens
+		if sel == nil or #sel ~= 1 then return false end
+		if not sel[1].onBoard then return false end
+		local tok = sel[1]
+		if tok.properties == nil then return false end
+		if tok.properties:GetCompanionType() == nil then return false end
+		return not BeastheartCompanionIsNearby(tok)
+	end,
+	whenShown = function(state)
+		state.tokenId = dmhub.selectedTokens[1].charid
+		tutorial.SetTutorial{
+			name = "tip-beastheart-call",
+			entries = {
+				{ target = "#beastheart-call-btn", text = "" },
+			},
+		}
+	end,
+	whenHidden = function(state)
+		tutorial.ClearTutorial()
+	end,
+	acted = function(state)
+		if state.tokenId == nil then return false end
+		for _, tok in ipairs(dmhub.selectedTokens) do
+			if tok.charid == state.tokenId then
+				return BeastheartCompanionIsNearby(tok)
+			end
+		end
+		return false
+	end,
+}
+
+--Tip banner: a top-of-screen overlay driven by the Tip.* registry.
+--The think handler polls the active tip's acted() at thinkTime cadence
+--and scans the registry for the next tip when nothing is showing.
+function GameHud:CreateTipBanner()
+	--Tip text. The {tipBannerContent} class is what the parent-targeted
+	--opacity rules in the banner's styles block hook onto so the text
+	--fades in/out together with the banner background.
+	local tipLabel = gui.Label{
+		id = "tipBannerLabel",
+		classes = {"tipBannerContent", "sizeM"},
+        interactable = false,
+		text = "Tip banner ready.",
+		color = "white",
+		fontSize = 16,
+		width = "auto",
+		height = "auto",
+		maxWidth = 580,
+		halign = "center",
+		valign = "center",
+		textAlignment = "center",
+		textWrap = true,
+	}
+
+	--Floating so it pins to the right edge regardless of sibling layout.
+	local dismissButton = gui.Button{
+		id = "tipBannerDismiss",
+		classes = {"tipBannerContent", "sizeM"},
+		text = "Dismiss",
+		floating = true,
+		halign = "right",
+		valign = "center",
+		hmargin = 24,
+		press = function(element)
+			GameHud.instance:HideTip()
+		end,
+	}
+
+	--A notice's extra button (e.g. "Select Shadow"), pinned to the left edge
+	--opposite Dismiss. Collapsed unless the notice's controls ask for it.
+	local actionButton = gui.Button{
+		id = "tipBannerAction",
+		classes = {"tipBannerContent", "sizeM", "collapsed"},
+		text = "",
+		floating = true,
+		halign = "left",
+		valign = "center",
+		hmargin = 24,
+		--action: the {text, press} currently shown, set by _ApplyTipControls.
+		data = {},
+		press = function(element)
+			local action = element.data.action
+			if action ~= nil then
+				action.press()
+				--hide at once; the next driver tick re-reads the controls.
+				element:SetClass("collapsed", true)
+			end
+		end,
+	}
+
+	local banner
+	banner = gui.Panel{
+		id = "tipBanner",
+		classes = {"tipBanner"},
+		floating = true,
+		halign = "center",
+		valign = "top",
+		vmargin = 240,
+		width = 920,
+		height = 80,
+		bgimage = "panels/square.png",
+		bgcolor = "white",
+		gradient = g_tipBannerGradient,
+		cornerRadius = 4,
+		interactable = false,
+
+		--1 Hz tick. The driver is structured so when no tip is active
+		--(the common case) the work per tick is a single time compare;
+		--the expensive modal-dialog check only runs when a tip is
+		--actually displayed or about to be displayed.
+		thinkTime = 1.0,
+		think = function(element)
+			--GameHud.instance is `false` (not nil) before the hud finishes
+			--initializing and again during teardown/reload, so a bare `~= nil`
+			--check lets a boolean through; a truthy check is correct.
+			local gh = GameHud.instance
+			if gh then gh:_TipDriverTick() end
+		end,
+
+		data = {
+			currentText = "",
+		},
+
+		--Banner rules target {tipBanner} so the cascade doesn't blanket
+		--the children. The {tipBannerContent, parent:visible} pair makes
+		--the label and dismiss mirror the banner's opacity transition
+		--instead of leaving text on screen after the background fades.
+		styles = {
+			{
+				selectors = {"tipBanner"},
+				opacity = 0,
+				y = -12,
+			},
+			{
+				selectors = {"tipBanner", "visible"},
+				opacity = 1,
+				y = 0,
+				transitionTime = 0.2,
+			},
+			{
+				selectors = {"tipBannerContent"},
+				opacity = 0,
+				transitionTime = 0.2,
+			},
+			{
+				selectors = {"tipBannerContent", "parent:visible"},
+				opacity = 1,
+				transitionTime = 0.2,
+			},
+		},
+
+		tipLabel,
+		dismissButton,
+		actionButton,
+	}
+
+	self.tipBanner = banner
+	self.tipBannerLabel = tipLabel
+	self.tipBannerDismiss = dismissButton
+	self.tipBannerAction = actionButton
+
+	return banner
+end
+
+--Set the banner buttons from a notice's controls (see Tip.RegisterNotice).
+--nil controls (every tip, and a notice that returns none) means a plain
+--Dismiss and no action button.
+---@param controls nil|TipNoticeControls
+function GameHud:_ApplyTipControls(controls)
+	local banner = self:try_get("tipBanner")
+	if banner == nil or not banner.valid then
+		return
+	end
+	banner.data.controls = controls
+
+	local dismiss = self:try_get("tipBannerDismiss")
+	if dismiss ~= nil and dismiss.valid then
+		dismiss:SetClass("collapsed", controls ~= nil and controls.dismiss == nil)
+	end
+
+	local actionButton = self:try_get("tipBannerAction")
+	if actionButton ~= nil and actionButton.valid then
+		local action = controls ~= nil and controls.action or nil
+		actionButton.data.action = action
+		if action ~= nil and actionButton.text ~= action.text then
+			actionButton.text = action.text
+		end
+		actionButton:SetClass("collapsed", action == nil)
+	end
+end
+
+---@param controls nil|TipNoticeControls
+function GameHud:ShowTip(text, controls)
+	local banner = self:try_get("tipBanner")
+	if banner == nil or not banner.valid then
+		return
+	end
+	local label = self:try_get("tipBannerLabel")
+	if label ~= nil and label.valid then
+		label.text = text or ""
+	end
+	banner.data.currentText = text or ""
+	self:_ApplyTipControls(controls)
+	banner:SetClass("visible", true)
+	banner.interactable = true
+end
+
+--Internal: take the active tip off display, invoking its whenHidden hook
+--so per-tip side effects (e.g. tutorial highlights) get torn down.
+--Does NOT mark the tip learned; callers decide.
+function GameHud:_ClearActiveTip()
+	local active = self:try_get("activeTipId")
+	if active == nil then return nil end
+	local spec = Tip.registry[active]
+	local state = self:try_get("_tipState") or {}
+	if spec ~= nil and spec.whenHidden ~= nil then
+		pcall(spec.whenHidden, state)
+	end
+	self.activeTipId = nil
+	self._tipState = nil
+	local banner = self:try_get("tipBanner")
+	if banner ~= nil and banner.valid then
+		banner:SetClass("visible", false)
+		banner.interactable = false
+	end
+	return active
+end
+
+function GameHud:HideTip()
+	--A notice on screen: Dismiss hides this text of this notice only. The
+	--driver shows the notice again as soon as its text changes.
+	local activeNotice = self:try_get("activeNoticeId")
+	if activeNotice ~= nil then
+		local banner = self:try_get("tipBanner")
+		--A notice that supplies its own dismiss (the Monster AI dismissing
+		--the hero's prompt) runs it; the banner hides either way.
+		local controls = banner ~= nil and banner.valid and banner.data.controls or nil
+		if controls ~= nil and controls.dismiss ~= nil then
+			local ok, err = pcall(controls.dismiss)
+			if not ok then
+				print("TIP:: notice dismiss failed:", err)
+			end
+		end
+		self._noticeDismissed = {
+			id = activeNotice,
+			text = banner ~= nil and banner.valid and banner.data.currentText or "",
+		}
+		self:_HideNoticeBanner()
+		return
+	end
+
+	--Dismiss-button / explicit hide: treat the active tip as learned so it
+	--won't reappear next session.
+	local active = self:_ClearActiveTip()
+	if active ~= nil then
+		Tip.MarkLearned(active)
+	end
+end
+
+--Internal: take the active notice off the banner. Does not touch the
+--dismissed record; callers decide whether this is a dismiss or an end.
+function GameHud:_HideNoticeBanner()
+	self.activeNoticeId = nil
+	local banner = self:try_get("tipBanner")
+	if banner ~= nil and banner.valid then
+		banner:SetClass("visible", false)
+		banner.interactable = false
+	end
+end
+
+--Poll every notice source; return the highest-priority one with text, and
+--its controls.
+function GameHud:_TipFindNotice()
+	local best, bestText, bestControls = nil, nil, nil
+	for _, spec in pairs(Tip.notices) do
+		local ok, text, controls = pcall(spec.text)
+		if ok and type(text) == "string" and text ~= "" then
+			if best == nil or (spec.priority or 0) > (best.priority or 0) then
+				best = spec
+				bestText = text
+				bestControls = type(controls) == "table" and controls or nil
+			end
+		end
+	end
+	return best, bestText, bestControls
+end
+
+--Notice half of the driver tick. Returns true when a notice owns the
+--banner this tick (shown or dismissed), in which case
+--the tip half must not run.
+function GameHud:_TipDriverNoticeTick()
+	local notice, noticeText, noticeControls = self:_TipFindNotice()
+	local activeNotice = self:try_get("activeNoticeId")
+	if notice == nil then
+		if activeNotice ~= nil then
+			self:_HideNoticeBanner()
+		end
+		self._noticeDismissed = nil
+		return false
+	end
+
+	--A notice outranks a tip: suppress the tip without marking it learned.
+	if self:try_get("activeTipId") ~= nil then
+		self:_ClearActiveTip()
+		self._tipLastScan = nil
+	end
+
+	--Unlike tips, an open dialog does not hold a notice back: it is live game
+	--status ("Waiting for Shadow's ..."), and an open character window (a
+	--journalViewer, often covered by the maximized map) once hid it.
+	local dismissed = self:try_get("_noticeDismissed")
+	local isDismissed = dismissed ~= nil and dismissed.id == notice.id
+		and dismissed.text == noticeText
+	if isDismissed then
+		if activeNotice ~= nil then
+			self:_HideNoticeBanner()
+		end
+		return true
+	end
+
+	local banner = self:try_get("tipBanner")
+	local currentText = banner ~= nil and banner.valid and banner.data.currentText or nil
+	if activeNotice ~= notice.id or currentText ~= noticeText
+		or (banner ~= nil and banner.valid and not banner:HasClass("visible")) then
+		self.activeNoticeId = notice.id
+		self:ShowTip(noticeText, noticeControls)
+	else
+		--Same text, but the buttons can still change (the hero got selected).
+		self:_ApplyTipControls(noticeControls)
+	end
+	return true
+end
+
+--Panel classes that, when present anywhere in the HUD tree, suppress the
+--tip banner (and pause acted-polling) so tips don't compete with dialogs
+--the user is actively reading. Add more entries here as needed.
+local g_tipBlockingClasses = {
+	"journalViewer",
+}
+
+--Returns true if any tip-blocking dialog is currently in the panel tree.
+function GameHud:_TipIsBlockedByDialog()
+	--The character sheet is hosted by the engine in its own SheetPanel root
+	--(CharacterSheetHarness), not under the HUD's parentPanel, so the class
+	--walk below cannot see it. Ask the engine directly.
+	if dmhub.inCharacterSheet then return true end
+
+	local root = self:try_get("parentPanel")
+	if root == nil or not root.valid then return false end
+	for _, cls in ipairs(g_tipBlockingClasses) do
+		local hits = root:GetChildrenWithClassRecursive(cls)
+		if hits ~= nil and #hits > 0 then return true end
+	end
+	return false
+end
+
+--Called from the tip banner's think handler at thinkTime cadence.
+--Structured so the "no active tip + nothing eligible" path -- which is the
+--common case once tips are learned -- does only a single time comparison
+--per tick. The panel-tree-walking modal-dialog check is paid for ONLY when
+--a tip is actively displayed or when the scan has actually found a tip to
+--show; never speculatively.
+function GameHud:_TipDriverTick()
+	if self:_TipDriverNoticeTick() then
+		return
+	end
+
+	local active = self:try_get("activeTipId")
+
+	if active ~= nil then
+		--Active-tip path: full work. Modal check decides visibility,
+		--then acted/eligible decide state.
+		local banner = self:try_get("tipBanner")
+		if self:_TipIsBlockedByDialog() then
+			if banner ~= nil and banner.valid and banner:HasClass("visible") then
+				banner:SetClass("visible", false)
+				banner.interactable = false
+			end
+			return
+		end
+		if banner ~= nil and banner.valid and not banner:HasClass("visible") then
+			banner:SetClass("visible", true)
+			banner.interactable = true
+		end
+
+		local spec = Tip.registry[active]
+		if spec == nil then
+			self:_ClearActiveTip()
+			self._tipLastScan = nil
+			return
+		end
+
+		--acted() before eligible(): acted often invalidates eligible at
+		--the same moment (e.g. taking out a torch flips both); checking
+		--eligible first would suppress-without-marking and the tip would
+		--reappear next session.
+		if spec.acted ~= nil then
+			local state = self:try_get("_tipState") or {}
+			local ok, did = pcall(spec.acted, state)
+			if ok and did then
+				Tip.Clear(active)
+				return
+			end
+		end
+
+		if spec.eligible ~= nil then
+			local ok, v = pcall(spec.eligible)
+			if not (ok and v) then
+				self:_ClearActiveTip()
+				self._tipLastScan = nil
+				return
+			end
+		end
+
+		return
+	end
+
+	--No active tip. 4 out of 5 ticks fall through here in near-zero time:
+	--just one try_get + one float compare.
+	local now = dmhub.Time()
+	local last = self:try_get("_tipLastScan", -math.huge)
+	if (now - last) < 5 then return end
+	self._tipLastScan = now
+
+	--Scan for a candidate. Per-tip eligible() is microseconds; if every
+	--tip is learned or none is eligible we bail before touching the
+	--expensive modal-dialog check.
+	local best = nil
+	for _, spec in pairs(Tip.registry) do
+		if not Tip.IsLearned(spec.id) and TipAudienceOk(spec.target) then
+			local elig = true
+			if spec.eligible ~= nil then
+				local ok, v = pcall(spec.eligible)
+				elig = ok and v
+			end
+			if elig and (best == nil or (spec.priority or 0) > (best.priority or 0)) then
+				best = spec
+			end
+		end
+	end
+	if best == nil then return end
+
+	--Only now -- when we actually intend to display something -- pay the
+	--cost of walking the panel tree to ask "is a dialog blocking?"
+	if self:_TipIsBlockedByDialog() then return end
+
+	local text = best.text
+	if type(text) == "function" then
+		local ok, t = pcall(text)
+		text = (ok and t) or ""
+	end
+
+	local state = {}
+	if best.whenShown ~= nil then pcall(best.whenShown, state) end
+	self._tipState = state
+	self.activeTipId = best.id
+	self:ShowTip(text)
+end
 
 function GameHud:InspectDice()
 	if self:try_get("inspectdice") ~= nil then
@@ -1577,7 +3262,83 @@ function GameHud:InspectDice()
 	self:ShowModal(self.inspectdice)
 end
 
+--The map's right-click context menu is built by the client and handed to
+--Lua fully formed, so modules that need an entry on it register a
+--contributor here: each is called with the entry list and may append to
+--it. Keyed by id so re-registering (every Lua reload re-runs the
+--registering file) replaces rather than duplicates.
+g_gameContextMenuContributors = rawget(_G, "g_gameContextMenuContributors") or {}
+
+--- Add an entry-contributor to the map right-click menu.
+--- @param id string unique id for this contributor
+--- @param fn fun(entries: table) called with the entry list; append to it
+function RegisterGameContextMenuContributor(id, fn)
+	g_gameContextMenuContributors[id] = fn
+end
+
+--The token under the mouse cursor, or nil when the cursor is not over
+--one. Right-clicking a token does NOT select it, so this -- not the
+--selection -- is how a context-menu contributor identifies its subject.
+--
+--GetTokens{position} matches a token's ANCHOR loc against the radius, not
+--its rendered footprint. A tight radius therefore only matched clicks
+--landing within a tenth of a square of dead centre, which read as "the
+--menu entry only shows up on some tokens" -- and a large creature's anchor
+--can be several squares from the square actually clicked. So: cast wide,
+--then keep only tokens whose OCCUPIED squares contain the clicked square,
+--and take the nearest of those. Empty ground still yields nil, and stacked
+--tokens resolve to one rather than bailing out.
+function GameContextMenuTokenUnderCursor()
+	local pt = dmhub.GetMouseWorldPoint()
+	if pt == nil then
+		return nil
+	end
+	local tokens = dmhub.GetTokens{ position = { x = pt.x, y = pt.y, radius = 8 } }
+	if tokens == nil or #tokens == 0 then
+		return nil
+	end
+
+	local squarex = math.floor(pt.x + 0.5)
+	local squarey = math.floor(pt.y + 0.5)
+	local best = nil
+	local bestDist = nil
+
+	for _, token in ipairs(tokens) do
+		local occupying = nil
+		pcall(function() occupying = token.locsOccupying end)
+		if occupying ~= nil then
+			for _, loc in ipairs(occupying) do
+				if loc.x == squarex and loc.y == squarey then
+					local dx = token.loc.x - pt.x
+					local dy = token.loc.y - pt.y
+					local dist = dx * dx + dy * dy
+					if bestDist == nil or dist < bestDist then
+						best = token
+						bestDist = dist
+					end
+					break
+				end
+			end
+		end
+	end
+
+	return best
+end
+
 dmhub.ShowGameContextMenu = function(entries)
+	local ids = {}
+	for id, _ in pairs(g_gameContextMenuContributors) do
+		ids[#ids + 1] = id
+	end
+	table.sort(ids)
+	for _, id in ipairs(ids) do
+		--a broken contributor must never cost the user their whole menu.
+		local ok, err = pcall(g_gameContextMenuContributors[id], entries)
+		if not ok then
+			print(string.format("CONTEXTMENU:: contributor '%s' failed: %s", id, tostring(err)))
+		end
+	end
+
 	gamehud.dialog.sheet.popupPositioning = "mouse"
 
 	gamehud.dialog.sheet.popup = gui.ContextMenu{

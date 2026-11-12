@@ -127,6 +127,8 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 	if asset == nil then
 		dmhub.Debug('ASSET IS NIL')
 	end
+	--asset.loaded above already errors on a nil asset; this check only re-widens the type.
+	---@cast asset -nil
 
 	local buttonPanel = gui.Panel{
 		id = 'BottomButtons',
@@ -141,10 +143,10 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		},
 
 		children = {
-			gui.PrettyButton{
+			gui.Button{
+				classes = {"sizeL"},
 				text = 'Save & Close',
 				width = 200,
-				height = 80,
 
 				events = {
 					click = function(element)
@@ -205,6 +207,7 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 
 	local tilesheetStyleDropdown = nil
 	local tilesheetDimensionsWarning = nil
+	---@type Panel
 	local randomOrientationCheck = nil
 	local effectLayerDropdown = nil
 	local effectAlphaThresholdDropdown = nil
@@ -221,16 +224,16 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		end
 
 		tilesheetStyleDropdown = gui.Panel{
-			classes = {"formPanel"},
+			classes = {"formStackedRow"},
 
 			children = {
 				gui.Label{
 					text = 'Tiling:',
-					classes = {"formLabel"},
+					classes = {"formStacked"},
 				},
 
 				gui.Dropdown{
-					classes = {"formDropdown"},
+					classes = {"formStacked"},
 					options = {
 						{
 							id = "onelarge",
@@ -245,6 +248,7 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 
 					events = {
 						change = function(element)
+							---@cast element Dropdown
 							asset.oneLargeTile = (element.idChosen == "onelarge")
 							assets:RefreshAssets("Tilesheet")
 							calculateOrientationVisibility()
@@ -263,6 +267,7 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 				height = 'auto',
 				fontSize = '50%',
 				color = 'red',
+				lmargin = 12,
 			},
 			events = {
 				create = function(element)
@@ -275,6 +280,7 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		}
 
 		randomOrientationCheck = gui.Check{
+			classes = {"formCheck"},
 			value = asset.randomOrientation,
 			text = "Randomize Tile Orientation",
 			style = {
@@ -308,28 +314,23 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		}
 
 		effectLayerDropdown = gui.Panel{
-			style = {
-				width = '40%',
-				height = 48,
-				flow = 'horizontal',
-				fontSize = '60%',
-				borderWidth = 0,
-			},
+			classes = {"formStackedRow"},
 
 			children = {
 				gui.Label{
 					text = 'Layer:',
-					classes = {"formLabel"},
+					classes = {"formStacked"},
 				},
 
 				gui.Dropdown{
-					classes = {"formDropdown"},
+					classes = {"formStacked"},
 					options = effectLayers,
 					idChosen = asset.effectLayer,
 
 					events = {
 						change = function(element)
-							asset.effectLayer = element.idChosen
+							---@cast element Dropdown
+							asset.effectLayer = element.idChosen --[[@as string]]
 							assets:RefreshAssets("Tilesheet")
 						end,
 					},
@@ -339,21 +340,22 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		}
 
 		effectAlphaThresholdDropdown = gui.Panel{
-			classes = {"formPanel"},
+			classes = {"formStackedRow"},
 
 			children = {
 				gui.Label{
 					text = 'Alpha:',
-					classes = {"formLabel"},
+					classes = {"formStacked"},
 				},
 
 				gui.Dropdown{
 					options = { { id = 'blend', text = 'Blend' }, { id = 'threshold', text = 'Threshold' } },
 					idChosen = cond(asset.useAlphaThreshold, 'threshold', 'blend'),
-					classes = {"formDropdown"},
+					classes = {"formStacked"},
 
 					events = {
 						change = function(element)
+							---@cast element Dropdown
 							asset.useAlphaThreshold = cond(element.idChosen == 'blend', false, true)
 							assets:RefreshAssets("Tilesheet")
 						end,
@@ -368,8 +370,10 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 	local difficultCheck
 	local distortionPanel
 	local movementPanel
+    local surfaceTypePanel
 
 	waterCheck = gui.Check{
+		classes = {"formCheck"},
 		value = asset.rules.water,
 		text = "Is Water",
 		style = {
@@ -388,6 +392,7 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 	}
 
 	difficultCheck = gui.Check{
+		classes = {"formCheck"},
 		value = asset.rules.difficultTerrain,
 		text = "Difficult Terrain",
 		style = {
@@ -419,18 +424,18 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		end,
 
 		gui.Panel{
-			classes = {"formPanel"},
+			classes = {"formStackedRow"},
 			gui.Label{
 				text = "Horizontal:",
-				classes = {"formLabel"},
+				classes = {"formStacked"},
 			},
 			gui.Slider{
 				value = asset.distortx,
 				unclamped = true,
 				minValue = 0,
 				maxValue = 1,
-				sliderWidth = 300,
-				labelWidth = 60,
+				sliderWidth = 200,
+				labelWidth = 50,
 				labelFormat = "percent",
 				change = function(element)
 					asset.distortx = element.value
@@ -454,18 +459,18 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		},
 
 		gui.Panel{
-			classes = {"formPanel"},
+			classes = {"formStackedRow"},
 			gui.Label{
 				text = "Vertical:",
-				classes = {"formLabel"},
+				classes = {"formStacked"},
 			},
 			gui.Slider{
 				value = asset.distorty,
 				unclamped = true,
 				minValue = 0,
 				maxValue = 1,
-				sliderWidth = 300,
-				labelWidth = 60,
+				sliderWidth = 200,
+				labelWidth = 50,
 				labelFormat = "percent",
 				change = function(element)
 					asset.distorty = element.value
@@ -488,18 +493,18 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		},
 
 		gui.Panel{
-			classes = {"formPanel"},
+			classes = {"formStackedRow"},
 			gui.Label{
 				text = "Scaling:",
-				classes = {"formLabel"},
+				classes = {"formStacked"},
 			},
 			gui.Slider{
 				value = asset.distortWave,
 				unclamped = true,
 				minValue = 0,
 				maxValue = 1,
-				sliderWidth = 300,
-				labelWidth = 60,
+				sliderWidth = 200,
+				labelWidth = 50,
 				labelFormat = "percent",
 				change = function(element)
 					asset.distortWave = element.value
@@ -522,18 +527,18 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		},
 
 		gui.Panel{
-			classes = {"formPanel"},
+			classes = {"formStackedRow"},
 			gui.Label{
 				text = "Speed:",
-				classes = {"formLabel"},
+				classes = {"formStacked"},
 			},
 			gui.Slider{
 				value = asset.distortTime,
 				unclamped = true,
 				minValue = 0,
 				maxValue = 1,
-				sliderWidth = 300,
-				labelWidth = 60,
+				sliderWidth = 200,
+				labelWidth = 50,
 				labelFormat = "percent",
 				change = function(element)
 					asset.distortTime = element.value
@@ -562,6 +567,7 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		width = "100%",
 		height = "auto",
 		gui.Check{
+			classes = {"formCheck"},
 			value = asset.distortion,
 			text = "Distortion Effect",
 			style = {
@@ -597,18 +603,18 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		end,
 
 		gui.Panel{
-			classes = {"formPanel"},
+			classes = {"formStackedRow"},
 			gui.Label{
 				text = "Horizontal:",
-				classes = {"formLabel"},
+				classes = {"formStacked"},
 			},
 			gui.Slider{
 				value = asset.movex,
 				unclamped = true,
 				minValue = 0,
 				maxValue = 1,
-				sliderWidth = 300,
-				labelWidth = 60,
+				sliderWidth = 200,
+				labelWidth = 50,
 				labelFormat = "%.1f",
 				change = function(element)
 					asset.movex = element.value
@@ -631,18 +637,18 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		},
 
 		gui.Panel{
-			classes = {"formPanel"},
+			classes = {"formStackedRow"},
 			gui.Label{
 				text = "Vertical:",
-				classes = {"formLabel"},
+				classes = {"formStacked"},
 			},
 			gui.Slider{
 				value = asset.movey,
 				unclamped = true,
 				minValue = 0,
 				maxValue = 1,
-				sliderWidth = 300,
-				labelWidth = 60,
+				sliderWidth = 200,
+				labelWidth = 50,
 				labelFormat = "%.1f",
 				change = function(element)
 					asset.movey = element.value
@@ -670,6 +676,7 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		width = "100%",
 		height = "auto",
 		gui.Check{
+			classes = {"formCheck"},
 			value = asset.movement,
 			text = "Movement",
 			style = {
@@ -691,14 +698,33 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		movementProperties,
 	}
 
+    surfaceTypePanel = gui.Panel{
+        classes = {"formStackedRow"},
+        gui.Label{
+            text = "Surface Type:",
+            classes = {"formStacked"},
+        },
+        gui.Dropdown{
+            classes = {"formStacked"},
+            options = AudioSurfaceTypes.surfaces,
+            idChosen = asset.rules.surfaceType or 1,
+            change = function(element)
+                ---@cast element Dropdown
+                asset.rules.surfaceType = element.idChosen
+				assets:RefreshAssets("Tilesheet")
+				movementProperties:FireEventTree("refreshHidden")
+            end,
+        }
+    }
+
 
 	local idpanel = nil
 	if dmhub.GetSettingValue("dev") then
 		idpanel = gui.Panel{
-			classes = {"formPanel"},
+			classes = {"formStackedRow"},
 			gui.Label{
 				text = 'ID:',
-				classes = {"formLabel"},
+				classes = {"formStacked"},
 			},
 			gui.Input{
 				bgimage = 'panels/square.png',
@@ -724,7 +750,7 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 			halign = 'left',
 			valign = 'top',
 			flow = 'vertical',
-			width = '50%',
+			width = '35%',
 			height = '85%',
 			vmargin = 2,
 		},
@@ -758,12 +784,48 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 			idpanel,
 
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
+
+				children = {
+					gui.Label{
+						text = 'Order:',
+						classes = {"formStacked"},
+					},
+					gui.Input{
+						bgimage = 'panels/square.png',
+						text = string.format("%f", asset.ord),
+						characterLimit = 24,
+						style = {
+							fontSize = 18,
+							bgcolor = 'black',
+							margin = 4,
+							valign = 'center',
+							width = 360,
+							height = 30,
+							cornerRadius = 0,
+						},
+
+						events = {
+							change = function(element)
+								asset.ord = tonumber(element.text) or 0
+                                element.text = string.format("%f", asset.ord)
+								fieldsPanel:FireEvent("updateAsset")
+							end,
+						}
+					},
+				},
+
+
+			},
+		
+
+			gui.Panel{
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Description:',
-						classes = {"formLabel"},
+						classes = {"formStacked"},
 					},
 					gui.Input{
 						bgimage = 'panels/square.png',
@@ -797,21 +859,21 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 			randomOrientationCheck,
 
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 
 					gui.Label{
 						text = 'Scale:',
-						classes = {"formLabel"},
+						classes = {"formStacked"},
 					},
 
 					gui.Slider{
 						value = -asset.scale,
 						minValue = -4,
 						maxValue = 4,
-						sliderWidth = 300,
-						labelWidth = 60,
+						sliderWidth = 200,
+						labelWidth = 50,
 
 						formatFunction = function(num) return
 							string.format('%d%%', round((2^num)*100))
@@ -844,20 +906,20 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 			},
 
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Hue Shift:',
-						classes = {"formLabel"},
+						classes = {"formStacked"},
 					},
 
 					gui.Slider{
 						value = asset.hueshift,
 						minValue = 0,
 						maxValue = 1,
-						sliderWidth = 300,
-						labelWidth = 60,
+						sliderWidth = 200,
+						labelWidth = 50,
 
 						events = {
 							change = function(element)
@@ -881,20 +943,20 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 			},
 
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Saturation:',
-						classes = {"formLabel"},
+						classes = {"formStacked"},
 					},
 
 					gui.Slider{
 						value = asset.saturation,
 						minValue = -1,
 						maxValue = 1,
-						sliderWidth = 300,
-						labelWidth = 60,
+						sliderWidth = 200,
+						labelWidth = 50,
 
 						events = {
 							change = function(element)
@@ -918,20 +980,20 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 			},
 
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Brightness:',
-						classes = {"formLabel"},
+						classes = {"formStacked"},
 					},
 
 					gui.Slider{
 						value = asset.brightness,
 						minValue = -1,
 						maxValue = 1,
-						sliderWidth = 300,
-						labelWidth = 60,
+						sliderWidth = 200,
+						labelWidth = 50,
 
 						events = {
 							change = function(element)
@@ -953,20 +1015,20 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 			},
 
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Contrast:',
-						classes = {"formLabel"},
+						classes = {"formStacked"},
 					},
 
 					gui.Slider{
 						value = asset.contrast,
 						minValue = 0,
 						maxValue = 4,
-						sliderWidth = 300,
-						labelWidth = 60,
+						sliderWidth = 200,
+						labelWidth = 50,
 
 						events = {
 							change = function(element)
@@ -992,6 +1054,7 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 			difficultCheck,
 			distortionPanel,
 			movementPanel,
+            surfaceTypePanel,
 
 			--padding until the buttons.
 			gui.Panel{
@@ -1001,13 +1064,12 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 				}
 			},
 
-			gui.PrettyButton{
+			gui.Button{
+				classes = {"sizeM"},
 				text = 'Default Values',
-				margin = 0,
-				width = 200,
-				height = 60,
 				halign = 'left',
 				valign = 'top',
+				vmargin = 4,
 
 				events = {
 					click = function()
@@ -1030,15 +1092,14 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 				}
 			},
 
-			gui.PrettyButton{
+			gui.Button{
+				classes = {"sizeM"},
 				text = 'Undo Changes',
 				captureEscape = true,
 				escapePriority = EscapePriority.EXIT_DIALOG,
-				margin = 0,
-				width = 200,
-				height = 60,
 				halign = 'left',
 				valign = 'top',
+				vmargin = 4,
 
 				events = {
 					click = function(element)
@@ -1074,28 +1135,42 @@ mod.shared.EditTilesheetAssetDialog = function(tileid, startingValues)
 		id = 'CreateTerrainDialog',
 		classes = {"framedPanel"},
 		pad = 8,
-		styles = {
+		styles = ThemeEngine.MergeStyles{
 			Styles.Panel,
 			Styles.Form,
+			-- Rows in this dialog use the stacked-form vocabulary
+			-- ({formStackedRow} + {formStacked}); see DefaultStyles.lua. The
+			-- {formStackedRow} default is width=70% which is too narrow for
+			-- this 35%-of-dialog column. Width = 100% - (12 lmargin) - (20
+			-- right gutter) so controls don't ride up under the scrollbar.
 			{
-				classes = {"formLabel"},
-				halign = "left",
-				valign = "center",
+				classes = {"formStackedRow"},
+				width = "100%-32",
 			},
+			-- Slider widgets in this dialog pass `style = { height = '50%' }`
+			-- as a fallback; that resolves correctly against the old
+			-- horizontal formPanel but blows up to massive handles inside an
+			-- auto-height formStackedRow. Pin the slider height back to 30px.
 			{
 				classes = {"slider"},
 				height = 30,
-				width = "40%",
-				halign = "left",
 			},
 			{
 				classes = {"sliderLabel"},
 				fontSize = 14,
 			},
+			-- Marker class applied to gui.Check widgets that should align
+			-- with the formStackedRow column. gui.Check produces no shared
+			-- base class to target generically, so we tag each Check and
+			-- match its lmargin to formStackedRow's.
+			{
+				classes = {"formCheck"},
+				lmargin = 12,
+			},
 		},
 		style = {
-			width = 1200,
-			height = 800,
+			width = 1000,
+			height = 700,
 			flow = 'none',
 		},
 		children = {
@@ -1187,6 +1262,10 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 		undoValues.hueshift = asset.hueshift
 	end
 
+	if undoValues.renderParallax == nil then
+		undoValues.renderParallax = asset.renderParallax
+	end
+
 	if undoValues.invisible == nil then
 		undoValues.invisible = asset.invisible
 	end
@@ -1197,6 +1276,30 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 
 	if undoValues.blocksMovement == nil then
 		undoValues.blocksMovement = asset.blocksMovement
+	end
+
+	if undoValues.blocksForcedMovement == nil then
+		undoValues.blocksForcedMovement = asset.blocksForcedMovement
+	end
+
+	if undoValues.solidity == nil then
+		undoValues.solidity = asset.solidity
+	end
+
+	if undoValues.breakStamina == nil then
+		undoValues.breakStamina = asset.breakStamina
+	end
+
+	if undoValues.rubbleKeyword == nil then
+		undoValues.rubbleKeyword = asset.rubbleKeyword
+	end
+
+	if undoValues.rubbleTerrainId == nil then
+		undoValues.rubbleTerrainId = asset.rubbleTerrainId
+	end
+
+	if undoValues.breakSound == nil then
+		undoValues.breakSound = asset.breakSound
 	end
 
 	if undoValues.soundOcclusion == nil then
@@ -1223,6 +1326,10 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 		undoValues.shadowGlowThickness = asset.shadowGlowThickness
 	end
 
+	if undoValues.climbable == nil then
+		undoValues.climbable = asset.climbable
+	end
+
 
 	local buttonPanel = gui.Panel{
 		id = 'BottomButtons',
@@ -1237,11 +1344,9 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 		},
 
 		children = {
-			gui.PrettyButton{
+			gui.Button{
+				classes = {"sizeM"},
 				text = 'Save & Close',
-				margin = 0,
-				width = 240,
-				height = 80,
 				halign = 'right',
 				valign = 'center',
 
@@ -1293,15 +1398,10 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 	local idpanel = nil
 	if dmhub.GetSettingValue("dev") then
 		idpanel = gui.Panel{
-			classes = {"formPanel"},
+			classes = {"formStackedRow"},
 			gui.Label{
 				text = 'ID:',
-				style = {
-					margin = 4,
-					valign = 'center',
-					width = 'auto',
-					height = 'auto',
-				}
+				classes = {"formStacked"},
 			},
 			gui.Input{
 				bgimage = 'panels/square.png',
@@ -1312,7 +1412,7 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 					margin = 4,
 					valign = 'center',
 					width = 360,
-					height = '80%',
+					height = 30,
 					cornerRadius = 0,
 				},
 			},
@@ -1333,8 +1433,8 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 			halign = 'left',
 			valign = 'top',
 			flow = 'vertical',
-			width = '48%',
-			height = '80%',
+			width = '35%',
+			height = '98%',
 			vmargin = 2,
 		},
 		selfStyle = {
@@ -1342,48 +1442,30 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 		},
 		hpad = 4,
 		vscroll = true,
-		styles = {
-			{
-				selectors = {"formPanel"},
-				width = '40%',
-				height = 30,
-				flow = 'horizontal',
-			},
-			{
-				selectors = {"label"},
-				fontSize = 14,
-				height = 30,
-			}
-		},
 
 		children = {
 
 			idpanel,
 
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 
 					gui.Label{
 						text = 'Description:',
-						style = {
-							margin = 4,
-							valign = 'center',
-							width = 'auto',
-							height = 'auto',
-						}
+						classes = {"formStacked"},
 					},
 					gui.Input{
 						bgimage = 'panels/square.png',
 						text = asset.description,
-						characterLimit = 24,
+						characterLimit = 40,
 						style = {
 							bgcolor = 'black',
 							margin = 4,
 							valign = 'center',
 							width = 360,
-							height = '80%',
+							height = 30,
 							cornerRadius = 0,
 						},
 
@@ -1400,18 +1482,13 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 			},
 
 			gui.Panel{
-				classes = {"formPanel"},
-				height = 64,
+				classes = {"formStackedRow"},
+				height = "auto",
 
 				children = {
 					gui.Label{
 						text = "Shadow Mask:",
-						style = {
-							margin = 4,
-							valign = 'center',
-							width = 140,
-							height = 'auto',
-						}
+						classes = {"formStacked"},
 					},
 
 					gui.IconEditor{
@@ -1431,14 +1508,11 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 			},
 
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				gui.Label{
 					text = "Tint:",
-					margin = 4,
-					valign = 'center',
-					width = 140,
-					height = 'auto',
+					classes = {"formStacked"},
 				},
 
 				gui.ColorPicker{
@@ -1454,17 +1528,12 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 			},
 
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Scale:',
-						style = {
-							margin = 4,
-							valign = 'center',
-							width = 140,
-							height = 'auto',
-						}
+						classes = {"formStacked"},
 					},
 
 					gui.Slider{
@@ -1496,17 +1565,12 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 			},
 
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Hue Shift:',
-						style = {
-							margin = 4,
-							valign = 'center',
-							width = 140,
-							height = 'auto',
-						}
+						classes = {"formStacked"},
 					},
 
 					gui.Slider{
@@ -1539,17 +1603,12 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 			},
 
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Saturation:',
-						style = {
-							margin = 4,
-							valign = 'center',
-							width = 140,
-							height = 'auto',
-						}
+						classes = {"formStacked"},
 					},
 
 					gui.Slider{
@@ -1582,17 +1641,12 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 			},
 
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Brightness:',
-						style = {
-							margin = 4,
-							valign = 'center',
-							width = 140,
-							height = 'auto',
-						}
+						classes = {"formStacked"},
 					},
 
 					gui.Slider{
@@ -1624,17 +1678,12 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 
 			--audio occlusion.
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Blocks Sounds:',
-						style = {
-							margin = 4,
-							valign = 'center',
-							width = 140,
-							height = 'auto',
-						}
+						classes = {"formStacked"},
 					},
 
 					gui.Slider{
@@ -1665,17 +1714,12 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 
 			--height.
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Wall Height:',
-						style = {
-							margin = 4,
-							valign = 'center',
-							width = 140,
-							height = 'auto',
-						}
+						classes = {"formStacked"},
 					},
 
 					gui.Slider{
@@ -1710,17 +1754,12 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 
 			--shadow distortion.
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Shadow Distortion:',
-						style = {
-							margin = 4,
-							valign = 'center',
-							width = 140,
-							height = 'auto',
-						}
+						classes = {"formStacked"},
 					},
 
 					gui.Slider{
@@ -1754,17 +1793,12 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 
 			--taper.
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Taper:',
-						style = {
-							margin = 4,
-							valign = 'center',
-							width = 140,
-							height = 'auto',
-						},
+						classes = {"formStacked"},
 						hover = gui.Tooltip("How much the wall should taper off at its end caps."),
 					},
 
@@ -1796,17 +1830,12 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 
 			--corner size.
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Corner Size:',
-						style = {
-							margin = 4,
-							valign = 'center',
-							width = 140,
-							height = 'auto',
-						},
+						classes = {"formStacked"},
 						hover = gui.Tooltip("How much the wall should taper off at its end caps."),
 					},
 
@@ -1839,17 +1868,12 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 
 			--internal shadow.
 			gui.Panel{
-				classes = {"formPanel"},
+				classes = {"formStackedRow"},
 
 				children = {
 					gui.Label{
 						text = 'Internal Shadow:',
-						style = {
-							margin = 4,
-							valign = 'center',
-							width = 140,
-							height = 'auto',
-						},
+						classes = {"formStacked"},
 						hover = gui.Tooltip("The width of the ambient shadow that appears around the wall."),
 					},
 
@@ -1882,7 +1906,22 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 			},
 
 			gui.Check{
+				id = "renderParallaxCheck",
+				classes = {"formCheck"},
+				text = "Use Parallax",
+				width = "auto",
+				height = 30,
+				borderWidth = 0,
+				value = asset.renderParallax,
+				change = function(element)
+					asset.renderParallax = element.value
+					RefreshAssets()
+				end,
+			},
+
+			gui.Check{
 				id = "invisibleCheck",
+				classes = {"formCheck"},
 				text = "Invisible",
 				width = "auto",
 				height = 30,
@@ -1896,6 +1935,7 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 
 			gui.Check{
 				id = "blocksLightCheck",
+				classes = {"formCheck"},
 				text = "Blocks Light",
 				width = "auto",
 				height = 30,
@@ -1909,6 +1949,7 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 
 			gui.Check{
 				id = "blocksVisionCheck",
+				classes = {"formCheck"},
 				text = "Blocks Vision",
 				width = "auto",
 				height = 30,
@@ -1922,7 +1963,7 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 
 			gui.Check{
 				id = "onewayVisionCheck",
-				classes = {cond((not asset.occludesVision) and (not asset.occludesLight), "collapsed-anim")},
+				classes = {"formCheck", cond((not asset.occludesVision) and (not asset.occludesLight), "collapsed-anim")},
 				refreshAssets = function(element)
 					element:SetClass('collapsed-anim', (not asset.occludesVision) and (not asset.occludesLight))
 				end,
@@ -1937,12 +1978,49 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 				end,
 			},
 
+			gui.Panel{
+				classes = {"formStackedRow", cond((not asset.occludesVision) and (not asset.occludesLight), "collapsed-anim")},
+				refreshAssets = function(element)
+					element:SetClass('collapsed-anim', (not asset.occludesVision) and (not asset.occludesLight))
+				end,
 
+				children = {
+					gui.Label{
+						text = 'Vision Width:',
+						classes = {"formStacked"},
+						hover = gui.Tooltip("Width of the wall for vision/lighting calculations. When greater than zero, the vision line is expanded outward so the full wall is visible instead of being hard-cut at the centerline."),
+					},
 
+					gui.Slider{
+						value = asset.visionWidth or 0,
+						minValue = 0,
+						maxValue = 2,
+						sliderWidth = 300,
+						labelWidth = 60,
+
+						events = {
+							change = function(element)
+								asset.visionWidth = element.value
+								RefreshAssets()
+							end,
+						},
+
+						style = {
+							fontSize = '80%',
+							valign = 'center',
+							halign = 'right',
+							height = '50%',
+							width = '100%',
+							borderWidth = 0,
+						},
+					},
+				},
+			},
 
 
 			gui.Check{
 				id = "blocksMovementCheck",
+				classes = {"formCheck"},
 				text = "Blocks Movement",
 				width = "auto",
 				height = 30,
@@ -1950,6 +2028,20 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 				value = asset.blocksMovement,
 				change = function(element)
 					asset.blocksMovement = element.value
+					RefreshAssets()
+				end,
+			},
+
+			gui.Check{
+				id = "blocksForcedMovementCheck",
+				classes = {"formCheck"},
+				text = "Blocks Forced Movement",
+				width = "auto",
+				height = 30,
+				borderWidth = 0,
+				value = asset.blocksForcedMovement,
+				change = function(element)
+					asset.blocksForcedMovement = element.value
 					RefreshAssets()
 				end,
 			},
@@ -1978,7 +2070,7 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 
 			gui.Check{
 				id = "blocksFlyingCheck",
-				classes = {cond(not asset.blocksMovement, "collapsed-anim")},
+				classes = {"formCheck", cond(not asset.blocksMovement, "collapsed-anim")},
 				text = "Blocks Flying",
 				width = "auto",
 				height = 30,
@@ -2003,19 +2095,237 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 					},
 					{
 						id = "Half",
-						text = "Half Cover",
+						text = "Cover (50%)",
 					},
 					{
-						id = "ThreeQuarters",
-						text = "Three-Quarters Cover",
+						id = "Three Quarters",
+						text = "Cover (75%)",
 					},
 					{
 						id = "Full",
-						text = "Full Cover",
+						text = "Blocks Line of Effect",
 					},
 				},
 				change = function(element)
+					---@cast element Dropdown
 					asset.cover = element.idChosen
+					RefreshAssets()
+				end,
+			},
+
+			gui.Dropdown{
+				id = "solidityDropdown",
+				idChosen = asset.solidity or "Unbreakable",
+				options = {
+					{
+						id = "Unbreakable",
+						text = "Unbreakable",
+					},
+					{
+						id = "Thin",
+						text = "Thin (breakable)",
+					},
+					{
+						id = "Solid",
+						text = "Solid (breakable)",
+					},
+				},
+				change = function(element)
+					---@cast element Dropdown
+					asset.solidity = element.idChosen
+					RefreshAssets()
+				end,
+			},
+
+			gui.Panel{
+				classes = {cond((asset.solidity or "Unbreakable") == "Unbreakable", "collapsed-anim")},
+				refreshAssets = function(element)
+					element:SetClass('collapsed-anim', (asset.solidity or "Unbreakable") == "Unbreakable")
+				end,
+				flow = "vertical",
+				width = "100%",
+				height = "auto",
+				children = {
+					gui.Label{
+						text = "Break Stamina:",
+						classes = {"formStacked"},
+					},
+
+					gui.Input{
+						id = "breakStaminaInput",
+						placeholderText = "0",
+						text = tostring(asset.breakStamina or 0),
+						width = "100%",
+						height = 30,
+						change = function(element)
+							asset.breakStamina = tonumber(element.text) or 0
+							RefreshAssets()
+						end,
+					},
+
+					gui.Label{
+						text = "Rubble Object Keyword:",
+						classes = {"formStacked"},
+					},
+
+					gui.Input{
+						id = "rubbleKeywordInput",
+						placeholderText = "keyword",
+						text = asset.rubbleKeyword or "",
+						width = "100%",
+						height = 30,
+						change = function(element)
+							asset.rubbleKeyword = element.text
+							RefreshAssets()
+						end,
+					},
+
+					gui.Label{
+						text = "Rubble Terrain:",
+						classes = {"formStacked"},
+					},
+
+					gui.Dropdown{
+						id = "rubbleTerrainDropdown",
+						hasSearch = true,
+						idChosen = asset.rubbleTerrainId or "__none__",
+						options = (function()
+							local result = {
+								{
+									id = "__none__",
+									text = "None",
+								},
+							}
+							for id, tile in pairs(assets.tilesheets) do
+								if not tile.hidden then
+									result[#result+1] = {
+										id = id,
+										text = tile.description or id,
+									}
+								end
+							end
+							table.sort(result, function(a, b)
+								if a.id == "__none__" then return true end
+								if b.id == "__none__" then return false end
+								return a.text < b.text
+							end)
+							return result
+						end)(),
+						change = function(element)
+							---@cast element Dropdown
+							if element.idChosen == "__none__" then
+								asset.rubbleTerrainId = nil
+							else
+								asset.rubbleTerrainId = element.idChosen
+							end
+							RefreshAssets()
+						end,
+					},
+
+					gui.Label{
+						text = "Break Sound:",
+						classes = {"formStacked"},
+					},
+
+					gui.Dropdown{
+						id = "breakSoundDropdown",
+						idChosen = asset.breakSound or "none",
+						options = (function()
+							local result = {}
+							for _,entry in ipairs(AudioObjectDestructionTypes.types) do
+								result[#result+1] = {
+									id = entry.sound or "none",
+									text = entry.text,
+								}
+							end
+							return result
+						end)(),
+						change = function(element)
+							---@cast element Dropdown
+							if element.idChosen == "none" then
+								asset.breakSound = nil
+							else
+								asset.breakSound = element.idChosen
+							end
+							RefreshAssets()
+						end,
+					},
+
+					gui.Panel{
+						classes = {cond((asset.solidity or "Unbreakable") ~= "Solid", "collapsed-anim")},
+						refreshAssets = function(element)
+							element:SetClass('collapsed-anim', (asset.solidity or "Unbreakable") ~= "Solid")
+						end,
+						flow = "vertical",
+						width = "100%",
+						height = "auto",
+						children = {
+							gui.Label{
+								text = "Replacement Wall:",
+								classes = {"formStacked"},
+							},
+
+							gui.Dropdown{
+								id = "replacementWallDropdown",
+								hasSearch = true,
+								idChosen = asset.replacementWallId or "__default__",
+								options = (function()
+									local result = {
+										{
+											id = "__default__",
+											text = "Same as original",
+										},
+									}
+									for id, wall in pairs(assets.walls) do
+										if not wall.hidden then
+											result[#result+1] = {
+												id = id,
+												text = wall.description or id,
+											}
+										end
+									end
+									table.sort(result, function(a, b)
+										if a.id == "__default__" then return true end
+										if b.id == "__default__" then return false end
+										return a.text < b.text
+									end)
+									return result
+								end)(),
+								change = function(element)
+									---@cast element Dropdown
+									if element.idChosen == "__default__" then
+										asset.replacementWallId = nil
+									else
+										asset.replacementWallId = element.idChosen
+									end
+									RefreshAssets()
+								end,
+							},
+						},
+					},
+				},
+			},
+
+			gui.Dropdown{
+				id = "climbableDropdown",
+				idChosen = asset.climbable or "NotClimbable",
+				options = {
+					{
+						id = "NotClimbable",
+						text = "Not Climbable",
+					},
+					{
+						id = "ClimbersOnly",
+						text = "Climbable (Climbers Only)",
+					},
+					{
+						id = "AllCreatures",
+						text = "Climbable (All Creatures)",
+					},
+				},
+				change = function(element)
+					---@cast element Dropdown
+					asset.climbable = element.idChosen
 					RefreshAssets()
 				end,
 			},
@@ -2029,11 +2339,8 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 			},
 
 			gui.Button{
+				classes = {"sizeM"},
 				text = 'Default Values',
-				margin = 0,
-				width = 160,
-				height = 40,
-				fontSize = 18,
 				halign = 'left',
 				valign = 'top',
 				vmargin = 4,
@@ -2055,13 +2362,10 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 			},
 
 			gui.Button{
+				classes = {"sizeM"},
 				text = 'Undo Changes',
 				captureEscape = true,
 				escapePriority = EscapePriority.EXIT_DIALOG,
-				margin = 0,
-				width = 160,
-				height = 40,
-				fontSize = 18,
 				halign = 'left',
 				valign = 'top',
 				vmargin = 4,
@@ -2093,11 +2397,41 @@ mod.shared.EditWallAssetDialog = function(tileid, startingValues)
 	local dialogPanel = gui.Panel{
 		id = 'CreateWallDialog',
 		classes = {"framedPanel"},
-		width = 1200,
-		height = 900,
+		width = 1000,
+		height = 700,
 		pad = 8,
-		styles = {
+		styles = ThemeEngine.MergeStyles{
 			Styles.Panel,
+			Styles.Form,
+			-- Rows in this dialog use the stacked-form vocabulary
+			-- ({formStackedRow} + {formStacked}); see DefaultStyles.lua. The
+			-- {formStackedRow} default width is 70%, which is too narrow for
+			-- this 35%-of-dialog column. Width = 100% - (12 lmargin) -
+			-- (20 right gutter) so controls don't ride up under the scrollbar.
+			{
+				classes = {"formStackedRow"},
+				width = "100%-32",
+			},
+			-- Slider widgets pass `style = { height = '50%' }` as a fallback;
+			-- that resolves correctly against the old horizontal formPanel but
+			-- blows up to massive handles inside an auto-height formStackedRow.
+			-- Pin the slider height to 30px.
+			{
+				classes = {"slider"},
+				height = 30,
+			},
+			{
+				classes = {"sliderLabel"},
+				fontSize = 14,
+			},
+			-- Marker class applied to gui.Check widgets that should align
+			-- with the formStackedRow column. gui.Check has no shared base
+			-- class to target, so we tag each Check and match its lmargin to
+			-- formStackedRow's.
+			{
+				classes = {"formCheck"},
+				lmargin = 12,
+			},
 		},
 		children = {
 			fieldsPanel,

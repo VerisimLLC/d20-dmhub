@@ -1,10 +1,10 @@
 local mod = dmhub.GetModLoading()
-
+--[[
 DockablePanel.Register{
 	name = "Status Bar",
 	icon = mod.images.chatIcon,
-	minHeight = 18,
-	maxHeight = 18,
+	minHeight = 20,
+	maxHeight = 20,
 	vscroll = false,
     notitle = true,
 	content = function()
@@ -25,3 +25,4 @@ DockablePanel.Register{
         }
 	end,
 }
+]]

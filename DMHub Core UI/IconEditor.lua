@@ -1,0 +1,1235 @@
+local mod = dmhub.GetModLoading()
+
+--- @class IconEditorArgs:PanelArgs
+--- @field value nil|string The assetid of the image.
+--- @field aspect nil|number
+--- @field allowNone nil|boolean If set, an option is to have no image.
+--- @field noneImage nil|string If set, uses this image as the 'none' image. Effectively, a default image.
+--- @field allowPaste nil|boolean If set, allows the user to paste in images from the clipboard.
+--- @field hideIcon nil|boolean
+--- @field library nil|string Which "image library" to use
+--- @field searchHidden nil|boolean If true, hides the search.
+--- @field categoriesHidden nil|boolean if true, hides the categories. The user will *have to* select from the image library and cannot switch to a different image library.
+--- @field restrictImageType nil|string
+--- @field liveEdit nil|boolean If set, a right-click "Live Edit" option opens the current image in an external editor and replaces the underlying image asset in place on commit (patron-gated).
+
+--- @class IconEditorPanel:Panel
+--- @field value nil|string The assetid of the image.
+
+--- Creates a panel for picking an image asset. Use the 'value' field to query the assetid of the image selected.
+--- @param args IconEditorArgs
+--- @return IconEditorPanel
+function gui.IconEditor(args)
+	args = table.shallow_copy(args)
+	if args.value == '' then
+		args.value = nil
+	end
+	local style = args.style or {}
+
+	local aspect = args.aspect or 1
+	args.aspect = nil
+
+	local allowNone = args.allowNone or false
+	args.allowNone = nil
+
+	local noneImage = args.noneImage or nil
+	args.noneImage = nil
+
+	local allowPaste = args.allowPaste or nil
+	args.allowPaste = nil
+
+	local value = args.value or cond(allowNone, nil, 'ui-icons/d20.png')
+
+	local shouldHideIcon = args.hideIcon
+	args.hideIcon = nil
+
+	local library = args.library
+	args.library = nil
+
+	local searchHidden = args.searchHidden
+	args.searchHidden = nil
+
+	local categoriesHidden = args.categoriesHidden
+	args.categoriesHidden = nil
+
+	local restrictImageType = args.restrictImageType
+	args.restrictImageType = nil
+
+	local allowLiveEdit = args.liveEdit or false
+	args.liveEdit = nil
+
+	local captions = args.captions or false
+	args.captions = nil
+
+	local function FileBaseName(path)
+		local name = string.match(path or "", "([^/\\]+)$") or ""
+		return (string.gsub(name, "%.[^%.]*$", ""))
+	end
+
+	--- @type Panel
+	local resultPanel = nil
+
+	local category = ''
+	local useBuiltinIcons = false
+
+	local stretch = args.stretch
+	args.stretch = nil
+
+	args.bgcolor = args.bgcolor or "white"
+
+	local imageType = nil
+
+	local imageDim = 96
+	local iconImageStyle = {
+		maxWidth = imageDim-4,
+		maxHeight = imageDim*aspect-4,
+		width = cond(stretch, imageDim-4, "auto"),
+		height = cond(stretch, imageDim*aspect-4, "auto"),
+		autosizeimage = cond(stretch, false, true),
+		halign = "center",
+		valign = "center",
+	}
+
+	local ImageTypeMapping = {
+		Avatar = "Avatar",
+		AvatarFrame = "AvatarFrame",
+		WallShadow = "WallShadow",
+		popoutavatars = "AvatarPopout",
+	}
+
+	if library ~= nil then
+		imageType = ImageTypeMapping[library]
+	end
+
+	--The library a finished upload belongs in. The engine stores an opaque image chosen as a
+	--Popout Avatar as a plain Avatar, so file it under Avatar to match how it will render.
+	local function UploadLibrary(assetid)
+		if library == "popoutavatars" then
+			local asset = assets.imagesTable[assetid]
+			if asset ~= nil and asset.imageType == "Avatar" then
+				return "Avatar"
+			end
+		end
+		return library
+	end
+
+	--Live-edit: open the currently-selected image in the external editor and, on commit, replace the
+	--underlying image asset in place (same asset id, new image bytes) so every use of it updates --
+	--mirrors the map-object "Live Edit" flow but driven from this picker. Patron-gated.
+	local function StartIconLiveEdit()
+		local val = resultPanel.value
+		if val == nil or val == '' then
+			return
+		end
+
+		--The widget value is an image-asset guid for library images, or a raw image id for some uses.
+		--Resolve it to the underlying image id to open in the editor; fall back to the value itself.
+		local imageId = val
+		local node = assets.imagesTable[val]
+		if node ~= nil then
+			imageId = node.imageid
+		end
+
+		if imageId == nil or imageId == '' then
+			return
+		end
+
+		local originalImageId = imageId
+
+		--Force the bgimage to re-resolve the (now repointed) asset: the setter short-circuits on an
+		--unchanged value, so bounce through the concrete image id first, then restore the value.
+		local function refreshTo(displayImageId)
+			if not resultPanel.valid then return end
+			resultPanel.bgimage = "md5:" .. displayImageId
+			resultPanel.bgimage = val
+			resultPanel:FireEvent("change")
+		end
+
+		local function beginEdit()
+			dmhub.StartLiveEditImage{
+				guid = imageId,
+				name = "Edit Image",
+				commit = function(newImageId)
+					if mod.unloaded or not resultPanel.valid then return end
+					if newImageId == nil or newImageId == '' then return end
+					if dmhub.SetImageAssetImage(val, newImageId) then
+						refreshTo(newImageId)
+					else
+						--No editable asset behind this value (e.g. a raw image id): swap the widget
+						--directly to the edited image.
+						resultPanel.value = "md5:" .. newImageId
+					end
+				end,
+				revert = function()
+					if mod.unloaded or not resultPanel.valid then return end
+					if dmhub.SetImageAssetImage(val, originalImageId) then
+						refreshTo(originalImageId)
+					end
+				end,
+			}
+		end
+
+		if dmhub.ImageEditorNeedsSetup() then
+			dmhub.PromptImageEditorSetup(beginEdit)
+		else
+			beginEdit()
+		end
+	end
+
+	if args.rightClick == nil then
+
+		args.rightClick = function(element)
+
+            local entries = {}
+
+            if allowLiveEdit and dmhub.patronTier > 0 and resultPanel.value ~= nil and resultPanel.value ~= '' then
+                entries[#entries+1] = {
+                    text = "Live Edit",
+                    click = function()
+                        element.popup = nil
+                        StartIconLiveEdit()
+                    end,
+                }
+            end
+
+            entries[#entries+1] = {
+                text = "Copy Image",
+                click = function()
+                    element.popup = nil
+                    if resultPanel.value ~= nil then
+                        dmhub.CopyToInternalClipboard("IMAGE:" .. resultPanel.value)
+                    end
+                end,
+            }
+
+            local text = dmhub.GetInternalClipboard()
+            if type(text) == "string" and text:sub(1, 6) == "IMAGE:" then
+                entries[#entries+1] = {
+                    text = "Paste Image",
+                    click = function()
+                        element.popup = nil
+                        local imageId = text:sub(7)
+                        element.value = imageId
+                        resultPanel.value = imageId
+                    end,
+                }
+            end
+
+            if dmhub.GetSettingValue("dev") then
+                entries[#entries+1] = {
+                    text = "Open URL",
+                    click = function()
+                        element.popup = nil
+                        dmhub.OpenImageAssetURL(resultPanel.value)
+                    end,
+                }
+
+                entries[#entries+1] = {
+                    text = "Copy Image ID",
+                    click = function()
+                        element.popup = nil
+                        if resultPanel.value ~= nil then
+                            dmhub.CopyToClipboard(resultPanel.value)
+                        end
+                    end,
+                }
+            end
+
+			element.popup = gui.ContextMenu{
+				entries = entries,
+			}
+		end
+	end
+
+	--deprecated
+	args.hideButton = nil
+
+	args.press = function(element)
+
+		--- @type Panel
+		local popupPanel = nil
+
+
+		local CreateImage = function()
+			local m_imageid = nil
+
+			local function SetCaption(label, node)
+				local text = node ~= nil and node.description or ""
+				label:SetClass("placeholder", text == "")
+				label.text = cond(text == "", "Name this image", text)
+			end
+
+			--- @type Label?
+			local caption = nil
+			local captionInput = nil
+			if captions then
+				captionInput = gui.Input{
+					classes = {"imageCaptionInput", "hidden"},
+					floating = true,
+					width = "100%",
+					height = 18,
+					fontSize = 12,
+					halign = "center",
+					valign = "bottom",
+					characterLimit = 64,
+					restoreOriginalTextOnEscape = true,
+					submit = function(element)
+						--caption is built right after this input, under the same captions test.
+						---@cast caption -nil
+						local node = assets.imagesTable[m_imageid]
+						if node ~= nil then
+							node.description = element.text
+							node:Upload()
+						end
+						element:SetClass("hidden", true)
+						caption:SetClass("hidden", false)
+						SetCaption(caption, node)
+					end,
+					defocus = function(element)
+						---@cast caption -nil
+						element:SetClass("hidden", true)
+						caption:SetClass("hidden", false)
+						SetCaption(caption, assets.imagesTable[m_imageid])
+					end,
+				}
+
+				caption = gui.Label{
+					classes = {"imageCaption"},
+					floating = true,
+					click = function(element)
+						local node = assets.imagesTable[m_imageid]
+						if node == nil then
+							return
+						end
+						element:SetClass("hidden", true)
+						captionInput.text = node.description or ""
+						captionInput:SetClass("hidden", false)
+						captionInput.hasInputFocus = true
+					end,
+				}
+			end
+
+			local iconImage = gui.Panel{
+				classes = {"iconImage", "image"},
+				style = iconImageStyle,
+				children = {
+					caption,
+					captionInput,
+				},
+			}
+
+			local resultImage
+			resultImage = gui.Panel{
+				-- bgimage = true,
+				classes = {"hidden"},
+				styles = {
+					{
+						-- bgcolor = "white",
+						width = imageDim,
+						height = imageDim*aspect,
+						halign = "center",
+						valign = "center",
+					},
+				},
+				selfStyle = {
+					vmargin = 2,
+				},
+				data = {
+					setImage = function(imageid)
+						m_imageid = imageid
+                        print("SETIMAGE::", json(imageid))
+
+                        if imageid == "" then
+                            iconImage.bgimage = "panels/square.png"
+                            iconImage.selfStyle.bgcolor = "black"
+                            iconImage.selfStyle.autosizeimage = false
+                            iconImage.selfStyle.width = imageDim-4
+                            iconImage.selfStyle.height = imageDim-4
+                            element.data.none = true
+                        else
+                            iconImage.bgimage = imageid
+                            if element.data.none then
+                                iconImage.selfStyle.bgcolor = "white"
+                                iconImage.selfStyle.autosizeimage = true
+                                iconImage.selfStyle.width = "auto"
+                                iconImage.selfStyle.height = "auto"
+                                element.data.none = false
+                            end
+                        end
+
+                        iconImage:SetClass("deleted", false)
+                        resultImage:SetClass("selected", m_imageid == value)
+
+                        if caption ~= nil then
+                            --caption and captionInput are built together.
+                            ---@cast captionInput -nil
+                            local node = assets.imagesTable[imageid]
+                            captionInput:SetClass("hidden", true)
+                            caption:SetClass("hidden", node == nil)
+                            SetCaption(caption, node)
+                        end
+					end,
+				},
+				children = {
+					iconImage,
+				},
+				events = {
+					click = function(element)
+						resultPanel.value = iconImage.bgimage
+						resultPanel.popup = nil
+					end,
+
+					rightClick = function(element)
+						if library ~= nil and dmhub.isDM then
+							local entries = {
+								{
+									text  = "Delete",
+									click = function()
+										iconImage:SetClass("deleted", true)
+										dmhub.RemoveAndUploadImageFromLibrary(library, m_imageid)
+										element.popup = nil
+									end,
+								}
+							}
+
+							if devmode() then
+								entries[#entries+1] = {
+									text = "Open Image URL",
+									click = function()
+										dmhub.OpenImageAssetURL(m_imageid)
+									end,
+								}
+							end
+
+							element.popup = gui.ContextMenu{
+								entries = entries,
+							}
+						end
+					end,
+				},
+			}
+
+			return resultImage
+		end
+
+		local imageIds = {}
+		local images = {}
+
+		local rows = 5
+		local cols = 6
+		local npage = 1
+
+		local GetNumPages = function()
+			local numPages = math.ceil(#imageIds / (rows*cols))
+			if numPages < 1 then
+				numPages = 1
+			end
+
+			return numPages
+		end
+
+		while #images < rows*cols do
+			images[#images+1] = CreateImage()
+		end
+
+		local messageText = gui.Label{
+			classes = {"collapsed"},
+			floating = true,
+			halign = "center",
+			valign = "center",
+			width = "auto",
+			height = "auto",
+			maxWidth = 300,
+			fontSize = 14,
+			refreshSearch = function(element)
+				if #imageIds > 0 or library ~= "secret" then
+					element:SetClass("collapsed", true)
+				else
+					element:SetClass("collapsed", false)
+					element.text = "Place images here to keep them hidden from your players"
+				end
+			end,
+		}
+
+		local imagesGrid = gui.Panel{
+			style = {
+				flow = 'horizontal',
+				wrap = true,
+				margin = 0,
+				pad = 0,
+				width = rows*(imageDim+4)+6,
+				height = cols*(imageDim*aspect+4)+6,
+			},
+
+			selfStyle = {
+				halign = 'center',
+			},
+
+			children = images,
+
+			events = {
+				refreshSearch = function()
+					for i,image in ipairs(images) do
+						local searchIndex = (npage-1)*rows*cols + i
+						local imageId = imageIds[searchIndex]
+						if imageId == nil then
+							image:SetClass('hidden', true)
+						else
+							image.data.setImage(imageId)
+							image:SetClass('hidden', false)
+						end
+					end
+				end
+			}
+		}
+
+		local pagingPanel = gui.Panel{
+			id = "paging-panel",
+			width = "auto",
+			height = 32,
+			halign = "center",
+			flow = "horizontal",
+
+			children = {
+				gui.Button{
+					classes = {"pagingArrow"},
+					hmargin = 40,
+					refreshSearch = function(element)
+						element:SetClass("hidden", npage == 1)
+					end,
+					click = function(element)
+						npage = npage - 1
+						if npage < 1 then
+							npage = 1
+						end
+						popupPanel:FireEventTree("refreshSearch")
+					end,
+				},
+
+				gui.Panel{
+					flow = "horizontal",
+					width = "auto",
+					height = "auto",
+					halign = "center",
+					valign = "center",
+
+					gui.Label{
+						width = "auto",
+						height = "auto",
+						halign = "center",
+						valign = "center",
+						text = "Page",
+					},
+
+					--padding.
+					gui.Panel{
+						height = 1,
+						width = 8,
+					},
+
+					gui.Label{
+						editable = true,
+						width = "auto",
+						height = "auto",
+						halign = "center",
+						valign = "center",
+						minWidth = 16,
+						refreshSearch = function(element)
+							element.text = string.format("%d", math.tointeger(npage))
+						end,
+						change = function(element)
+							local newPage = tonumber(element.text)
+							if newPage == nil or newPage < 1 or newPage > GetNumPages() then
+								newPage = npage
+							end
+
+							npage = newPage
+							popupPanel:FireEventTree("refreshSearch")
+						end,
+					},
+
+					gui.Label{
+						width = "auto",
+						height = "auto",
+						halign = "center",
+						valign = "center",
+						refreshSearch = function(element)
+							element.text = string.format("/%d", math.tointeger(GetNumPages()))
+						end,
+					},
+				},
+
+				gui.Button{
+					classes = {"pagingArrow", "right"},
+					hmargin = 40,
+					refreshSearch = function(element)
+						element:SetClass("hidden", npage == GetNumPages())
+					end,
+					click = function(element)
+						npage = npage + 1
+						if npage > GetNumPages() then
+							npage = GetNumPages()
+						end
+						popupPanel:FireEventTree("refreshSearch")
+					end,
+				},
+			},
+		}
+
+		local lastSearch = nil
+		local searchInput = gui.SearchInput{
+			placeholderText = "Search for images...",
+			hasFocus = true,
+			width = "80%",
+			height = 24,
+			hmargin = 8,
+			editlag = 0.2,
+
+			-- events = {
+				change = function(element)
+					if element.text == lastSearch then
+						return
+					end
+
+					lastSearch = element.text
+
+					if useBuiltinIcons then
+						local filter = string.lower(element.text or "")
+						imageIds = {}
+						for _, item in ipairs(assets.devOnlyBuiltinImagesList) do
+							if item.path and type(item.path) == "string" and #item.path > 0 then
+								if #filter == 0 or string.lower(item.path):find(filter, 1, true) then
+									imageIds[#imageIds + 1] = item.path
+								end
+							end
+						end
+						table.sort(imageIds)
+					else
+						imageIds = dmhub.SearchImages((category or "") .. element.text, library)
+						if captions then
+							local order = {}
+							for i, id in ipairs(imageIds) do
+								local node = assets.imagesTable[id]
+								local name = node ~= nil and node.description or ""
+								order[id] = {
+									key = string.lower(name),
+									index = i,
+								}
+							end
+							--Named first, alphabetical; unnamed keep the engine's order at the end.
+							table.sort(imageIds, function(a, b)
+								local ka, kb = order[a], order[b]
+								if (ka.key == "") ~= (kb.key == "") then
+									return kb.key == ""
+								end
+								if ka.key ~= kb.key then
+									return ka.key < kb.key
+								end
+								return ka.index < kb.index
+							end)
+						end
+					end
+					if allowNone and element.text == "" then
+						table.insert(imageIds, 1, '')
+					end
+
+					npage = 1
+                    local val = resultPanel.value
+                    for i=1,#imageIds do
+                        if imageIds[i] == val then
+                            npage = math.ceil(i / (rows*cols))
+                            break
+                        end
+                    end
+
+					popupPanel:FireEventTree('refreshSearch')
+				end,
+
+				edit = function(element)
+					element:FireEvent("change")
+				end,
+			-- },
+		}
+
+		if searchHidden then
+			searchInput:AddClass("collapsed")
+		end
+
+		local options = {
+			{
+				text = "All Equipment",
+				id = "equipment",
+				search = "",
+			},
+			{
+				text = "Weapons",
+				id = "weapons",
+				search = "weapons ",
+			},
+			{
+				text = "Armor",
+				id = "armor",
+				search = "armor ",
+			},
+			{
+				text = "Skills",
+				id = "skill",
+				search = "skill ",
+			},
+			{
+				text = "Gear",
+				id = "gear",
+				search = "resources ",
+			},
+
+			--libraries
+			{
+				text = "Abilities",
+				id = "abilities",
+				search = "",
+				library = "abilities",
+			},
+			{
+				text = "Ongoing Effects",
+				id = "ongoingEffects",
+				search = "",
+				library = "ongoingEffects",
+			},
+			{
+				text = "Avatar Frames",
+				id = "AvatarFrame",
+				search = "",
+				library = "AvatarFrame",
+			},
+			{
+				text = "Avatar",
+				id = "Avatar",
+				search = "",
+				library = "Avatar",
+				imageType = "Avatar",
+			},
+			{
+				text = "Currency",
+				id = "currency",
+				search = "",
+				library = "currency",
+			},
+			{
+				text = "Gradients",
+				id = "gradients",
+				search = "",
+				library = "gradients",
+			},
+			{
+				text = "Resources",
+				id = "resources",
+				search = "",
+				library = "resources",
+			},
+			{
+				text = "Cover Art",
+				id = "coverart",
+				search = "",
+				library = "coverart",
+			},
+			--map-dressing art: zone appearance fill/edge textures and per-tile
+			--sprites (the Environmental Keyword Edit Appearance dialog uploads
+			--and browses here).
+			{
+				text = "Zone Art",
+				id = "zoneart",
+				search = "",
+				library = "zoneart",
+			},
+			--creature footprint art (Compendium > Assets > Footprints).
+			{
+				text = "Footprints",
+				id = "footprints",
+				search = "",
+				library = "footprints",
+			},
+		}
+
+		options[#options+1] = {
+			text = "Built-in Icons",
+			id = "builtinIcons",
+			search = "",
+			builtinIcons = true,
+		}
+
+		if dmhub.GetSettingValue("popoutavatars") then
+			options[#options+1] = {
+				text = "Popout Avatars",
+				id = "popoutavatars",
+				search = "",
+				library = "popoutavatars",
+				imageType = "Avatar",
+			}
+		end
+
+		if library == "journal" then
+			options[#options+1] = {
+				text = "Journal",
+				id = "journal",
+				search = "",
+				library = "journal",
+			}
+		end
+
+		if dmhub.isDM then
+			options[#options+1] = {
+				text = "GM Secret",
+				id = "secret",
+				search = "",
+				library = "secret",
+				imageType = "Avatar",
+			}
+		end
+
+		local dataTable = assets.imageLibrariesTable
+		if dataTable ~= nil then
+			local extraOptions = {}
+			for k,v in pairs(dataTable) do
+				printf("Adding library %s: %s, %s; imageType = %s vs %s", k, json(v.extension), json(v.hidden), v.imageType, json(restrictImageType))
+				if v.extension and (not v.hidden) and (dmhub.isDM or (not v.gmonly)) then
+					extraOptions[#extraOptions+1] = {
+						text = v.name,
+						id = k,
+						search = "",
+						library = k,
+						imageType = v.imageType,
+					}
+				end
+			end
+
+			table.sort(extraOptions, function(a,b) return a.text < b.text end)
+
+			for _,option in ipairs(extraOptions) do
+				options[#options+1] = option
+			end
+		end
+
+		if restrictImageType ~= nil then
+			for _,option in ipairs(options) do
+				if option.imageType == nil or string.lower(option.imageType) ~= string.lower(restrictImageType) then
+					option.hidden = true
+				end
+			end
+		end
+
+		local optionMap = {}
+		for _,option in ipairs(options) do
+			optionMap[option.id] = option
+		end
+
+
+		local categoriesPanel = gui.Panel{
+			classes = {"formPanel", cond(categoriesHidden, "collapsed")},
+			children = {
+				gui.Label{
+					classes = {"form"},
+					text = "Category:",
+				},
+				gui.Dropdown{
+					classes = {"form"},
+					options = options,
+					idChosen = library or "equipment",
+
+					events = {
+						change = function(element)
+							---@cast element Dropdown
+							lastSearch = nil
+							local selected = optionMap[element.idChosen]
+							library = selected.library
+							category = selected.search
+							useBuiltinIcons = selected.builtinIcons == true
+							imageType = ImageTypeMapping[library]
+							searchInput:FireEvent("change")
+						end,
+					},
+				},
+			},
+		}
+
+		local uploadButton = gui.Button{
+			classes = {"sizeM"},
+			text = "Upload Image",
+			hmargin = 12,
+			events = {
+				refreshSearch = function(element)
+					element:SetClass("collapsed", useBuiltinIcons)
+				end,
+				click = function(element)
+					dmhub.Debug(string.format("IMAGETYPE:: Upload image with type = %s", json(imageType)))
+					dmhub.OpenFileDialog{
+						id = "IconImages",
+						extensions = {"jpeg", "jpg", "png", "webm", "webp", "mp4", "avi"},
+						prompt = "Choose image or video to use for this icon",
+						multiFiles = true,
+						open = function(path)
+							local uploadComplete = false
+							local assetid = nil
+							assetid = assets:UploadImageAsset{
+								path = path,
+								description = FileBaseName(path),
+								imageType = imageType,
+								error = function(text)
+									dmhub.Debug('Could not load image: ' .. text)
+									resultPanel.popup = nil
+									gui.ModalMessage{
+										title = 'Error loading image: ' .. text,
+										message = text,
+									}
+								end,
+								upload = function(imageid)
+									uploadComplete = true
+									if library ~= nil and library ~= 'AvatarFrame' then
+										dmhub.AddAndUploadImageToLibrary(UploadLibrary(imageid), imageid)
+									end
+								end,
+							}
+
+							popupPanel.children = {
+								gui.Panel{
+									width = "100%",
+									height = "100%",
+									gui.Label{
+										classes = {"uploadingImageLabel"},
+										text = "Uploading Image...",
+										thinkTime = 0.1,
+										events = {
+											think = function(element)
+												if assets.imagesTable[assetid] ~= nil then
+													resultPanel.value = assetid
+													resultPanel.popup = nil
+												end
+											end,
+										},
+
+										style = {
+											fontSize = 24,
+											width = "auto",
+											height = "auto",
+											textAlignment = "center",
+											halign = "center",
+											valign = "center",
+										},
+									},
+								}
+							}
+						end,
+
+					}
+				end,
+			},
+		}
+
+		local pasteButton = nil
+
+		if allowPaste then
+			pasteButton = gui.Button{
+				text = "Paste Image",
+				hmargin = 12,
+				vmargin = 12,
+				classes = {"sizeM", cond(dmhub.HaveImageInClipboard(), nil, "disabled")},
+				thinkTime = 0.2,
+				events = {
+					refreshSearch = function(element)
+						element:SetClass("collapsed", useBuiltinIcons)
+					end,
+					think = function(element)
+						element:SetClassTree("disabled", not dmhub.HaveImageInClipboard())
+					end,
+					click = function(element)
+						if not dmhub.HaveImageInClipboard() then
+							return
+						end
+
+						local uploadComplete = false
+						local assetid = nil
+						assetid = assets:UploadImageAsset{
+							path = "CLIPBOARD",
+							imageType = imageType,
+							error = function(text)
+								dmhub.Debug('Could not load image')
+								resultPanel.popup = nil
+								gui.ModalMessage{
+									title = 'Error loading image',
+									message = text,
+								}
+							end,
+							upload = function(imageid)
+								uploadComplete = true
+								if library ~= nil and library ~= 'AvatarFrame' then
+									dmhub.AddAndUploadImageToLibrary(UploadLibrary(imageid), imageid)
+								end
+							end,
+						}
+
+						popupPanel.children = {
+							gui.Panel{
+								width = "100%",
+								height = "100%",
+								gui.Label{
+									classes = {"uploadingImageLabel"},
+									text = "Uploading Image...",
+									thinkTime = 0.1,
+									events = {
+										think = function(element)
+											if assets.imagesTable[assetid] ~= nil then
+												resultPanel.value = assetid
+												resultPanel.popup = nil
+											end
+										end,
+									},
+
+									style = {
+										fontSize = 24,
+										width = "auto",
+										height = "auto",
+										textAlignment = "center",
+										halign = "center",
+										valign = "center",
+									},
+								},
+							}
+						}
+					end,
+				},
+			}
+		end
+
+
+		
+		popupPanel = gui.Panel{
+			classes = {"framedPanel"},
+			monitorAssets = "images",
+			refreshAssets = function(element)
+				lastSearch = nil
+				searchInput:FireEvent("change")
+			end,
+			styles = ThemeEngine.MergeStyles({
+				{
+					selectors = {"imageBackground", "hover"},
+					borderWidth = 2,
+					borderColor = "@accent",
+				},
+				{
+					selectors = {"imageBackground", "selected"},
+					borderWidth = 2,
+					borderColor = "@fgStrong",
+				},
+				{
+					selectors = {"iconImage", "deleted"},
+					brightness = 0.2,
+				},
+				{
+					selectors = {"imageCaption"},
+					color = "white",
+					bgcolor = "#000000AA",
+					height = 12,
+					bgimage = true,
+					width = "100%",
+					halign = "center",
+					valign = "bottom",
+					textAlignment = "bottom",
+					fontSize = 8,
+				},
+				{
+					selectors = {"imageCaption", "placeholder"},
+					color = "@fgMuted",
+				},
+				{
+					selectors = {"label", "uploadingImageLabel"},
+					color = "@fgStrong",
+				},
+			}),
+			flow = "vertical",
+			halign = "center",
+			valign = "top",
+			width = 600,
+			height = "auto",
+			pad = 16,
+			borderBox = true,
+
+			children = {
+				gui.Label{ classes = {"modalTitle"}, text = "Choose Image" },
+				searchInput,
+				categoriesPanel,
+				imagesGrid,
+				messageText,
+				pagingPanel,
+				uploadButton,
+				pasteButton,
+				gui.Button{
+					classes = {"closeButton"},
+					halign = "right",
+					valign = "top",
+					floating = true,
+					escapeActivates = true,
+					escapePriority = EscapePriority.EXIT_MODAL_DIALOG,
+					click = function() resultPanel.popup = nil end,
+				},
+			},
+		}
+
+		searchInput:FireEvent('change')
+
+		resultPanel.popupPositioning = 'panel'
+		resultPanel.popup = popupPanel
+		--popupPanel:PulseClass("fadein")
+	end
+
+	local noneLabel = gui.Label{
+		text = "(none)",
+		fontSize = 14,
+		color = "white",
+		halign = "center",
+		valign = "center",
+		width = "auto",
+		height = "auto",
+		floating = true,
+	}
+
+    local hideIcon = nil
+
+	if not shouldHideIcon then
+		hideIcon = gui.Panel{
+			styles = {
+				{
+					opacity = 0,
+				},
+				{
+					selectors = {"parent:hover"},
+					transitionTime = 0.2,
+					opacity = 1,
+				}
+			},
+			floating = true,
+			width = "40%",
+			height = "40%",
+			maxWidth = 64,
+			maxHeight = 64,
+			halign = "center",
+			valign = "center",
+			bgimage = "ui-icons/pencil.png",
+			borderColor = Styles.textColor,
+			bgcolor = Styles.textColor,
+		}
+
+
+
+	end
+
+
+	args.bgimage = value
+	args.value = nil
+    args.children = args.children or {}
+    args.children[#args.children+1] = hideIcon
+    args.children[#args.children+1] = noneLabel
+
+	args.styles = args.styles or {}
+	args.styles[#args.styles+1] = {
+		bgcolor = args.bgcolor,
+	}
+
+	args.styles[#args.styles+1] = {
+		selectors = {"hover"},
+		bgcolor = "#777777",
+		transitionTime = 0.2,
+	}
+
+	args.styles[#args.styles+1] = {
+		selectors = {"none"},
+		bgcolor = "black",
+		transitionTime = 0.2,
+	}
+
+	args.bgcolor = nil
+
+	args.dragAndDropExtensions = {".png", ".jpg", ".jpeg", ".webm", ".webp", ".mp4", ".avi"}
+
+	args.dropfiles = function(element, files)
+		for i,f in ipairs(files) do
+			local uploadComplete = false
+			local assetid = nil
+			dmhub.Debug("Upload file: " .. f)
+			assetid = assets:UploadImageAsset{
+				path = f,
+				description = FileBaseName(f),
+				imageType = imageType,
+				error = function(text)
+					dmhub.Debug('Could not load image')
+					gui.ModalMessage{
+						title = 'Error loading image',
+						message = text,
+					}
+				end,
+				upload = function(imageid)
+					uploadComplete = true
+					if library ~= nil then
+						dmhub.AddAndUploadImageToLibrary(UploadLibrary(imageid), imageid)
+					end
+
+					if i == 1 then
+						resultPanel.value = imageid
+					end
+					dmhub.Debug("drop files uploaded")
+				end,
+				addlocal = function(imageid)
+					if library ~= nil then
+						dmhub.AddImageToLibraryLocally(UploadLibrary(imageid), imageid)
+					end
+
+					if i == 1 then
+						resultPanel.value = imageid
+					end
+					dmhub.Debug("drop files added locally")
+				end,
+			}
+		end
+	end
+
+	args.GetValue = function(element)
+		if element.bgimage == 'panels/square.png' then
+			return ''
+		end
+		return element.bgimage
+	end
+
+	args.SetValue = function(element, val, firechange)
+		local changed = (val ~= value)
+        value = val
+		if val == nil or val == '' then
+			if noneImage ~= nil then
+				element:SetClass("none", false)
+				element.bgimage = noneImage
+				noneLabel:SetClass("hidden", true)
+			else
+				element:SetClass("none", true)
+				element.bgimage = 'panels/square.png'
+				noneLabel:SetClass("hidden", false)
+			end
+
+		else
+			element.bgimage = val
+			element:SetClass("none", false)
+			noneLabel:SetClass("hidden", true)
+		end
+
+		if changed and firechange ~= false then
+			element:FireEvent('change')
+		end
+        
+	end
+
+	if args.classes == nil then args.classes = {} end
+	args.classes[#args.classes+1] = "image"
+	resultPanel = gui.Panel(args) --[[@as IconEditorPanel]]
+
+	args.SetValue(resultPanel, value, false)
+
+	resultPanel.bgimageInit = true --Force the image to be initialized to show something at least.
+
+	return resultPanel
+end

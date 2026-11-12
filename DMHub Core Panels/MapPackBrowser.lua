@@ -1,0 +1,1429 @@
+local mod = dmhub.GetModLoading()
+
+--Map pack tiles: shared pieces for browsing the map pack index (synced and
+--cached by the engine, see MapPackIndexLua / the mappacks global). The
+--Create Map dialog hosts the grid; this file only owns the tile widgets and
+--their styles. Map packs are never installed whole; see MAP_PACKS_PLAN.md at
+--the repo root.
+
+--every tile is the same fixed 3:4 cell so a page of the grid is always
+--exactly two rows. The thumbnail is scaled to cover the cell (no
+--letterboxing) and clipped, showing the map's right/bottom side; hovering
+--pans it along the overflowing axis to reveal the rest.
+local TILE_WIDTH = 150
+local TILE_HEIGHT = 200
+local TILE_MARGIN = 6
+
+--hover pan: average speed in pixels per second of the swing between the
+--two sides of the map, the shortest full swing period in seconds (so small
+--overflows do not twitch), and how quickly the image eases home on mouse-out.
+local PAN_SPEED = 20
+local PAN_MIN_PERIOD = 6
+local PAN_RETURN_RATE = 2
+
+--the props hover preview (MapPackObjectsPreview): a grid of thumbnails
+local PROPS_PREVIEW_CELL = 64
+local PROPS_PREVIEW_COLUMNS = 6
+local PROPS_PREVIEW_MAX = 24
+
+--exported so the Create Map details pane's zoom windows share the same pan
+--feel as the grid tiles.
+mod.shared.MapPackPanTuning = {
+	speed = PAN_SPEED,
+	minPeriod = PAN_MIN_PERIOD,
+	returnRate = PAN_RETURN_RATE,
+}
+
+--the grid cell's footprint including margins, for laying out pages.
+mod.shared.MapPackTileCellSize = function()
+	return TILE_WIDTH + TILE_MARGIN * 2, TILE_HEIGHT + TILE_MARGIN * 2
+end
+
+--the smallest size with the map's aspect ratio that covers maxW x maxH.
+mod.shared.MapPackCoverSize = function(entry, maxW, maxH)
+	local w = tonumber(entry.tilesW) or 1
+	local h = tonumber(entry.tilesH) or 1
+	if w < 1 then w = 1 end
+	if h < 1 then h = 1 end
+	local scale = math.max(maxW / w, maxH / h)
+	return math.max(maxW, math.ceil(w * scale)), math.max(maxH, math.ceil(h * scale))
+end
+
+--raw content-addressed image ids display through the md5: prefix.
+mod.shared.MapPackThumbImage = function(entry)
+	if entry.thumb ~= nil and entry.thumb ~= "" then
+		return "md5:" .. entry.thumb
+	end
+	return "panels/square.png"
+end
+
+mod.shared.MapPackTileStyles = function()
+	return ThemeEngine.MergeTokens({
+		{
+			selectors = {"mapPackTile"},
+			bgimage = "panels/square.png",
+			bgcolor = "#00000066",
+			cornerRadius = 6,
+			width = TILE_WIDTH,
+			height = TILE_HEIGHT,
+			margin = TILE_MARGIN,
+		},
+		{
+			selectors = {"mapPackTileImage"},
+			bgcolor = "white",
+			halign = "right",
+			valign = "bottom",
+		},
+		{
+			selectors = {"mapPackTileViewport"},
+			width = "100%",
+			height = "100%",
+			bgimage = "panels/square.png",
+			cornerRadius = 6,
+		},
+		{
+			selectors = {"mapPackTileFrame"},
+			width = "100%",
+			height = "100%",
+			bgimage = "panels/square.png",
+			bgcolor = "clear",
+			cornerRadius = 6,
+			borderWidth = 2,
+			borderColor = "clear",
+		},
+		{
+			selectors = {"mapPackTileFrame", "parent:hover"},
+			borderColor = "@accent",
+		},
+		{
+			selectors = {"mapPackTileFrame", "parent:selected"},
+			borderColor = "@fg",
+		},
+		--the dark backing lives on a full-width band, not the label itself:
+		--a percent-width label loses its hpad from the resolved width, so a
+		--label-borne background stops 4px short of the tile's edges. The
+		--band's bottom corners follow the tile frame's rounding.
+		{
+			selectors = {"mapPackTileLabelBand"},
+			width = "100%",
+			height = "auto",
+			bgimage = "panels/square.png",
+			bgcolor = "#000000aa",
+			cornerRadius = {x1 = 0, y1 = 0, x2 = 6, y2 = 6},
+		},
+		{
+			selectors = {"mapPackTileLabel"},
+			width = "100%",
+			height = "auto",
+			halign = "center",
+			valign = "bottom",
+			color = "white",
+			fontSize = 12,
+			textAlignment = "center",
+			hpad = 4,
+			vpad = 2,
+			borderBox = true,
+			textWrap = true,
+		},
+		{
+			selectors = {"mapPackTileEnhancements"},
+			width = "auto",
+			height = "auto",
+			halign = "center",
+			flow = "horizontal",
+			bgimage = "panels/square.png",
+			bgcolor = "#000000aa",
+			cornerRadius = 4,
+			hpad = 5,
+			vpad = 2,
+			bmargin = 2,
+		},
+		{
+			selectors = {"mapPackTileEnhancementsLogo"},
+			width = 12,
+			height = 12,
+			valign = "center",
+			rmargin = 4,
+			bgimage = "ui-icons/codex-logo.png",
+			bgcolor = "white",
+		},
+		{
+			selectors = {"mapPackTilePropsIcon"},
+			width = 12,
+			height = 12,
+			valign = "center",
+			rmargin = 4,
+			bgimage = "phosphor/armchair-fill.png",
+			bgcolor = "white",
+		},
+		{
+			selectors = {"mapPackObjectsPreviewCell"},
+			width = PROPS_PREVIEW_CELL,
+			height = PROPS_PREVIEW_CELL,
+			margin = 2,
+			bgimage = "panels/square.png",
+			bgcolor = "#ffffff10",
+			cornerRadius = 4,
+		},
+		{
+			selectors = {"mapPackTileEnhancementsText"},
+			width = "auto",
+			height = "auto",
+			valign = "center",
+			color = "white",
+			fontSize = 10,
+			bold = true,
+		},
+		{
+			selectors = {"mapPackStatus"},
+			fontSize = 14,
+			width = "auto",
+			height = "auto",
+			halign = "left",
+			valign = "center",
+			hmargin = 12,
+		},
+		{
+			selectors = {"mapPackDetailTitle"},
+			fontSize = 22,
+			bold = true,
+			width = "100%",
+			height = "auto",
+			textWrap = true,
+			vmargin = 6,
+		},
+		{
+			selectors = {"mapPackDetailText"},
+			fontSize = 14,
+			width = "100%",
+			height = "auto",
+			textWrap = true,
+			vmargin = 4,
+		},
+		{
+			selectors = {"mapPackChip"},
+			bgimage = "panels/square.png",
+			bgcolor = "@bg",
+			cornerRadius = 10,
+			width = "auto",
+			height = "auto",
+			flow = "horizontal",
+			halign = "left",
+			hpad = 8,
+			vpad = 3,
+			margin = 3,
+			borderWidth = 1,
+			borderColor = "@fg",
+		},
+		{
+			selectors = {"mapPackChip", "hover"},
+			borderColor = "@accent",
+		},
+		{
+			selectors = {"mapPackChip", "selected"},
+			borderWidth = 2,
+			borderColor = "@accent",
+		},
+		{
+			selectors = {"mapPackChipText"},
+			width = "auto",
+			height = "auto",
+			valign = "center",
+			fontSize = 12,
+		},
+		{
+			selectors = {"mapPackChipText", "parent:selected"},
+			bold = true,
+		},
+		--an appearance the account cannot add reads dimmer than the rest.
+		{
+			selectors = {"mapPackChipText", "parent:locked"},
+			opacity = 0.6,
+		},
+		{
+			selectors = {"mapPackPatreonIcon"},
+			width = 14,
+			height = 14,
+			valign = "center",
+			rmargin = 4,
+			bgcolor = "white",
+		},
+	})
+end
+
+--Patreon gating. A premium pack's index entries carry a tier: the minimum
+--monthly pledge (cents) to the pack's creator organization that unlocks
+--that appearance, 0 meaning free for everyone; the engine sets entry.owned
+--live against the account's pledges. State is nil for a free appearance,
+--"locked" when it needs a pledge the account lacks, "unlocked" when the
+--pledge covers it.
+mod.shared.MapPackPatreonState = function(entry)
+	if (tonumber(entry.tier) or 0) <= 0 then
+		return nil
+	end
+	if entry.owned then
+		return "unlocked"
+	end
+	return "locked"
+end
+
+--the glyph for a gated appearance, nil when nothing applies. Always the
+--solid filled logo: the duotone variant's translucent layer reads as a
+--washed-out smudge at badge size, and locked vs unlocked is already told
+--by the accompanying text and tooltips.
+mod.shared.MapPackPatreonIcon = function(entry)
+	if mod.shared.MapPackPatreonState(entry) == nil then
+		return nil
+	end
+	return "phosphor/patreon-logo-fill.png"
+end
+
+--"$5/month" for a tier in cents.
+mod.shared.MapPackTierText = function(cents)
+	cents = tonumber(cents) or 0
+	if cents % 100 == 0 then
+		return string.format("$%d/month", math.floor(cents / 100))
+	end
+	return string.format("$%.2f/month", cents / 100)
+end
+
+--how the user should read an appearance's pledge level: the creator's tier
+--name when the pack publishes one ("Adventurer tier"), else the price
+--("$1.99/month"). short = true abbreviates the price form for pills and
+--buttons ("$1.99/mo"); the name form is already short.
+mod.shared.MapPackTierLabel = function(entry, short)
+	local name = entry.tierName
+	if name ~= nil and name ~= "" then
+		return string.format("%s tier", name)
+	end
+	local price = mod.shared.MapPackTierText(entry.tier)
+	if short then
+		price = price:gsub("/month", "/mo")
+	end
+	return price
+end
+
+--one line explaining an appearance's Patreon status to the user, or nil for
+--a free one. creatorName is optional.
+mod.shared.MapPackPatreonText = function(entry, creatorName)
+	local state = mod.shared.MapPackPatreonState(entry)
+	if state == nil then
+		return nil
+	end
+	local who = cond(creatorName ~= nil and creatorName ~= "", creatorName, "the creator")
+	if state == "unlocked" then
+		return string.format("Included with your %s Patreon membership", who)
+	end
+	local name = entry.tierName
+	if name ~= nil and name ~= "" then
+		return string.format("Requires the %s tier of the %s Patreon", name, who)
+	end
+	return string.format("Requires a %s Patreon membership with %s", mod.shared.MapPackTierText(entry.tier), who)
+end
+
+--an appearance chip: the variant's name with the Patreon glyph in front when
+--the appearance is gated. options: entry, text, selected, press(element).
+--The chip carries data.entry like the grid tiles do.
+mod.shared.CreateMapPackChip = function(options)
+	local entry = options.entry
+	local state = mod.shared.MapPackPatreonState(entry)
+	local children = {}
+	local icon = mod.shared.MapPackPatreonIcon(entry)
+	if icon ~= nil then
+		children[#children + 1] = gui.Panel{
+			classes = {"mapPackPatreonIcon"},
+			bgimage = icon,
+			interactable = false,
+		}
+	end
+	children[#children + 1] = gui.Label{
+		classes = {"mapPackChipText"},
+		text = options.text,
+		interactable = false,
+	}
+	local tooltipText = mod.shared.MapPackPatreonText(entry, options.creatorName)
+	local hoverFn = nil
+	if tooltipText ~= nil then
+		hoverFn = gui.Tooltip(tooltipText)
+	end
+	return gui.Panel{
+		classes = {"mapPackChip", cond(options.selected, "selected"), cond(state == "locked", "locked")},
+		data = { entry = entry },
+		press = options.press,
+		hover = hoverFn,
+		children = children,
+	}
+end
+
+--Creator branding: the pack id is "<author>-<module>", and the author id is a
+--/ModuleAuthor record (a creator organization, or a plain author id) whose
+--displayName and logo we show. Looked up once per author and cached for the
+--session; callers waiting on the same lookup are queued.
+local g_creators = {}
+local g_creatorWaiting = {}
+
+mod.shared.MapPackCreatorId = function(entry)
+	local pack = entry.pack or ""
+	local dash = string.find(pack, "-", 1, true)
+	if dash == nil then
+		return pack
+	end
+	return string.sub(pack, 1, dash - 1)
+end
+
+--callback({displayName = string, logo = nil|string, url = nil|string,
+--campaignUrl = nil|string, campaignName = nil|string}); fires synchronously
+--when the creator is already cached. campaignUrl is the org's linked
+--Patreon campaign page (where a pledge unlocks tiered appearances), url its
+--website.
+mod.shared.GetMapPackCreator = function(entry, callback)
+	local id = mod.shared.MapPackCreatorId(entry)
+	if id == "" then
+		callback({ displayName = "", logo = nil })
+		return
+	end
+	local cached = g_creators[id]
+	if cached ~= nil then
+		callback(cached)
+		return
+	end
+	if g_creatorWaiting[id] ~= nil then
+		table.insert(g_creatorWaiting[id], callback)
+		return
+	end
+	g_creatorWaiting[id] = { callback }
+
+	local function finish(info)
+		g_creators[id] = info
+		local queue = g_creatorWaiting[id]
+		g_creatorWaiting[id] = nil
+		for _, fn in ipairs(queue or {}) do
+			fn(info)
+		end
+	end
+
+	module.GetOrganizationInfo{
+		orgid = id,
+		success = function(info)
+			local campaign = rawget(info, "patreonCampaign")
+			finish({
+				displayName = info.displayName or id,
+				logo = rawget(info, "logo"),
+				url = rawget(info, "url"),
+				campaignUrl = campaign ~= nil and rawget(campaign, "url") or nil,
+				campaignName = campaign ~= nil and rawget(campaign, "name") or nil,
+			})
+		end,
+		failure = function(msg)
+			finish({ displayName = id, logo = nil })
+		end,
+	}
+end
+
+--which maps of a pack have shared markup (Codex Enhancements), fetched once
+--per pack so the grid can badge tiles. callback(set) with set[mapid] = true;
+--fires synchronously when the pack is already cached. A failed fetch is
+--treated as an empty set and not retried this session.
+local g_markupMaps = {}
+local g_markupMapsWaiting = {}
+
+mod.shared.GetMapPackMarkupMaps = function(pack, callback)
+	if pack == nil or pack == "" then
+		callback({})
+		return
+	end
+	local cached = g_markupMaps[pack]
+	if cached ~= nil then
+		callback(cached)
+		return
+	end
+	if g_markupMapsWaiting[pack] ~= nil then
+		table.insert(g_markupMapsWaiting[pack], callback)
+		return
+	end
+	g_markupMapsWaiting[pack] = { callback }
+
+	local function finish(set)
+		g_markupMaps[pack] = set
+		local queue = g_markupMapsWaiting[pack]
+		g_markupMapsWaiting[pack] = nil
+		for _, fn in ipairs(queue or {}) do
+			fn(set)
+		end
+	end
+
+	mappacks.ListMarkupMaps{
+		pack = pack,
+		success = function(mapids)
+			local set = {}
+			for _, mapid in ipairs(mapids) do
+				set[mapid] = true
+			end
+			finish(set)
+		end,
+		error = function(msg)
+			finish({})
+		end,
+	}
+end
+
+--how many distinct users have added each map-pack map to a game, fetched
+--once per session: callback(stats) with stats[pack][mapid].adds, maps
+--nobody has added absent. Fires synchronously once cached. A failed fetch
+--is treated as no data and not retried this session.
+local g_mapStats = nil
+local g_mapStatsWaiting = nil
+
+mod.shared.GetMapPackStats = function(callback)
+	if g_mapStats ~= nil then
+		callback(g_mapStats)
+		return
+	end
+	if g_mapStatsWaiting ~= nil then
+		table.insert(g_mapStatsWaiting, callback)
+		return
+	end
+	g_mapStatsWaiting = { callback }
+
+	local function finish(stats)
+		g_mapStats = stats
+		local queue = g_mapStatsWaiting
+		g_mapStatsWaiting = nil
+		for _, fn in ipairs(queue or {}) do
+			fn(stats)
+		end
+	end
+
+	mappacks.GetMapStats{
+		success = finish,
+		error = function(msg)
+			finish({})
+		end,
+	}
+end
+
+--the library's browse order (no search). Each map scores a seeded random
+--base in [0, 1) -- seeded by user and local date, so the order holds all
+--day and reshuffles the next -- plus MapPackEntryBoost for shared markup and
+--popularity. The grid is then filled greedily from the best-scoring few
+--candidates, each pick penalised for resembling the maps just placed: same
+--creator, overlapping themes (keywords weighted by rarity, so the
+--ubiquitous "wilderness" barely counts), or the same series (first word of
+--the scene name: "Sluice Cave" after "Sluice Sewers").
+local BROWSE_MARKUP_BOOST = 0.6
+local BROWSE_ADDS_PER_DOUBLING = 0.25
+local BROWSE_ADDS_CAP = 1.5
+local BROWSE_CREATOR_PENALTY = 0.35
+local BROWSE_CREATOR_WINDOW = 3
+local BROWSE_THEME_PENALTY = 0.5
+local BROWSE_THEME_WINDOW = 5
+local BROWSE_SERIES_PENALTY = 0.6
+local BROWSE_SERIES_WINDOW = 10
+local BROWSE_CANDIDATES = 40
+
+--32-bit FNV-1a of a string, as a fraction in [0, 1).
+local function HashFraction(text)
+	local h = 2166136261
+	for i = 1, #text do
+		h = ((h ~ string.byte(text, i)) * 16777619) & 0xffffffff
+	end
+	return h / 4294967296
+end
+
+--the ranking lift an entry's map earns: shared markup (markup[pack] is the
+--GetMapPackMarkupMaps set) and how many users have added it (stats from
+--GetMapPackStats), on a log scale so a few hits matter and a runaway
+--favourite cannot bury everything else. Either table may be nil.
+mod.shared.MapPackEntryBoost = function(entry, markup, stats)
+	local boost = 0
+	local markupSet = markup ~= nil and markup[entry.pack] or nil
+	if markupSet ~= nil and markupSet[entry.id] then
+		boost = boost + BROWSE_MARKUP_BOOST
+	end
+	local packStats = stats ~= nil and stats[entry.pack] or nil
+	local mapStats = packStats ~= nil and packStats[entry.id] or nil
+	local adds = mapStats ~= nil and tonumber(mapStats.adds) or 0
+	if adds > 0 then
+		boost = boost + math.min(BROWSE_ADDS_CAP, BROWSE_ADDS_PER_DOUBLING * math.log(1 + adds, 2))
+	end
+	return boost
+end
+
+--entries: one per map (the grid's no-search list). Returns them reordered.
+mod.shared.RankMapPackEntriesForBrowsing = function(entries, markup, stats)
+	local seed = tostring(dmhub.userid or "") .. os.date("%Y-%m-%d")
+
+	--keyword rarity: log(maps / maps carrying the keyword).
+	local df = {}
+	for _, entry in ipairs(entries) do
+		for _, word in ipairs(entry.keywords or {}) do
+			df[word] = (df[word] or 0) + 1
+		end
+	end
+	local idf = {}
+	for word, count in pairs(df) do
+		idf[word] = math.log(#entries / count)
+	end
+
+	local remaining = {}
+	for _, entry in ipairs(entries) do
+		local keywords = {}
+		local weight = 0
+		for _, word in ipairs(entry.keywords or {}) do
+			if not keywords[word] then
+				keywords[word] = true
+				weight = weight + idf[word]
+			end
+		end
+		local series = string.lower(entry.sceneName ~= "" and entry.sceneName or entry.name or "")
+		series = string.match(series, "^the%s+(%S+)") or string.match(series, "^(%S+)") or ""
+		remaining[#remaining + 1] = {
+			entry = entry,
+			score = HashFraction(seed .. entry.pack .. "/" .. entry.id) + mod.shared.MapPackEntryBoost(entry, markup, stats),
+			creator = mod.shared.MapPackCreatorId(entry),
+			series = series,
+			keywords = keywords,
+			weight = weight,
+		}
+	end
+	table.sort(remaining, function(a, b) return a.score > b.score end)
+
+	--0..1: the rarity-weighted share of keywords two maps have in common.
+	local function Similarity(a, b)
+		local denom = math.max(a.weight, b.weight)
+		if denom <= 0 then
+			return 0
+		end
+		local shared = 0
+		for word in pairs(a.keywords) do
+			if b.keywords[word] then
+				shared = shared + idf[word]
+			end
+		end
+		return shared / denom
+	end
+
+	local picked = {}
+	local result = {}
+	while #remaining > 0 do
+		local bestIndex = 1
+		local bestScore = nil
+		for i = 1, math.min(#remaining, BROWSE_CANDIDATES) do
+			local c = remaining[i]
+			local score = c.score
+			for back = 1, math.min(#picked, BROWSE_SERIES_WINDOW) do
+				local p = picked[#picked - back + 1]
+				if back <= BROWSE_CREATOR_WINDOW and p.creator == c.creator then
+					score = score - BROWSE_CREATOR_PENALTY
+				end
+				if back <= BROWSE_THEME_WINDOW then
+					--the most recent pick weighs most.
+					local decay = (BROWSE_THEME_WINDOW - back + 1) / BROWSE_THEME_WINDOW
+					score = score - BROWSE_THEME_PENALTY * decay * Similarity(c, p)
+				end
+				if c.series ~= "" and p.series == c.series then
+					score = score - BROWSE_SERIES_PENALTY
+				end
+			end
+			if bestScore == nil or score > bestScore then
+				bestScore = score
+				bestIndex = i
+			end
+		end
+		local choice = table.remove(remaining, bestIndex)
+		picked[#picked + 1] = choice
+		result[#result + 1] = choice.entry
+	end
+	return result
+end
+
+--a "Codex Enhancements" badge: the Codex logo beside the text, on a dark
+--backing so it reads over the map.
+mod.shared.CodexEnhancementsBadge = function(args)
+	local result = {
+		classes = {"mapPackTileEnhancements"},
+		interactable = false,
+		gui.Panel{
+			classes = {"mapPackTileEnhancementsLogo"},
+			interactable = false,
+		},
+		gui.Label{
+			classes = {"mapPackTileEnhancementsText"},
+			text = "Codex Enhancements",
+			interactable = false,
+		},
+	}
+	for k, v in pairs(args or {}) do
+		result[k] = v
+	end
+	return gui.Panel(result)
+end
+
+--a "Props Included" badge: the map ships an "Objects for this map" set
+--(MAP_PACK_OBJECTS_PLAN.md). Same look as the Codex Enhancements badge.
+mod.shared.PropsIncludedBadge = function(args)
+	local result = {
+		classes = {"mapPackTileEnhancements"},
+		interactable = false,
+		gui.Panel{
+			classes = {"mapPackTilePropsIcon"},
+			interactable = false,
+		},
+		gui.Label{
+			classes = {"mapPackTileEnhancementsText"},
+			text = "Props Included",
+			interactable = false,
+		},
+	}
+	for k, v in pairs(args or {}) do
+		result[k] = v
+	end
+	return gui.Panel(result)
+end
+
+--"321 props included"
+mod.shared.MapPackPropsText = function(entry)
+	local n = tonumber(entry.objectCount) or 0
+	return cond(n == 1, "1 prop included", string.format("%d props included", n))
+end
+
+--each map's object list, fetched once a session (mappacks.GetMapObjects).
+local g_mapObjects = {}
+
+--A hover preview of the props a map ships with: a heading, the Patreon
+--line when the set is gated, and a grid of up to PROPS_PREVIEW_MAX
+--thumbnails sampled evenly across the set. Images of a set the account has
+--not unlocked load as transient images (memory only, never on disk) and are
+--released when the preview closes. Built for gui.TooltipFrame.
+--- @param entry MapPackIndexEntry
+--- @return Panel
+mod.shared.MapPackObjectsPreview = function(entry)
+	local transientKeys = {}
+	local grid = gui.Panel{
+		width = PROPS_PREVIEW_COLUMNS * (PROPS_PREVIEW_CELL + 4),
+		height = "auto",
+		flow = "horizontal",
+		wrap = true,
+		tmargin = 6,
+	}
+	local status = gui.Label{
+		text = "Loading props...",
+		fontSize = 12,
+		italics = true,
+		color = "#bbbbbb",
+		width = "auto",
+		height = "auto",
+		tmargin = 4,
+	}
+	local footer = gui.Label{
+		classes = {"hidden"},
+		fontSize = 11,
+		color = "#999999",
+		width = "auto",
+		height = "auto",
+		tmargin = 4,
+	}
+
+	---@type Panel[]
+	local children = {
+		gui.Label{
+			text = mod.shared.MapPackPropsText(entry),
+			fontSize = 15,
+			bold = true,
+			color = "white",
+			width = "auto",
+			height = "auto",
+		},
+	}
+	if not entry.objectsOwned and (tonumber(entry.objectsTier) or 0) > 0 then
+		children[#children + 1] = gui.Label{
+			text = mod.shared.MapPackPatreonText({tier = entry.objectsTier, tierName = entry.objectsTierName, owned = false}),
+			fontSize = 12,
+			color = "#e8c46a",
+			width = "auto",
+			maxWidth = PROPS_PREVIEW_COLUMNS * (PROPS_PREVIEW_CELL + 4),
+			height = "auto",
+			textWrap = true,
+			tmargin = 2,
+		}
+	end
+	children[#children + 1] = status
+	children[#children + 1] = grid
+	children[#children + 1] = footer
+
+	local panel = gui.Panel{
+		width = "auto",
+		height = "auto",
+		flow = "vertical",
+		styles = mod.shared.MapPackTileStyles(),
+		destroy = function(element)
+			for _, key in ipairs(transientKeys) do
+				dmhub.ReleaseTransientImage(key)
+			end
+			transientKeys = {}
+		end,
+		children = children,
+	}
+
+	local function Show(objects)
+		if not panel.valid then
+			return
+		end
+		if #objects == 0 then
+			status.text = "No props found."
+			return
+		end
+		status:SetClass("collapsed", true)
+		--an even sample across the set, so every folder tends to show
+		local picked = {}
+		local n = math.min(#objects, PROPS_PREVIEW_MAX)
+		for i = 1, n do
+			picked[#picked + 1] = objects[math.floor((i - 1) * #objects / n) + 1]
+		end
+		local cells = {}
+		for _, obj in ipairs(picked) do
+			local image
+			if entry.objectsOwned then
+				image = "md5:" .. obj.image
+			else
+				image = dmhub.LoadTransientImage(obj.image)
+				transientKeys[#transientKeys + 1] = image
+			end
+			--fit the prop inside the cell, keeping its proportions
+			local w, h = math.max(1, obj.width), math.max(1, obj.height)
+			local fit = (PROPS_PREVIEW_CELL - 6) / math.max(w, h)
+			cells[#cells + 1] = gui.Panel{
+				classes = {"mapPackObjectsPreviewCell"},
+				gui.Panel{
+					width = math.max(4, math.floor(w * fit)),
+					height = math.max(4, math.floor(h * fit)),
+					halign = "center",
+					valign = "center",
+					bgimage = image,
+					bgcolor = "white",
+				},
+			}
+		end
+		grid.children = cells
+		if #objects > n then
+			footer.text = string.format("Showing %d of %d", n, #objects)
+			footer:SetClass("hidden", false)
+		end
+	end
+
+	local key = (entry.pack or "") .. "/" .. (entry.id or "")
+	if g_mapObjects[key] ~= nil then
+		Show(g_mapObjects[key])
+	else
+		mappacks.GetMapObjects{
+			pack = entry.pack,
+			mapid = entry.id,
+			success = function(objects)
+				g_mapObjects[key] = objects
+				Show(objects)
+			end,
+			error = function(message)
+				if status.valid then
+					status.text = "Could not load the props: " .. tostring(message)
+				end
+			end,
+		}
+	end
+	return panel
+end
+
+--one grid tile for an index entry (a map appearance variant). onPress is
+--called with the entry when the tile is clicked. The creator's logo sits in
+--the top-right corner once its record has loaded, with the Patreon glyph
+--beside it when the appearance is gated (filled = the account has access,
+--duotone = it does not).
+mod.shared.CreateMapPackTile = function(entry, onPress)
+	local logoImage = gui.Panel{
+		classes = {"hidden"},
+		width = "auto",
+		height = "auto",
+		maxWidth = 56,
+		maxHeight = 22,
+		autosizeimage = true,
+		bgcolor = "white",
+		valign = "center",
+		interactable = false,
+	}
+	local patreonIcon = mod.shared.MapPackPatreonIcon(entry)
+	local patreonImage = gui.Panel{
+		classes = {cond(patreonIcon == nil, "hidden")},
+		width = 18,
+		height = 18,
+		lmargin = 4,
+		valign = "center",
+		bgimage = patreonIcon,
+		bgcolor = "white",
+		interactable = false,
+	}
+	--dark backing so a white-on-transparent logo reads over bright maps.
+	local logoPanel = gui.Panel{
+		classes = {cond(patreonIcon == nil, "hidden")},
+		floating = true,
+		halign = "right",
+		valign = "top",
+		x = -4,
+		y = 4,
+		width = "auto",
+		height = "auto",
+		flow = "horizontal",
+		pad = 3,
+		bgimage = "panels/square.png",
+		bgcolor = "#000000aa",
+		cornerRadius = 4,
+		interactable = false,
+		logoImage,
+		patreonImage,
+	}
+
+	--the thumbnail covers the cell keeping the map's aspect ratio, anchored
+	--right/bottom so that side shows. It lives inside a clipping viewport so
+	--the overflow never escapes the cell, and the border is a separate
+	--overlay drawn on top of it (see frame below).
+	local imageW, imageH = mod.shared.MapPackCoverSize(entry, TILE_WIDTH, TILE_HEIGHT)
+	local overflowX = imageW - TILE_WIDTH
+	local overflowY = imageH - TILE_HEIGHT
+	local thumb = gui.Panel{
+		classes = {"mapPackTileImage"},
+		width = imageW,
+		height = imageH,
+		bgimage = mod.shared.MapPackThumbImage(entry),
+		interactable = false,
+	}
+	local viewport = gui.Panel{
+		classes = {"mapPackTileViewport"},
+		clip = true,
+		clipHidden = true,
+		interactable = false,
+		thumb,
+	}
+
+	--hover pan: the thumbnail drifts along whichever axis overflows, easing
+	--to a stop at each side of the map and easing back the other way while
+	--hovered (a cosine swing), then glides back to the right/bottom side
+	--after the mouse leaves. Offsets are positive (rightwards/downwards)
+	--because the image is anchored right/bottom.
+	local panRange = math.max(overflowX, overflowY)
+	local panPeriod = math.max(PAN_MIN_PERIOD, 2 * panRange / PAN_SPEED)
+	local panOffset = 0
+	local panStart = nil   --time the current swing began (nil = not hovered)
+	local lastThink = nil
+
+	local ApplyPan = function()
+		if overflowX > 0 then
+			thumb.x = panOffset
+		elseif overflowY > 0 then
+			thumb.y = panOffset
+		end
+	end
+
+	local enhancementsBadge = mod.shared.CodexEnhancementsBadge{ classes = {"mapPackTileEnhancements", "hidden"} }
+	local propsBadge = mod.shared.PropsIncludedBadge{
+		classes = {"mapPackTileEnhancements", cond((tonumber(entry.objectCount) or 0) <= 0, "hidden")},
+	}
+
+	local tile = gui.Panel{
+		classes = {"mapPackTile"},
+		data = { entry = entry },
+		press = function(element)
+			onPress(element.data.entry)
+		end,
+		hover = function(element)
+			if panRange <= 0 then
+				return
+			end
+			--resume the swing from wherever the glide-back left us so the
+			--image never jumps: invert offset = range*(1-cos(phase))/2.
+			local phase = math.acos(1 - 2 * math.min(1, panOffset / panRange))
+			panStart = dmhub.Time() - phase * panPeriod / (2 * math.pi)
+			lastThink = dmhub.Time()
+			element.thinkTime = 0.01
+		end,
+		dehover = function(element)
+			panStart = nil
+		end,
+		think = function(element)
+			local now = dmhub.Time()
+			if panStart ~= nil then
+				local phase = (now - panStart) * 2 * math.pi / panPeriod
+				panOffset = panRange * (1 - math.cos(phase)) / 2
+			else
+				--ease back to the resting side, then stop thinking.
+				local dt = now - (lastThink or now)
+				panOffset = panOffset * math.exp(-dt * PAN_RETURN_RATE)
+				if panOffset < 0.5 then
+					panOffset = 0
+					element.thinkTime = nil
+				end
+			end
+			lastThink = now
+			ApplyPan()
+		end,
+		viewport,
+		--the name bar, with the Codex Enhancements badge stacked above it
+		--once the pack's shared-markup listing says this map has one, and
+		--the Props Included badge when the map ships objects.
+		gui.Panel{
+			width = "100%",
+			height = "auto",
+			valign = "bottom",
+			flow = "vertical",
+			interactable = false,
+			enhancementsBadge,
+			propsBadge,
+			gui.Panel{
+				classes = {"mapPackTileLabelBand"},
+				interactable = false,
+				gui.Label{
+					classes = {"mapPackTileLabel"},
+					text = entry.name,
+					interactable = false,
+				},
+			},
+		},
+		logoPanel,
+		--border overlay: drawn last so it sits above the thumbnail.
+		gui.Panel{
+			classes = {"mapPackTileFrame"},
+			interactable = false,
+		},
+	}
+
+	mod.shared.GetMapPackMarkupMaps(entry.pack, function(set)
+		if enhancementsBadge.valid and set[entry.id] then
+			enhancementsBadge:SetClass("hidden", false)
+		end
+	end)
+
+	mod.shared.GetMapPackCreator(entry, function(info)
+		if not logoPanel.valid then
+			return
+		end
+		if info.logo ~= nil and info.logo ~= "" then
+			logoImage.bgimage = info.logo
+			logoImage:SetClass("hidden", false)
+			logoPanel:SetClass("hidden", false)
+		end
+	end)
+
+	return tile
+end
+
+--the full-size map viewer: an almost-fullscreen modal showing the selected
+--appearance's full map image, zoomed with the wheel (about the cursor) and
+--panned by dragging. The image is downloaded on the spot. A free appearance,
+--or one the account can use, goes through the normal md5: path and is cached
+--like any map image (adding it later is then instant). A locked appearance
+--is held in memory only (dmhub.LoadTransientImage), never written to disk,
+--and freed when the viewer closes.
+--
+--focus is an optional {x1, y1, x2, y2} fraction of the map (y down) to open
+--zoomed in on, e.g. the zoom window that was clicked.
+--- @param entry MapPackIndexEntry
+--- @param focus? {x1: number, y1: number, x2: number, y2: number}
+mod.shared.ShowMapPackFullPreview = function(entry, focus)
+	if entry.image == nil or entry.image == "" then
+		return
+	end
+
+	local locked = mod.shared.MapPackPatreonState(entry) == "locked"
+	local transientKey = nil
+	local fullImage
+	if locked then
+		transientKey = dmhub.LoadTransientImage(entry.image)
+		fullImage = transientKey
+	else
+		fullImage = "md5:" .. entry.image
+	end
+
+	--image size in pixels. Until the full image arrives the index's tile
+	--size stands in for the aspect ratio, so the thumbnail placeholder sits
+	--exactly where the full image will.
+	local tilesW = math.max(1, tonumber(entry.tilesW) or 1)
+	local tilesH = math.max(1, tonumber(entry.tilesH) or 1)
+	local imgW = tilesW * 100
+	local imgH = tilesH * 100
+	local haveFullSize = false
+
+	--the view: scale in UI units per image pixel, and the image point (as
+	--0..1 fractions, y down) at the viewport's center. scale is nil until
+	--the viewport's first layout gives it a size.
+	local scale = nil
+	local centerX = 0.5
+	local centerY = 0.5
+	local vw = 0
+	local vh = 0
+
+	--UI units per screen pixel: the UI is laid out 1080 units tall.
+	local function UnitsPerScreenPixel()
+		local dim = dmhub.screenDimensions
+		if dim == nil or dim.y <= 0 then
+			return 1
+		end
+		return 1080 / dim.y
+	end
+
+	local function FitScale()
+		return math.min(vw / imgW, vh / imgH)
+	end
+
+	--zoom range: from the whole map fitted, in to 4 screen pixels per image
+	--pixel (always at least 2x the fit, for a small image on a big screen).
+	local function MaxScale()
+		return math.max(FitScale() * 2, 4 * UnitsPerScreenPixel())
+	end
+
+	--keeps the image covering the viewport along any axis it overflows, and
+	--centered along any axis it does not fill.
+	local function ClampView()
+		scale = math.max(FitScale(), math.min(MaxScale(), scale))
+		local dispW = imgW * scale
+		local dispH = imgH * scale
+		if dispW <= vw then
+			centerX = 0.5
+		else
+			local half = vw / (2 * dispW)
+			centerX = math.max(half, math.min(1 - half, centerX))
+		end
+		if dispH <= vh then
+			centerY = 0.5
+		else
+			local half = vh / (2 * dispH)
+			centerY = math.max(half, math.min(1 - half, centerY))
+		end
+	end
+
+	--the thumbnail shows at once; the full image covers it when it lands.
+	local thumbPanel = gui.Panel{
+		halign = "left",
+		valign = "top",
+		bgimage = mod.shared.MapPackThumbImage(entry),
+		bgcolor = "white",
+		interactable = false,
+	}
+	local fullPanel = gui.Panel{
+		halign = "left",
+		valign = "top",
+		bgimage = fullImage,
+		bgcolor = "white",
+		interactable = false,
+	}
+
+	local function ApplyView()
+		if scale == nil then
+			return
+		end
+		ClampView()
+		local dispW = imgW * scale
+		local dispH = imgH * scale
+		local x = vw / 2 - centerX * dispW
+		local y = vh / 2 - centerY * dispH
+		for _, p in ipairs({thumbPanel, fullPanel}) do
+			p.x = x
+			p.y = y
+			p.selfStyle.width = dispW
+			p.selfStyle.height = dispH
+		end
+	end
+
+	--zoom by factor keeping the image point under (mx, my) -- viewport
+	--units, y down -- fixed on screen.
+	local function ZoomAbout(factor, mx, my)
+		if scale == nil then
+			return
+		end
+		local u = centerX + (mx - vw / 2) / (imgW * scale)
+		local v = centerY + (my - vh / 2) / (imgH * scale)
+		scale = math.max(FitScale(), math.min(MaxScale(), scale * factor))
+		centerX = u - (mx - vw / 2) / (imgW * scale)
+		centerY = v - (my - vh / 2) / (imgH * scale)
+		ApplyView()
+	end
+
+	local statusLabel = gui.Label{
+		classes = {"mapPackViewerStatus"},
+		floating = true,
+		halign = "center",
+		valign = "bottom",
+		text = "Loading full-size map...",
+		interactable = false,
+	}
+
+	local layer = nil
+	local function Close()
+		gui.CloseModalInLayer(layer)
+	end
+
+	--pan state: the mouse position (viewport units) on the previous think
+	--while the left button is held; nil when not dragging.
+	local panPrevX = nil
+	local panPrevY = nil
+	local lastPressTime = nil
+
+	--the mouse in viewport units (y down), or nil when outside it.
+	local function MouseInViewport(element)
+		local mp = element.mousePoint
+		if mp == nil then
+			return nil, nil
+		end
+		return mp.x * vw, (1 - mp.y) * vh
+	end
+
+	local viewport = gui.Panel{
+		classes = {"mapPackViewerViewport"},
+		clip = true,
+		flow = "none",
+		thumbPanel,
+		fullPanel,
+		statusLabel,
+
+		wheel = function(element, delta)
+			local mx, my = MouseInViewport(element)
+			if mx == nil or my == nil then
+				mx, my = vw / 2, vh / 2
+			end
+			delta = math.max(-3, math.min(3, delta))
+			ZoomAbout(1.2 ^ delta, mx, my)
+			return true
+		end,
+
+		--double-click toggles between the fitted map and 1:1 pixels.
+		press = function(element)
+			local now = dmhub.Time()
+			if lastPressTime ~= nil and now - lastPressTime < 0.35 then
+				lastPressTime = nil
+				local mx, my = MouseInViewport(element)
+				if mx == nil or my == nil or scale == nil then
+					return
+				end
+				if scale > FitScale() * 1.01 then
+					ZoomAbout(FitScale() / scale, mx, my)
+				else
+					local oneToOne = math.max(FitScale() * 2, UnitsPerScreenPixel())
+					ZoomAbout(oneToOne / scale, mx, my)
+				end
+				return
+			end
+			lastPressTime = now
+		end,
+
+		thinkTime = 0.01,
+		think = function(element)
+			local w = element.renderedWidth or 0
+			local h = element.renderedHeight or 0
+			if w > 0 and h > 0 and (w ~= vw or h ~= vh) then
+				vw = w
+				vh = h
+				if scale == nil then
+					scale = FitScale()
+					if focus ~= nil then
+						--open on the focused region, as large as fits.
+						local fw = math.max(0.01, focus.x2 - focus.x1)
+						local fh = math.max(0.01, focus.y2 - focus.y1)
+						scale = math.min(vw / (imgW * fw), vh / (imgH * fh))
+						centerX = (focus.x1 + focus.x2) / 2
+						centerY = (focus.y1 + focus.y2) / 2
+					end
+				end
+				ApplyView()
+			end
+
+			--the full image's real pixel size, once known. The view keeps
+			--its on-screen size and position across the switch.
+			if not haveFullSize then
+				local fw, fh = nil, nil
+				if transientKey ~= nil then
+					local status = dmhub.GetTransientImageStatus(transientKey)
+					if status == nil or status.status == "failed" then
+						local text = "Could not load the full-size map."
+						if status ~= nil and status.error ~= nil then
+							text = text .. " " .. status.error
+						end
+						statusLabel.text = text
+						haveFullSize = true
+					elseif status.status == "downloading" then
+						statusLabel.text = string.format("Downloading full-size map... %d%%", math.floor(status.progress * 100))
+					elseif status.status == "decoding" then
+						statusLabel.text = "Preparing full-size map..."
+					elseif status.width > 0 then
+						fw, fh = status.width, status.height
+					end
+				elseif (fullPanel.bgimageWidth or -1) > 0 then
+					fw, fh = fullPanel.bgimageWidth, fullPanel.bgimageHeight
+				end
+				if fw ~= nil and fh ~= nil and fw > 0 and fh > 0 then
+					haveFullSize = true
+					if scale ~= nil then
+						scale = scale * imgW / fw
+					end
+					imgW = fw
+					imgH = fh
+					statusLabel:SetClass("hidden", true)
+					thumbPanel:SetClass("hidden", true)
+					ApplyView()
+				end
+			end
+
+			--left-drag pans; polled so the image follows the mouse smoothly.
+			local mx, my = MouseInViewport(element)
+			if mx ~= nil and my ~= nil and element:GetMouseButton(0) then
+				if panPrevX ~= nil and panPrevY ~= nil and scale ~= nil then
+					local dx = mx - panPrevX
+					local dy = my - panPrevY
+					if dx ~= 0 or dy ~= 0 then
+						centerX = centerX - dx / (imgW * scale)
+						centerY = centerY - dy / (imgH * scale)
+						ApplyView()
+					end
+				end
+				panPrevX = mx
+				panPrevY = my
+			else
+				panPrevX = nil
+				panPrevY = nil
+			end
+		end,
+	}
+
+	--a left group and a right group, so leftover width cannot spread the
+	--items apart (same layout as the Create Map header).
+	local header = gui.Panel{
+		classes = {"mapPackViewerHeader"},
+		gui.Panel{
+			width = "auto",
+			height = "100%",
+			halign = "left",
+			flow = "horizontal",
+			gui.Label{
+				classes = {"mapPackViewerTitle"},
+				text = entry.name,
+			},
+			gui.Label{
+				classes = {"mapPackViewerHint"},
+				text = "Scroll to zoom  -  drag to pan  -  double-click to zoom in or fit",
+			},
+		},
+		gui.Panel{
+			classes = {"mapPackViewerClose"},
+			halign = "right",
+			bgimage = "phosphor/x-bold.png",
+			press = function(element)
+				Close()
+			end,
+		},
+	}
+
+	local root = gui.Panel{
+		classes = {"mapPackViewerBackdrop"},
+		styles = ThemeEngine.MergeTokens({
+			{
+				selectors = {"mapPackViewerBackdrop"},
+				width = "100%",
+				height = "100%",
+				bgimage = "panels/square.png",
+				bgcolor = "#000000e0",
+			},
+			{
+				selectors = {"mapPackViewerFrame"},
+				width = "96%",
+				height = "94%",
+				halign = "center",
+				valign = "center",
+				flow = "vertical",
+				bgimage = "panels/square.png",
+				bgcolor = "@bg",
+				cornerRadius = 8,
+			},
+			{
+				selectors = {"mapPackViewerHeader"},
+				width = "100%",
+				height = 44,
+				flow = "horizontal",
+				hpad = 12,
+				borderBox = true,
+			},
+			{
+				selectors = {"mapPackViewerTitle"},
+				width = "auto",
+				height = "auto",
+				valign = "center",
+				fontSize = 18,
+				bold = true,
+				color = "@fg",
+			},
+			{
+				selectors = {"mapPackViewerHint"},
+				width = "auto",
+				height = "auto",
+				valign = "center",
+				lmargin = 16,
+				fontSize = 13,
+				color = "@fgMuted",
+			},
+			{
+				selectors = {"mapPackViewerClose"},
+				width = 16,
+				height = 16,
+				valign = "center",
+				bgcolor = "@fgMuted",
+			},
+			{
+				selectors = {"mapPackViewerClose", "hover"},
+				bgcolor = "@fgStrong",
+			},
+			{
+				selectors = {"mapPackViewerViewport"},
+				width = "100%",
+				height = "100%-44",
+				bgimage = "panels/square.png",
+				bgcolor = "#0b0b0bff",
+				cornerRadius = {x1 = 8, y1 = 8, x2 = 0, y2 = 0},
+			},
+			{
+				selectors = {"mapPackViewerStatus"},
+				width = "auto",
+				height = "auto",
+				bmargin = 16,
+				hpad = 12,
+				vpad = 6,
+				borderBox = true,
+				bgimage = "panels/square.png",
+				bgcolor = "#000000cc",
+				cornerRadius = 6,
+				fontSize = 14,
+				color = "white",
+			},
+		}),
+		--a click on the backdrop around the frame closes the viewer.
+		press = function(element)
+			Close()
+		end,
+		--same priority as the Create Map dialog's Escape; the newer
+		--listener wins the tie, so Escape closes only the viewer.
+		captureEscape = true,
+		escapePriority = EscapePriority.EXIT_MODAL_DIALOG,
+		escape = function(element)
+			Close()
+		end,
+		destroy = function(element)
+			if transientKey ~= nil then
+				dmhub.ReleaseTransientImage(transientKey)
+				transientKey = nil
+			end
+		end,
+		gui.Panel{
+			classes = {"mapPackViewerFrame"},
+			--press bubbles to ancestors unless swallowed: stop it here so
+			--only a click on the backdrop itself closes the viewer.
+			swallowPress = true,
+			header,
+			viewport,
+		},
+	}
+
+	layer = gui.ShowModal(root)
+end

@@ -1,14 +1,169 @@
 local mod = dmhub.GetModLoading()
 
+-- Favorite modules: a per-account set of module ids the user has starred in
+-- the module browser's detail page. The "Create New Campaign" screen
+-- (CodexTitlescreen.CreateGameDialog) offers every favorite as an adventure
+-- cover the new game can install, next to the built-in Draw Steel
+-- adventures. Account storage so the list follows the user across machines.
+-- No editor: the star is the only UI.
+local g_favoriteModulesSetting = setting{
+	id = "favoritemodules",
+	description = "Favorite Modules",
+	storage = "account",
+	default = {},
+}
+
+--Shared with the titlescreen (a different file, same core codex). Read it
+--with rawget(_G, "ModuleFavorites") from anything that may load first.
+ModuleFavorites = {
+	--The favorite module ids as a fresh set {id = true}. Never returns the
+	--stored table itself, so callers can mutate the result freely.
+	Get = function()
+		local result = {}
+		local stored = g_favoriteModulesSetting:Get()
+		if type(stored) == "table" then
+			for k, v in pairs(stored) do
+				if v and type(k) == "string" then
+					result[k] = true
+				end
+			end
+		end
+		return result
+	end,
+
+	--The favorite module ids as a sorted list, for stable display order.
+	List = function()
+		local result = {}
+		for k, _ in pairs(ModuleFavorites.Get()) do
+			result[#result + 1] = k
+		end
+		table.sort(result)
+		return result
+	end,
+
+	Is = function(moduleid)
+		return moduleid ~= nil and ModuleFavorites.Get()[moduleid] == true
+	end,
+
+	Set = function(moduleid, favorite)
+		if moduleid == nil or moduleid == "" then
+			return
+		end
+		local current = ModuleFavorites.Get()
+		if favorite then
+			current[moduleid] = true
+		else
+			current[moduleid] = nil
+		end
+		--Set a fresh table: the setting layer compares by identity.
+		g_favoriteModulesSetting:Set(current)
+	end,
+
+	Toggle = function(moduleid)
+		ModuleFavorites.Set(moduleid, not ModuleFavorites.Is(moduleid))
+	end,
+}
+
+-- Local style pack passed to every gui.Check{styles = g_CheckboxStyles,} in this file via its
+-- `styles` property. Hardcoded values from the default scheme so the
+-- checkbox visuals paint regardless of what (legacy or theme) cascade
+-- the surrounding dialog uses.
+local g_CheckboxStyles = {
+	{
+		selectors = {"checkbox"},
+		bgimage = true,
+		flow = "horizontal",
+		bgcolor = "clear",
+		height = 30,
+		width = "auto",
+		minWidth = 200,
+		hpad = 4,
+	},
+	{
+		selectors = {"checkBackground"},
+		bgimage = true,
+		bgcolor = "#080B09",
+		halign = "left",
+		valign = "center",
+		height = "70%",
+		width = "100% height",
+		rmargin = 6,
+		borderColor = "#DFDFDF",
+		borderWidth = 2,
+	},
+	{
+		selectors = {"checkMark"},
+		bgimage = true,
+		bgcolor = "#CECECE",
+		halign = "center",
+		valign = "center",
+		width = "50%",
+		height = "50%",
+	},
+	{
+		selectors = {"checkboxLabel"},
+		halign = "left",
+		valign = "center",
+		textAlignment = "left",
+		borderWidth = 0,
+		width = "auto",
+		height = "auto",
+		fontSize = 18,
+	},
+}
+
 local CreateMapNodePanel
 local CreateMapFolderPanel
 local CreateMapFolderChildPanel
 
+-- Per-open-dialog state shared with the file-local Create*View helpers.
+-- Set by showShareModuleDialog before any panel construction runs and reset
+-- to nil after the dialog closes. The hiddenEntries map (assetid -> true)
+-- comes from moduleInstance.publishingProperties.hiddenEntries and is the
+-- source of truth while the dialog is open.
+local g_dialogState = nil
+
 local createCheck = function(element)
 	element:FireEventOnParents("createasset", element)
 
+	-- If this entry was previously hidden via the right-click menu, hide it
+	-- on creation and exclude it from the per-section counts.
+	if g_dialogState ~= nil and element.data.assetid ~= nil
+		and g_dialogState.hiddenEntries[element.data.assetid] then
+		element:SetClass("silent", true)
+		element:SetClass("collapsed", true)
+	end
+
 	--debug show guid of object.
 	--element.data.SetText(element.data.GetText() .. " " .. element.data.assetid)
+end
+
+-- rightClick handler attached to each gui.Check row. Opens a context menu
+-- offering to hide this entry from the publish dialog permanently.
+local rightClickHide = function(element)
+	if g_dialogState == nil then return end
+	local assetid = element.data.assetid
+	if assetid == nil then return end
+	local displayName = element.data.displayName or "this entry"
+
+	element.popup = gui.ContextMenu{
+		width = 320,
+		entries = {
+			{
+				text = string.format("Hide \"%s\" from this dialog", displayName),
+				click = function()
+					element.popup = nil
+					g_dialogState.hiddenEntries[assetid] = true
+					element:SetClass("silent", true)
+					element:SetClass("collapsed", true)
+					if g_dialogState.onChange ~= nil then
+						g_dialogState.onChange()
+					end
+				end,
+			},
+		},
+		click = function() element.popup = nil end,
+	}
 end
 
 local changeCheck = function(element)
@@ -26,12 +181,32 @@ local countCheck = function(element, counts)
 	end
 end
 
+-- Counts map entries that are checked AND sit at the top level of the Maps
+-- tree (not inside a folder). Drives the "group your maps in a folder"
+-- recommendation shown in the publish dialog.
+local countTopLevelMapCheck = function(element, counts)
+	if element:HasClass("silent") then
+		return
+	end
+
+	if element.data.toplevel and element.value then
+		counts.n = counts.n + 1
+	end
+end
+
 local selectionCheck = function(element, t)
 	if element:HasClass("silent") then
 		return
 	end
 
-	element.value = (t == "all")
+	--Programmatic value sets are silent, but bulk selection must still run the
+	--change handler (selectasset) to update the export model, so fire it
+	--explicitly when the value actually flips.
+	local val = (t == "all")
+	if element.value ~= val then
+		element.value = val
+		element:FireEvent("change")
+	end
 end
 
 local collectManifestCheck = function(element, entries)
@@ -60,13 +235,28 @@ setting{
 	default = false,
 }
 
-local includedAssets = function(element, includedAssets, dependencyAssets, signal)
-	local dependents = dependencyAssets[element.data.assetid]
-	local val = cond(includedAssets[element.data.assetid] or dependents, true, false)
+--initial is true only for the one-time seed pass that runs when the dialog opens
+--on an existing module. Every other pass comes from the dependency recompute.
+--Whether a dependency on this row ships with the module: only content this
+--game created. A core (or base module) entry this game edited or deleted is
+--already provided by core, and shipping the copy would freeze it over core in
+--every game that installs the module; the author ticks it to ship it anyway.
+--Rows without an op (maps, characters, code, modules) always ship.
+local ShipsAsDependency = function(data)
+	return data.op == nil or data.op == "create"
+end
+
+local includedAssets = function(element, includedAssets, dependencyAssets, signal, initial)
+	local dependents = ShipsAsDependency(element.data) and dependencyAssets[element.data.assetid]
 
 	local canOverride = not dmhub.GetSettingValue("module:exportignoredependencies")
 
-	if canOverride then
+	--With dependency checking off the recompute must not stomp the author's manual
+	--checks, but the seed from the previous publish still has to land, so let the
+	--initial pass through. Dependents never force a check in that mode -- they are
+	--only flagged with the "error" class below.
+	if canOverride or initial then
+		local val = cond(includedAssets[element.data.assetid] or (canOverride and dependents), true, false)
 		element.SetValue(element, val, signal)
 	end
 
@@ -92,9 +282,11 @@ local checkTooltip = function(element)
 	end
 end
 
-CreateMapNodePanel = function(map)
+--isTopLevel is true for maps that sit directly in the root Maps folder rather
+--than inside a folder of their own.
+CreateMapNodePanel = function(map, isTopLevel)
 	local resultPanel
-	local check = gui.Check{
+	local check = gui.Check{styles = g_CheckboxStyles,
 		idprefix = "map-label",
 		text = map.description,
 		value = false,
@@ -104,7 +296,9 @@ CreateMapNodePanel = function(map)
 		create = createCheck,
 		change = changeCheck,
 		count = countCheck,
+		counttoplevelmaps = countTopLevelMapCheck,
 		linger = checkTooltip,
+		rightClick = rightClickHide,
 		includedAssets = includedAssets,
 		collectManifest = collectManifestCheck,
 		selection = function(element, t)
@@ -113,13 +307,19 @@ CreateMapNodePanel = function(map)
 				val = true
 			end
 
-			element.value = val
+			--See selectionCheck: fire change explicitly so the export model
+			--updates; plain .value assignment no longer echoes change.
+			if element.value ~= val then
+				element.value = val
+				element:FireEvent("change")
+			end
 		end,
 		data = {
 			assetid = map.id,
 			displayName = map.description or "(unknown map)",
 			data = map,
 			type = "map",
+			toplevel = (isTopLevel == true),
 		}
 	}
 
@@ -161,7 +361,7 @@ CreateMapFolderPanel = function(folder, isroot, optionsPanel)
 
 	end
 
-	local childPanel = CreateMapFolderChildPanel(folder)
+	local childPanel = CreateMapFolderChildPanel(folder, isroot)
 
 	if optionsPanel ~= nil then
 		local children = childPanel.children
@@ -277,7 +477,7 @@ local CreateCharacterFolderChildPanel = function()
 			ord = '3' .. name
 		end
 
-		children[#children+1] = gui.Check{
+		children[#children+1] = gui.Check{styles = g_CheckboxStyles,
 
 			customPanel = gui.CreateTokenImage(c, {
 				width = 20,
@@ -287,7 +487,7 @@ local CreateCharacterFolderChildPanel = function()
 			}),
 
 			classes = {"row"},
-			text = string.format("%s", name),
+			text = string.format("%s (%s)", name, k),
 			value = false,
 			width = 340,
 			height = 20,
@@ -296,6 +496,7 @@ local CreateCharacterFolderChildPanel = function()
 			change = changeCheck,
 			count = countCheck,
 			linger = checkTooltip,
+			rightClick = rightClickHide,
 			includedAssets = includedAssets,
 			collectManifest = collectManifestCheck,
 			selection = selectionCheck,
@@ -384,7 +585,7 @@ local CreateCharacterSelectionPanel = function()
 
 end
 
-CreateMapFolderChildPanel = function(folder)
+CreateMapFolderChildPanel = function(folder, isTopLevel)
 	local childNodes = {}
 	local resultPanel = gui.Panel{
 		idprefix = "map-folder-child",
@@ -397,7 +598,7 @@ CreateMapFolderChildPanel = function(folder)
 			local newChildNodes = {}
 			local children = {}
 			for _,map in ipairs(folder.childMaps) do
-				local newChild = childNodes[map.mapid] or CreateMapNodePanel(map)
+				local newChild = childNodes[map.mapid] or CreateMapNodePanel(map, isTopLevel)
 				children[#children+1] = newChild
 				newChildNodes[map.mapid] = newChild
 			end
@@ -457,12 +658,14 @@ local g_tableDisplayNames = {
 	currency = "Currency",
 	customAttributes = "Character Attributes",
 	damageTypes = "Damage Types",
+	encounterScripts = "Encounter Scripts",
 	environmentalKeywords = "Environmental Keywords",
 	equipmentCategories = "Equipment Categories",
 	featurePrefabs = "Character Feature Prefabs",
 	globalRuleMods = "Global Rules",
 	languages = "Languages",
 	lootTables = "Loot Tables",
+	mapScripts = "Map Scripts",
 	nameGenerators = "Name Generators",
 	parties = "Parties",
 	races = "Races",
@@ -483,12 +686,14 @@ local g_tableDisplayNamesSingular = {
 	currency = "Currency",
 	customAttributes = "Character Attribute",
 	damageTypes = "Damage Type",
+	encounterScripts = "Encounter Script",
 	environmentalKeywords = "Environmental Keyword",
 	equipmentCategories = "Equipment Category",
 	featurePrefabs = "Character Feature Prefab",
 	globalRuleMods = "Global Rule",
 	languages = "Language",
 	lootTables = "Loot Table",
+	mapScripts = "Map Script",
 	nameGenerators = "Name Generator",
 	parties = "Party",
 	races = "Race",
@@ -617,9 +822,9 @@ local CreateObjectTableView = function(tableName, knownAssetsInCore)
 						op = "modify"
 					end
 
-					local panel = gui.Check{
-						classes = {"row"}, --cond(hidden, "silent")},
-						text = string.format("%s (%s)", entry.name, op),
+					local panel = gui.Check{styles = g_CheckboxStyles,
+						classes = {"row", op}, --cond(hidden, "silent")},
+						text = string.format("%s (%s -- %s)", entry.name, op, k),
 						value = false,
 						width = 340,
 						height = 20,
@@ -628,6 +833,7 @@ local CreateObjectTableView = function(tableName, knownAssetsInCore)
 						change = changeCheck,
 						count = countCheck,
 						linger = checkTooltip,
+						rightClick = rightClickHide,
 						includedAssets = includedAssets,
 						collectManifest = collectManifestCheck,
 						selection = selectionCheck,
@@ -636,6 +842,7 @@ local CreateObjectTableView = function(tableName, knownAssetsInCore)
 							displayName = entry.name or "(unknown object)",
 							ord = string.lower(entry.name),
 							type = string.format("object:%s", tableName),
+							op = op,
 						},
 					}
 
@@ -686,9 +893,17 @@ local function GatherAllAssetsChildren(children, knownAssetsInCore)
 	local assetsByType = {}
 
 	for k,v in pairs(all) do
-		local items = assetsByType[v.assetType] or {}
+		local assetType = v.assetType
+		if assetType == "Folder" and assets.monsterFolders[k] ~= nil then
+			--AssetFolder is shared by several asset systems, so the engine-level
+			--assetType is only "Folder". Split bestiary folders out here so their
+			--create/modify/delete records are visible and understandable to publishers.
+			assetType = "Bestiary Folder"
+		end
+
+		local items = assetsByType[assetType] or {}
 		items[k] = v
-		assetsByType[v.assetType] = items
+		assetsByType[assetType] = items
 	end
 
 	for t,items in pairs(assetsByType) do
@@ -779,7 +994,7 @@ local function GatherAllAssetsChildren(children, knownAssetsInCore)
 							op = "modify"
 						end
 
-						local panel = gui.Check{
+						local panel = gui.Check{styles = g_CheckboxStyles,
 							classes = {"row"}, -- cond(entry.hidden, "silent")},
 							text = string.format("%s (%s)", description or "(unnamed)", op),
 							value = false,
@@ -790,6 +1005,7 @@ local function GatherAllAssetsChildren(children, knownAssetsInCore)
 							change = changeCheck,
 							count = countCheck,
 							linger = checkTooltip,
+							rightClick = rightClickHide,
 							includedAssets = includedAssets,
 							collectManifest = collectManifestCheck,
 							selection = selectionCheck,
@@ -799,6 +1015,7 @@ local function GatherAllAssetsChildren(children, knownAssetsInCore)
 								folderid = entry.folderid,
 								ord = string.lower(description or "(unnamed)"),
 								type = t,
+								op = op,
 							},
 						}
 
@@ -808,7 +1025,7 @@ local function GatherAllAssetsChildren(children, knownAssetsInCore)
 
 				numChildren = #children
 
-				table.sort(children, function(a,b) return (a.data.folderid or "") < (b.data.folderid or "") or (a.data.folderid == b.data.folderid and a.data.ord < b.data.ord) end)
+				table.sort(children, function(a,b) return a.data.ord < b.data.ord end)
 				local currentFolder = nil
 				local newChildren = {}
 				for _,child in ipairs(children) do
@@ -940,7 +1157,7 @@ end
 
 local function CreateCodeModView(modid, modInfo)
 
-	local resultPanel = gui.Check{
+	local resultPanel = gui.Check{styles = g_CheckboxStyles,
 		text = string.format("%s", modInfo.name),
 		value = false,
 		width = 340,
@@ -950,13 +1167,16 @@ local function CreateCodeModView(modid, modInfo)
 		change = changeCheck,
 		count = countCheck,
 		linger = checkTooltip,
+		rightClick = rightClickHide,
 		includedAssets = includedAssets,
 		collectManifest = collectManifestCheck,
 		selection = selectionCheck,
 		data = {
 			assetid = modid,
 			displayName = modInfo.name or "(unknown mod)",
-			addressable = false,
+			--addressable so the dependency search sees it: a code mod depends on the
+			--image assets its source names by guid, which must ship alongside it.
+			addressable = true,
 			type = "code",
 		}
 	}
@@ -969,7 +1189,7 @@ end
 
 local function CreateModuleDependencyView(moduleInstance)
 
-	local resultPanel = gui.Check{
+	local resultPanel = gui.Check{styles = g_CheckboxStyles,
 		text = string.format("%s", moduleInstance.fullid),
 		value = false,
 		width = 340,
@@ -979,6 +1199,7 @@ local function CreateModuleDependencyView(moduleInstance)
 		change = changeCheck,
 		count = countCheck,
 		linger = checkTooltip,
+		rightClick = rightClickHide,
 		includedAssets = includedAssets,
 		collectManifest = collectManifestCheck,
 		selection = selectionCheck,
@@ -1038,7 +1259,7 @@ local function CreateImageLibraryView(assetid, imageLibrary, coreImageLibrary)
 
 	local name = imageLibrary.name
 
-	local resultPanel = gui.Check{
+	local resultPanel = gui.Check{styles = g_CheckboxStyles,
 		text = string.format("%s (%s)", name, desc),
 		value = false,
 		width = 340,
@@ -1048,6 +1269,7 @@ local function CreateImageLibraryView(assetid, imageLibrary, coreImageLibrary)
 		change = changeCheck,
 		count = countCheck,
 		linger = checkTooltip,
+		rightClick = rightClickHide,
 		includedAssets = includedAssets,
 		selection = selectionCheck,
 		collectManifest = collectManifestCheck,
@@ -1069,6 +1291,7 @@ local CreateAssetsHierarchy = function(moduleInstance)
 
 	local knownAssetsInCore = {}
 
+	--- @type table<string, ImageLibraryAssetLua>
 	local coreImageLibraries = nil
 
 	local populateCore = function()
@@ -1089,6 +1312,7 @@ local CreateAssetsHierarchy = function(moduleInstance)
 	end
 
 	dmhub.RunWithModuleAssets("Core", populateCore)
+    dmhub.RunWithModuleAssets("mcdm-drawsteel", populateCore)
 
 	local populateTables = function()
 
@@ -1379,11 +1603,31 @@ local CreateAssetsHierarchy = function(moduleInstance)
 		end
 
 		local codemodsChildren = {}
-		local codemodsPresent = code.loadedModsLocalToGame
+		-- Codemods authored locally in this game, plus codemods that were
+		-- installed into the game by module dependencies (e.g. the Crowdex
+		-- codemod pulled in via mcdm-crowdex). The latter live in
+		-- gameInfo.codeModsFromModules and would otherwise not be offerable as
+		-- content to bundle into this module. Dedup so a codemod that is both
+		-- local and from a module only appears once.
+		local codemodsPresent = {}
+		local codemodsSeen = {}
+		local AddCodemod = function(modid)
+			if modid ~= nil and modid ~= "" and not codemodsSeen[modid] then
+				codemodsSeen[modid] = true
+				codemodsPresent[#codemodsPresent+1] = modid
+			end
+		end
+		for _,modid in ipairs(code.loadedModsLocalToGame) do
+			AddCodemod(modid)
+		end
+		for _,modid in ipairs(code.loadedModsFromModules) do
+			AddCodemod(modid)
+		end
 		for _,modid in ipairs(codemodsPresent) do
 			local modInfo = code.GetMod(modid)
-			codemodsChildren[#codemodsChildren+1] = CreateCodeModView(modid, modInfo)
-			
+			if modInfo ~= nil then
+				codemodsChildren[#codemodsChildren+1] = CreateCodeModView(modid, modInfo)
+			end
 		end
 
 		dmhub.Debug(string.format("CODEMOD:: %d", #codemodsChildren))
@@ -1457,13 +1701,600 @@ local CreateAssetsHierarchy = function(moduleInstance)
 	return resultPanel
 end
 
+--The checks behind the "eotw" module type below. An Encounter of the Week
+--module is a set of encounter maps (named "Encounter" or "Encounter: <title>",
+--the rule in Codex Titlescreen/EncounterOfTheWeek.lua), each played from the
+--script filed in its journal folder. Parsing a script needs the EotW codemod,
+--which a game has when the code-only authoring module codex-eotwauthor (or the
+--official mcdm-encounteroftheweek module) is installed -- the same game an
+--author playtests in.
+--Returns { errors, warnings, encounters }: encounters is what the town reads
+--from the module record as publishingProperties.eotwEncounters, {<map name>
+--= {townGate = text, townGateSource?}} from each script's "# Town Gate"
+--section (townGateSource: the text as written, when it has "If ...:" story
+--blocks; townGate is then what shows with no story); a series map adds
+--parts = { {number, title, townGate, townGateSource?, tracks? = { {name,
+--hidden, description}, ... }, map?}, ... }, one per part; map names a part
+--played on its own part map ("<series> (Part <n>)", Part 1 too), which is
+--checked with its series and never listed as an encounter of its own; the
+--series is keyed by the plain name even when no map has it. Parts marked
+--"Coming soon" go in comingSoonParts = { {number, title, text?}, ... }
+--instead, so an app that predates them never offers them. A part marked
+--"Coming soon at the Town Gate" goes there too, with gateOnly = true and
+--the part's own fields, so a newer town can play it in the Proving Pits
+--while older apps still keep it locked. Also ticks
+--every document a script is built from (ctx.include), since nothing else
+--ties a map to the documents in its journal folder.
+--Where a series part goes in the module record, and what it carries.
+--part: the playable record { number, title, townGate, townGateSource,
+--tracks, map, restFree }. comingSoon: the part's mark, or nil.
+--Returns "parts", part for a playable part; "comingSoonParts" and
+--{ number, title, text } for a "Coming soon" part; and for one marked
+--"Coming soon at the Town Gate", "comingSoonParts" and the whole part with
+--text and gateOnly = true (older apps read only number, title and text).
+local function SeriesPartRecord(comingSoon, part)
+	if comingSoon == nil then
+		return "parts", part
+	end
+	if comingSoon.board == "gate" then
+		local record = {}
+		for k, v in pairs(part) do
+			record[k] = v
+		end
+		record.text = comingSoon.text
+		record.gateOnly = true
+		return "comingSoonParts", record
+	end
+	return "comingSoonParts", { number = part.number, title = part.title, text = comingSoon.text }
+end
+
+local CheckEncounterModule = function(ctx)
+	local result = { errors = {}, warnings = {}, encounters = {} }
+	local errors, warnings = result.errors, result.warnings
+
+	local eotw = rawget(_G, "EncounterOfTheWeek")
+	local montage = rawget(_G, "EncounterMontage")
+	if eotw == nil or montage == nil or montage.ScriptForMap == nil then
+		errors[#errors+1] = "Encounter scripts can only be checked in a game that has the Encounter of the Week authoring module (codex-eotwauthor) installed. Install it in this game, restart, then publish."
+		return result
+	end
+
+	local maps = {}
+	local seenNames = {}
+	for guid,_ in pairs(ctx.includedAssets) do
+		local info = ctx.assetInfo[guid]
+		if info ~= nil then
+			if info.type == "code" then
+				errors[#errors+1] = string.format("An Encounter of the Week module cannot include code (%s): its encounters run on the official module's code.", info.displayName)
+			elseif info.type == "module" then
+				errors[#errors+1] = string.format("An Encounter of the Week module cannot depend on another module (%s): the game it is played in already has the official module.", info.displayName)
+			elseif info.type == "map" and eotw.IsEncounterMapName(info.displayName) then
+				if seenNames[info.displayName] then
+					errors[#errors+1] = string.format("Two maps are named \"%s\". A game finds its encounter map by name, so each must be unique.", info.displayName)
+				end
+				seenNames[info.displayName] = true
+				maps[#maps+1] = { id = guid, name = info.displayName }
+			end
+		end
+	end
+	table.sort(maps, function(a, b) return a.name < b.name end)
+
+	--part maps go with their series map, not on their own.
+	local partMaps = {}
+	local seriesMaps = {}
+	for _,m in ipairs(maps) do
+		local seriesName, number = nil, nil
+		if eotw.SplitPartMapName ~= nil then
+			seriesName, number = eotw.SplitPartMapName(m.name)
+		end
+		if seriesName ~= nil then
+			m.part = number
+			partMaps[seriesName] = partMaps[seriesName] or {}
+			table.insert(partMaps[seriesName], m)
+		else
+			seriesMaps[#seriesMaps+1] = m
+		end
+	end
+	--a series whose every part has its own map has no plain-named map: it
+	--is still listed (and keyed) by that plain name.
+	for seriesName,_ in pairs(partMaps) do
+		if not seenNames[seriesName] then
+			seriesMaps[#seriesMaps+1] = { id = nil, name = seriesName }
+		end
+	end
+	table.sort(seriesMaps, function(a, b) return a.name < b.name end)
+	maps = seriesMaps
+
+	if #maps == 0 then
+		errors[#errors+1] = "An Encounter of the Week module must include at least one map named \"Encounter\" or \"Encounter: <title>\"."
+	end
+
+	for _,m in ipairs(maps) do
+		--the name is a Firebase key in the module record and part of the
+		--encounter key ("<moduleid>|<map name>") a party record carries.
+		if string.find(m.name, "[%.%$#%[%]/|]") ~= nil then
+			errors[#errors+1] = string.format("The map name \"%s\" cannot contain any of . $ # [ ] / |", m.name)
+		elseif #m.name > 80 then
+			errors[#errors+1] = string.format("The map name \"%s\" is too long (80 characters at most).", m.name)
+		end
+
+		local found = nil
+		local ok, err = true, nil
+		if m.id == nil then
+			found = { script = nil, documents = {}, parts = {} }
+		else
+			ok, err = pcall(function() found = montage.ScriptForMap(m.id) end)
+		end
+		if not ok or found == nil then
+			errors[#errors+1] = string.format("%s: its script could not be read: %s", m.name, tostring(err))
+		else
+			for docid,_ in pairs(found.documents) do
+				ctx.include(docid)
+			end
+
+			--a partner's art must carry their credit (a licence term).
+			local unsetWatermarks = {}
+			for _,wm in ipairs({ m, table.unpack(partMaps[m.name] or {}) }) do
+				if CreatorCredit.MapWatermarkUnset(wm.id) then
+					unsetWatermarks[#unsetWatermarks+1] = wm.name
+				end
+			end
+			for _,name in ipairs(unsetWatermarks) do
+				warnings[#warnings+1] = string.format("%s: no watermark chosen, and it is not from a map pack. If the art is a partner's (e.g. Czepeku), pick them in Map Settings > Display > Watermark; if not, pick None.", name)
+			end
+
+			--the series' parts: this map's, then each part map's (whose
+			--scripts must all be that map's part).
+			local allParts = {}
+			for _,script in ipairs(found.parts or {}) do
+				allParts[#allParts+1] = { script = script }
+			end
+			for _,pm in ipairs(partMaps[m.name] or {}) do
+				local pmFound = nil
+				local pmOk, pmErr = pcall(function() pmFound = montage.ScriptForMap(pm.id) end)
+				if not pmOk or pmFound == nil then
+					errors[#errors+1] = string.format("%s: its script could not be read: %s", pm.name, tostring(pmErr))
+				else
+					for docid,_ in pairs(pmFound.documents) do
+						ctx.include(docid)
+					end
+					if #(pmFound.parts or {}) == 0 then
+						errors[#errors+1] = string.format("%s: its script needs a \"# Part %d\" heading.", pm.name, pm.part)
+					end
+					for _,script in ipairs(pmFound.parts or {}) do
+						if script.parse.part.number ~= pm.part then
+							errors[#errors+1] = string.format("%s: a script there says \"# Part %d\". A part map holds only its own part.", pm.name, script.parse.part.number)
+						else
+							allParts[#allParts+1] = { script = script, map = pm.name }
+						end
+					end
+				end
+			end
+			table.sort(allParts, function(a, b) return a.script.parse.part.number < b.script.parse.part.number end)
+
+			--A series (scripts saying "# Part N") is checked part by part,
+			--each like a whole encounter; a plain map is its one script.
+			local series = #allParts > 0
+			local scripts = {}
+			if series then
+				for i,partEntry in ipairs(allParts) do
+					local script = partEntry.script
+					local number = script.parse.part.number
+					if number ~= i then
+						if i > 1 and allParts[i-1].script.parse.part.number == number then
+							errors[#errors+1] = string.format("%s: two scripts say \"# Part %d\". Each part needs its own number.", m.name, number)
+						else
+							errors[#errors+1] = string.format("%s: there is no Part %d. Number the parts 1, 2, 3... with no gaps.", m.name, i)
+						end
+						break
+					end
+					local name = string.format("Part %d", number)
+					if script.parse.part.title ~= nil then
+						name = name .. ": " .. script.parse.part.title
+					end
+					scripts[#scripts+1] = { script = script, label = string.format("%s, %s", partEntry.map or m.name, name), number = number, title = script.parse.part.title, map = partEntry.map }
+				end
+				if #allParts == 1 then
+					warnings[#warnings+1] = string.format("%s: only one part. A series unlocks its parts one after another, so it needs at least two.", m.name)
+				end
+			elseif found.script ~= nil then
+				scripts[1] = { script = found.script, label = m.name }
+			end
+
+			if #scripts == 0 and not series then
+				errors[#errors+1] = string.format("%s: no script. File a journal document with # Narrative, # Montage and # Encounter beats in this map's journal folder.", m.name)
+			end
+
+			local parts = {}
+			local comingSoonParts = {}
+			for _,entry in ipairs(scripts) do
+				local script = entry.script
+
+				--what the script names (items, monsters, objects, zone
+				--types) ships too: the runtime finds them by name.
+				for id,_ in pairs(montage.ReferencedContentIds(script.parse)) do
+					ctx.include(id, true)
+				end
+
+				local hasEncounter = false
+				for _,beat in ipairs(script.parse.beats or {}) do
+					if beat.kind == "encounter" then
+						hasEncounter = true
+					end
+				end
+				local comingSoon = script.parse.part ~= nil and script.parse.part.comingSoon or nil
+				local gateOnly = comingSoon ~= nil and comingSoon.board == "gate"
+				if gateOnly then
+					warnings[#warnings+1] = string.format("%s: marked 'Coming soon at the Town Gate', so the Gate shows it locked and the Proving Pits can play it.", entry.label)
+				elseif comingSoon ~= nil then
+					warnings[#warnings+1] = string.format("%s: marked 'Coming soon', so players see it locked and cannot play it yet.", entry.label)
+				end
+				if not hasEncounter then
+					local problem = string.format("%s: the script has no # Encounter beat, so the fight never starts.", entry.label)
+					--a Gate-only part still plays in the Proving Pits.
+					if comingSoon ~= nil and not gateOnly then
+						warnings[#warnings+1] = problem
+					else
+						errors[#errors+1] = problem
+					end
+				end
+
+				local scriptWarnings = script.parse.warnings or {}
+				for i=1,math.min(#scriptWarnings, 3) do
+					warnings[#warnings+1] = string.format("%s: %s", entry.label, tostring(scriptWarnings[i]))
+				end
+				if #scriptWarnings > 3 then
+					warnings[#warnings+1] = string.format("%s: %d more script warnings (/eotwscript on the map lists them all).", entry.label, #scriptWarnings - 3)
+				end
+
+				--a Town Gate with "If ...:" blocks (a series part reading the
+				--story so far) ships its no-story text as townGate, and the
+				--text as written as townGateSource for a town that can read it.
+				local towngate = script.parse.story ~= nil and script.parse.story.towngate or nil
+				local townGateText, townGateSource = nil, nil
+				if towngate ~= nil and type(towngate.rawText) == "string" then
+					townGateSource = towngate.rawText
+				end
+				if towngate ~= nil and type(towngate.text) == "string" and towngate.text ~= "" then
+					townGateText = towngate.text
+				elseif townGateSource == nil then
+					warnings[#warnings+1] = string.format("%s: no # Town Gate section, so the town shows no backstory for it.", entry.label)
+				end
+				if series then
+					--the part's story tracks, so the town can tell shown ones from hidden.
+					local tracks = nil
+					for _, decl in ipairs(script.parse.tracks or {}) do
+						tracks = tracks or {}
+						tracks[#tracks+1] = { name = decl.name, hidden = decl.hidden == true, description = decl.description }
+					end
+					--restFree: a rest does not lock this part again once the part before is won.
+					local restFree = cond(script.parse.part ~= nil and script.parse.part.restFree == true, true, nil)
+					local list, partRecord = SeriesPartRecord(comingSoon, { number = entry.number, title = entry.title, townGate = townGateText,
+						townGateSource = townGateSource, tracks = tracks, map = entry.map, restFree = restFree })
+					if list == "parts" then
+						parts[#parts+1] = partRecord
+					else
+						comingSoonParts[#comingSoonParts+1] = partRecord
+					end
+				elseif townGateText ~= nil or townGateSource ~= nil then
+					result.encounters[m.name] = { townGate = townGateText, townGateSource = townGateSource }
+				end
+			end
+			if series and (#parts > 0 or #comingSoonParts > 0) then
+				--the town lists the parts and locks each behind the one before;
+				--townGate is part 1's, for a town that knows nothing of parts.
+				--Coming-soon parts are kept apart so older apps never offer them.
+				local record = { parts = parts }
+				if parts[1] ~= nil then
+					record.townGate = parts[1].townGate
+				end
+				if #comingSoonParts > 0 then
+					record.comingSoonParts = comingSoonParts
+				end
+				result.encounters[m.name] = record
+			end
+		end
+	end
+
+	return result
+end
+
+--Hero options a Hero module must include at least one of, by table name.
+local g_heroOptionTables = {
+	classes = true,
+	subclasses = true,
+	races = true,
+	subraces = true,
+	careers = true,
+	kits = true,
+	cultures = true,
+	cultureAspects = true,
+	complications = true,
+	titles = true,
+}
+
+--Module types. Each entry is an option in the Module Type dropdown at the top
+--of the publish dialog; the chosen id is stored on the module record as
+--moduleInstance.moduleType so the rest of the app can tell packs apart.
+--
+--validate (optional) inspects the current selection and returns two lists of
+--strings: errors, which block Proceed until fixed, and warnings, which only
+--advise. It receives ctx = {
+--  includedAssets  = {guid -> true} the entries the author has checked,
+--  dependencyAssets = {guid -> {guids that need it}} from the dependency
+--                     searcher, covering the checked entries and everything
+--                     they pull in,
+--  assetInfo       = {guid -> {type, displayName}} for every entry shown,
+--  include         = function(guid, createdOnly) ticks that entry, if the
+--                     dialog lists it (and, with createdOnly, if this game
+--                     created it rather than modifying a core one) }.
+--
+--available (optional) returns false to leave the type out of the dropdown
+--(a module that already has the type still shows it).
+--
+--publishingProperties (optional) is called with the same ctx when the module
+--is published and returns {key -> value} to store in the module record's
+--publishingProperties.
+--
+--excludedDependencyTypes (optional) is {row type -> true} for entries the
+--dependency search never pulls in. Excluding "module" also keeps out anything
+--an installed module owns, since the search only looks inside modules it may
+--depend on.
+local g_moduleTypes = {
+	{
+		id = "general",
+		text = "General Content",
+		description = "A module holding any mix of content: maps, characters, compendium entries, code and more.",
+	},
+	{
+		id = "mappack",
+		text = "Map Pack",
+		description = "A collection of maps. A Map Pack must contain at least one map and should only include content its maps use, such as the objects placed on them.",
+		validate = function(ctx)
+			local errors = {}
+			local warnings = {}
+
+			--guid -> true if a checked map needs this entry, directly or
+			--through a chain of other dependencies. Seeded false before the
+			--walk so a dependency cycle cannot recurse forever.
+			local memo = {}
+			local RequiredByMap
+			RequiredByMap = function(guid)
+				if memo[guid] ~= nil then
+					return memo[guid]
+				end
+				memo[guid] = false
+				local parents = ctx.dependencyAssets[guid]
+				if parents ~= nil then
+					for _,parent in ipairs(parents) do
+						local info = ctx.assetInfo[parent]
+						if (info ~= nil and info.type == "map") or RequiredByMap(parent) then
+							memo[guid] = true
+							break
+						end
+					end
+				end
+				return memo[guid]
+			end
+
+			local nmaps = 0
+			local unused = {}
+			for guid,_ in pairs(ctx.includedAssets) do
+				local info = ctx.assetInfo[guid]
+				if info ~= nil then
+					if info.type == "map" then
+						nmaps = nmaps+1
+					--image libraries are exempt: the dependency searcher does not
+					--track them, so they would always read as unused.
+					elseif info.type ~= "image library" and not RequiredByMap(guid) then
+						unused[#unused+1] = info.displayName
+					end
+				end
+			end
+
+			if nmaps == 0 then
+				errors[#errors+1] = "A Map Pack must contain at least one map."
+			end
+
+			if #unused > 0 then
+				table.sort(unused)
+				local shown = {}
+				for i=1,math.min(#unused, 5) do
+					shown[i] = unused[i]
+				end
+				local names = table.concat(shown, ", ")
+				if #unused > #shown then
+					names = string.format("%s and %d more", names, #unused - #shown)
+				end
+				warnings[#warnings+1] = string.format("%d %s not used by any map in this pack: %s", #unused, cond(#unused == 1, "entry is", "entries are"), names)
+			end
+
+			return errors, warnings
+		end,
+	},
+	{
+		--Encounter of the Week (dev-gated game mode). Published Public, the
+		--module's encounters join the pool the town's Form a Party dialog
+		--offers (Codex Titlescreen/EncounterOfTheWeek.lua); a game for one is
+		--created from the official module and installs this one on top.
+		id = "eotw",
+		text = "Encounter of the Week",
+		description = "Encounters for the Encounter of the Week game mode. Each map named \"Encounter\" or \"Encounter: <title>\" is an encounter, played from the script in its journal folder; those documents are included automatically. Publish it as Public or Unlisted to add its encounters to the pool players choose from at the Town Gate.",
+		available = function()
+			local enabled = false
+			pcall(function() enabled = dmhub.GetSettingValue("dev:encounteroftheweek") == true end)
+			return enabled
+		end,
+		--an EotW game already runs the official module and Draw Steel, so the
+		--authoring game's modules (codex-eotwauthor's Trap zone type pulled it
+		--in) and their code must never become dependencies.
+		excludedDependencyTypes = { module = true, code = true },
+		validate = function(ctx)
+			local check = CheckEncounterModule(ctx)
+			local warnings = check.warnings
+			if g_dialogState ~= nil and not g_dialogState.moduleInstance.published then
+				warnings[#warnings+1] = "Only a Public or Unlisted module's encounters join the pool. Set Listing Status on the next page (Unlisted keeps the module out of the module browser)."
+			end
+			return check.errors, warnings
+		end,
+		publishingProperties = function(ctx)
+			return { eotwEncounters = CheckEncounterModule(ctx).encounters }
+		end,
+	},
+	{
+		--Hero options players add to their inventory on the titlescreen; the
+		--module follows their heroes into games. Code is allowed, but a version
+		--with code is only usable as a Hero module once an admin approves it
+		--(see HeroModuleReviewAfterPublish below).
+		id = "hero",
+		text = "Hero Module",
+		description = "Options for building heroes, such as classes, ancestries and kits. Players add a Hero module to their inventory from the titlescreen, and it is added automatically to any game a hero using it enters. Heroes included in it become pregens: they are added to games unclaimed, and offered wherever pregens are, such as Encounter of the Week. A Hero module can't contain maps. If it contains code, an admin must approve that code before players can add it to their inventory; a later version that uses only code already approved needs no new review. Directors can still install it into a game like any module.",
+		validate = function(ctx)
+			local errors = {}
+			local warnings = {}
+			local nheroOptions = 0
+			local hasCode = false
+			local maps = {}
+			local nonHeroes = {}
+			local Consider = function(guid)
+				local info = ctx.assetInfo[guid]
+				if info == nil then
+					return
+				end
+				local tableName = string.match(info.type or "", "^object:(.+)$")
+				if tableName ~= nil and g_heroOptionTables[tableName] then
+					nheroOptions = nheroOptions + 1
+				elseif info.type == "map" then
+					maps[#maps+1] = info.displayName
+				elseif info.type == "character" then
+					--heroes ship as pregens; anything else would land in
+					--every game as an unclaimed party member.
+					local isHero = false
+					pcall(function()
+						local token = dmhub.GetCharacterById(guid)
+						isHero = token ~= nil and token.properties:IsHero() == true
+					end)
+					if not isHero then
+						nonHeroes[#nonHeroes+1] = info.displayName
+					end
+				elseif info.type == "code" then
+					hasCode = true
+				end
+			end
+			for guid,_ in pairs(ctx.includedAssets) do
+				Consider(guid)
+			end
+			for guid,_ in pairs(ctx.dependencyAssets) do
+				if not ctx.includedAssets[guid] then
+					Consider(guid)
+				end
+			end
+
+			if nheroOptions == 0 then
+				errors[#errors+1] = "A Hero module must contain at least one hero option: a class, subclass, ancestry, career, kit, culture, complication or title."
+			end
+			if #maps > 0 then
+				table.sort(maps)
+				errors[#errors+1] = string.format("A Hero module can't contain maps: %s", table.concat(maps, ", "))
+			end
+			if #nonHeroes > 0 then
+				table.sort(nonHeroes)
+				errors[#errors+1] = string.format("A Hero module's characters must be heroes, which become pregens: %s", table.concat(nonHeroes, ", "))
+			end
+			if hasCode and not dmhub.isAdminAccount then
+				warnings[#warnings+1] = "This module contains code. Each version with code is sent to an admin for review, and players can only add it to their inventory once it is approved. Directors can install it into a game straight away."
+			end
+			return errors, warnings
+		end,
+	},
+}
+
+--After a Hero module version is uploaded: a version carrying code needs an
+--admin's approval before it can be used as a Hero module. An admin's own
+--version is approved on the spot; anyone else's is sent for review, which
+--emails the admins (heroModuleReviewRequest cloud function). Calls
+--report(message) with a sentence for the publish dialog; does nothing when the
+--version has no code.
+local HeroModuleReviewAfterPublish = function(moduleInstance, versionid, codeModNames, report)
+	if #codeModNames == 0 then
+		return
+	end
+
+	if dmhub.isAdminAccount then
+		moduleInstance:SetHeroReview{
+			versionid = versionid,
+			status = "approved",
+			success = function()
+				report("Its code is approved for use as a Hero module.")
+			end,
+			error = function(msg)
+				report(string.format("Approving its code failed: %s", msg))
+			end,
+		}
+		return
+	end
+
+	net.Post{
+		url = dmhub.cloudFunctionsBaseUrl .. "/heroModuleReviewRequest",
+		data = {
+			moduleid = moduleInstance.fullid,
+			dataid = versionid,
+			codemods = codeModNames,
+		},
+		success = function(data)
+			if type(data) ~= "table" or data.error then
+				report(string.format("Sending it for review failed: %s", type(data) == "table" and data.error or "invalid response"))
+				return
+			end
+			--the server approves a version at once when an admin has already
+			--approved all of its code mods (heroModuleReviewRequest).
+			if data.status == "approved" then
+				report("Its code was approved for an earlier version, so players can use it as a Hero module now.")
+				return
+			end
+			report("Its code has been sent to an admin for review. Players can add it to their inventory once it is approved; Directors can install it now.")
+		end,
+		error = function(msg)
+			report(string.format("Sending it for review failed: %s", msg))
+		end,
+	}
+end
+
+--Looks up a module type by id, falling back to the first (General Content)
+--for nil or an id this build does not know.
+local GetModuleType = function(id)
+	for _,info in ipairs(g_moduleTypes) do
+		if info.id == id then
+			return info
+		end
+	end
+	return g_moduleTypes[1]
+end
+
 local showShareModuleDialog = function(options)
 	--nil for a new module.
 	local moduleid = options.moduleid
 
 	local isNewModule = options.moduleInfo == nil
+
+	--options.autoPublish (Publish Encounter Update, below) runs this dialog
+	--with nobody clicking: tick the encounter content, let the dependency pass
+	--and the module type's checks settle, then publish straight through. If
+	--the checks fail it stops on the content page so the author can fix it.
+	--{ excludeAssets = {guid -> true} maps it must not tick, phase, thinks }.
+	--A new module only runs it with firstPublish = true: the content is ticked
+	--the same way, then it stops on the publishing page, because the module
+	--id, author name and terms are the author's to fill in.
+	--options.moduleType and options.listing preset a new module's Module Type
+	--and Listing Status (a ListingOptions id).
+	local m_autoPublish = options.autoPublish
+	if isNewModule and (m_autoPublish == nil or not m_autoPublish.firstPublish) then
+		m_autoPublish = nil
+	end
+
 	local versionNotesInput
-	
+	local minEngineVersionInput
+
 	local conditionsAgreed = false
 
 	local npage = 1
@@ -1477,11 +2308,154 @@ local showShareModuleDialog = function(options)
 	local addressableAssets = {}
 	local m_dependencyAssets = {}
 
+	--made on the first dependency pass. It downloads the floors of selected
+	--maps this session has not loaded; m_searcherRevision is the revision the
+	--last pass saw, so a finished download triggers another pass.
+	local m_dependencySearcher = nil
+	local m_searcherRevision = 0
+
+	--the module type's excludedDependencyTypes the searcher was made with;
+	--choosing a type with different ones makes a new searcher.
+	local m_searcherExclusions = nil
+
+	--true while the searcher is still downloading map data, so what the
+	--selected maps use is not all known yet.
+	local SearcherPending = function()
+		return m_dependencySearcher ~= nil and m_dependencySearcher.pending > 0
+	end
+
+	--guid -> {type, displayName} for every entry in the dialog, addressable
+	--or not, so module type validators can tell maps from everything else.
+	local assetInfo = {}
+
+	--errors from the selected module type's validator; while non-empty the
+	--Proceed button stays hidden on the content page.
+	local m_moduleTypeErrors = {}
+
+	--the ctx a module type's validate / publishingProperties receive (see
+	--g_moduleTypes). include ticks an entry the way the author would, so the
+	--dependency pass then runs over it; entries the dialog does not list
+	--(content another module owns) are skipped. With createdOnly, an entry
+	--this game only modifies or deletes (a core one) is skipped too, as the
+	--dependency pass does.
+	local ModuleTypeContext = function()
+		return {
+			includedAssets = includedAssets,
+			dependencyAssets = m_dependencyAssets,
+			assetInfo = assetInfo,
+			include = function(guid, createdOnly)
+				if includedAssets[guid] or m_dependencyAssets[guid] then
+					return
+				end
+				local entry = allAssets[guid]
+				if entry == nil or entry.check == nil or not entry.check.valid then
+					return
+				end
+				if createdOnly and entry.check.data.op ~= "create" then
+					return
+				end
+				entry.check.value = true
+				entry.check:FireEvent("change")
+			end,
+		}
+	end
+
 	local moduleInstance = options.moduleInfo or module.CreateModule()
+
+	--resolve the type through the known list so a brand new module records
+	--"general" explicitly and an unknown id from a newer build falls back.
+	if isNewModule and options.moduleType ~= nil then
+		moduleInstance.moduleType = options.moduleType
+	end
+	moduleInstance.moduleType = GetModuleType(moduleInstance.moduleType).id
+
+	--The Listing Status choices. "Unlisted" exists only for an Encounter of the
+	--Week module: it joins the encounter pool like a Public one, but the module
+	--browser does not list it (publishingProperties.eotwUnlisted).
+	local ListingOptions = function()
+		return {
+			{
+				id = "unlisted",
+				text  = "Private",
+			},
+			{
+				id = "eotwunlisted",
+				text = "Unlisted",
+				hidden = moduleInstance.moduleType ~= "eotw",
+			},
+			{
+				id = "public",
+				text = "Public"
+			},
+			{
+				id = "premium",
+				text = "Premium",
+			},
+			{
+				--Deleting is only an option for an existing module, not a new one.
+				id = "deleted",
+				text = "Deleted",
+				hidden = isNewModule,
+			},
+		}
+	end
+
+	local ListingIdFor = function(instance)
+		if instance.deleted then
+			return "deleted"
+		end
+		if instance.published then
+			local unlisted = false
+			pcall(function() unlisted = instance.publishingProperties.eotwUnlisted == true end)
+			return cond(unlisted and instance.moduleType == "eotw", "eotwunlisted", "public")
+		end
+		return "unlisted"
+	end
+
+	--Applies a Listing Status choice to the module record. "eotwunlisted"
+	--(Encounter of the Week only) is published -- in the module index, so the
+	--encounter pool sees it -- but flagged so the module browser leaves it out.
+	local SetListing = function(id)
+		moduleInstance.published = id == "public" or id == "eotwunlisted"
+		moduleInstance.premium = id == "premium"
+		moduleInstance.deleted = id == "deleted"
+		moduleInstance.publishingProperties.eotwUnlisted = cond(id == "eotwunlisted", true, nil)
+	end
+
+	if isNewModule and options.listing ~= nil then
+		SetListing(options.listing)
+	end
 
 	if moduleInstance.publishingProperties.includedAssets ~= nil then
 		includedAssets = DeepCopy(moduleInstance.publishingProperties.includedAssets)
 	end
+
+	--publishedAssets is the full guid set the last version actually shipped: the
+	--author's checks plus whatever the dependency pass pulled in. With dependency
+	--checking off nothing re-derives those extras, so seed from the shipped set to
+	--stop an update silently dropping them. Modules last published before this was
+	--recorded fall back to includedAssets.
+	if dmhub.GetSettingValue("module:exportignoredependencies")
+		and moduleInstance.publishingProperties.publishedAssets ~= nil then
+		includedAssets = DeepCopy(moduleInstance.publishingProperties.publishedAssets)
+	end
+
+	-- Per-asset hide list. Populated from publishingProperties so prior hides
+	-- persist across dialog opens; the right-click "Hide this entry" menu
+	-- adds to this map and invokes g_dialogState.onChange to persist.
+	local hiddenEntries = {}
+	if moduleInstance.publishingProperties.hiddenEntries ~= nil then
+		hiddenEntries = DeepCopy(moduleInstance.publishingProperties.hiddenEntries)
+	end
+
+	g_dialogState = {
+		hiddenEntries = hiddenEntries,
+		moduleInstance = moduleInstance,
+		isNewModule = isNewModule,
+		-- Bound later once dialogPanel is constructed. We use a forwarding
+		-- closure so the body can reference dialogPanel by upvalue.
+		onChange = function() end,
+	}
 
 
 	if moduleInstance.authorid == nil or moduleInstance.authorid == "" then
@@ -1493,6 +2467,10 @@ local showShareModuleDialog = function(options)
 
 	local moduleIdsAvailable = {}
 	local moduleIdsUnavailable = {}
+
+	--Ids that are taken by a module of ours that has been deleted. Publishing
+	--over one of these restores it rather than colliding with it.
+	local moduleIdsDeleted = {}
 
 	local contentPanel
 	local publishingPanel
@@ -1523,13 +2501,11 @@ local showShareModuleDialog = function(options)
 
 	local shareButton
 	local backButton
-	backButton = gui.PrettyButton{
+	backButton = gui.Button{
+		classes = {"sizeL"},
 		text = '<<< Back',
-		width = 240,
-		height = 70,
 		halign = 'left',
 		valign = 'center',
-		fontSize = 20,
 
 		events = {
 			click = function(element)
@@ -1549,17 +2525,38 @@ local showShareModuleDialog = function(options)
 		},
 	}
 
-	shareButton = gui.PrettyButton{
+	shareButton = gui.Button{
+		classes = {"sizeL"},
 
 		text = 'Proceed >>>',
-		width = 240,
-		height = 70,
 		halign = 'right',
 		valign = 'center',
-		fontSize = 20,
 
 		events = {
 			refreshModule = function(element)
+				if m_autoPublish ~= nil then
+					shareButton:SetClass("hidden", true)
+					return
+				end
+				if npage == 2 then
+					shareButton.text = cond(moduleInstance.deleted, "Delete Module", cond(isNewModule, "Create Module", "Update Module"))
+				end
+				--A deprecated module is frozen: the database rules reject any
+				--non-admin write to it, so do not offer to publish or delete.
+				if moduleInstance.deprecated then
+					shareButton:SetClass("hidden", npage == 2)
+					return
+				end
+				--Deleting an existing module bypasses the terms-agreement gate.
+				if moduleInstance.deleted then
+					shareButton:SetClass("hidden", false)
+					return
+				end
+				--The module type's rules must be satisfied before leaving the content page.
+				if npage == 1 and #m_moduleTypeErrors > 0 then
+					shareButton:SetClass("hidden", true)
+					return
+				end
 				shareButton:SetClass("hidden", npage == 2 and isNewModule and ((not moduleInstance.idvalid) or (not authorIdsAvailable[moduleInstance.authorid])) or (npage == 2 and (not conditionsAgreed)))
 			end,
 
@@ -1568,7 +2565,7 @@ local showShareModuleDialog = function(options)
 				if npage == 2 then
 					assetsPanel:SetClass("collapsed", true)
 					publishingPanel:SetClass("collapsed", false)
-					shareButton.text = cond(isNewModule, "Create Module", "Update Module")
+					shareButton.text = cond(moduleInstance.deleted, "Delete Module", cond(isNewModule, "Create Module", "Update Module"))
 					element:FireEvent("refreshModule")
 					return
 				end
@@ -1580,69 +2577,132 @@ local showShareModuleDialog = function(options)
 				contentPanel:SetClass("hidden", true)
 				footerPanel:SetClass("hidden", true)
 
+				if moduleInstance.deleted then
+					statusLabel.text = "Deleting your module..."
+					moduleInstance:Delete{
+						success = function()
+							statusLabel.text = "Your module has been deleted."
+						end,
+						failure = function(msg)
+							statusLabel.text = string.format("Deleting the module failed: %s", msg)
+						end,
+					}
+					return
+				end
+
 				if localCoverArt ~= nil then
 					localCoverArt:Upload()
 				end
 
+				local success = function()
+					local assetsIncludingDependencies = {}
+					for k,_ in pairs(includedAssets) do
+						assetsIncludingDependencies[k] = true
+					end
 
-
-				moduleInstance:ReserveAuthorID{
-					success = function()
-						local assetsIncludingDependencies = {}
-						for k,_ in pairs(includedAssets) do
-							assetsIncludingDependencies[k] = true
-						end
-
-						if not dmhub.GetSettingValue("module:exportignoredependencies") then
-							for k,_ in pairs(m_dependencyAssets) do
+					if not dmhub.GetSettingValue("module:exportignoredependencies") then
+						for k,_ in pairs(m_dependencyAssets) do
+							local entry = allAssets[k]
+							if entry == nil or entry.check == nil or ShipsAsDependency(entry.check.data) then
 								assetsIncludingDependencies[k] = true
 							end
 						end
+					end
 
-						local notes = nil
-						if versionNotesInput ~= nil then
-							notes = versionNotesInput.text
+					local notes = nil
+					if versionNotesInput ~= nil then
+						notes = versionNotesInput.text
+					end
+
+					local minEngineVersion = nil
+					if minEngineVersionInput ~= nil then
+						minEngineVersion = minEngineVersionInput.text
+					end
+
+					local contentSummary = {}
+					dialogPanel:FireEventTree("collectManifest", contentSummary)
+
+					moduleInstance.contentSummary = contentSummary
+
+					--properties the module type derives from the content
+					--(an Encounter of the Week module's Town Gate texts).
+					local typeInfo = GetModuleType(moduleInstance.moduleType)
+					if typeInfo.publishingProperties ~= nil then
+						for k,v in pairs(typeInfo.publishingProperties(ModuleTypeContext())) do
+							moduleInstance.publishingProperties[k] = v
 						end
+					end
 
-						local contentSummary = {}
-						dialogPanel:FireEventTree("collectManifest", contentSummary)
+					moduleInstance:UploadModuleVersion{
+						includedAssets = assetsIncludingDependencies,
 
-						moduleInstance.contentSummary = contentSummary
+						notes = notes,
+						minEngineVersion = minEngineVersion,
 
-						moduleInstance:UploadModuleVersion{
-							includedAssets = assetsIncludingDependencies,
+						success = function(guid)
+							dmhub.Debug(string.format("Module:: Uploaded to %s", guid))
+							moduleInstance.publishingProperties.includedAssets = includedAssets
+							moduleInstance.publishingProperties.publishedAssets = assetsIncludingDependencies
+							moduleInstance:Upload{
+								success = function()
+									statusLabel.text = "Your module has been uploaded"
+									if moduleInstance.moduleType == "eotw" then
+										statusLabel.text = statusLabel.text .. cond(moduleInstance.published,
+											". Its encounters are now in the Encounter of the Week pool.",
+											". It is not Public, so its encounters are not in the Encounter of the Week pool.")
+									end
+									if moduleInstance.moduleType == "hero" then
+										local codeModNames = {}
+										for assetid,_ in pairs(assetsIncludingDependencies) do
+											local info = assetInfo[assetid]
+											if info ~= nil and info.type == "code" then
+												codeModNames[#codeModNames+1] = info.displayName
+											end
+										end
+										table.sort(codeModNames)
+										local uploadedText = statusLabel.text
+										HeroModuleReviewAfterPublish(moduleInstance, guid, codeModNames, function(message)
+											statusLabel.text = string.format("%s. %s", uploadedText, message)
+										end)
+									end
+									moduleCodePanel:FireEventTree("moduleUploaded")
 
-							notes = notes,
+									moduleInstance:UploadModulePublishProperties{
+									}
+								end,
+								failure = function()
+									statusLabel.text = "Uploading the module failed"
+								end,
+							}
+						end,
 
-							success = function(guid)
-								dmhub.Debug(string.format("Module:: Uploaded to %s", guid))
-								moduleInstance.publishingProperties.includedAssets = includedAssets
-								moduleInstance:Upload{
-									success = function()
-										statusLabel.text = "Your module has been uploaded"
-										moduleCodePanel:FireEventTree("moduleUploaded")
+						failure = function(msg)
+							statusLabel.text = string.format("Uploading the module failed: %s", msg)
+							dmhub.Debug(string.format("Module:: Upload failed: %s", msg))
+						end,
+					}
+				end
 
-										moduleInstance:UploadModulePublishProperties{
-										}
-									end,
-									failure = function()
-										statusLabel.text = "Uploading the module failed"
-									end,
-								}
-							end,
+                --ReserveAuthorID handles publishing as an organization (records
+                --the module with the org) and admin accounts (no reservation)
+                --as well as the personal reservation path. On engine builds
+                --without the organizations API, keep the old admin skip: the
+                --old ReserveAuthorID would wrongly reserve ids like "codex"
+                --onto the admin's account.
+                local hasOrgSupport = pcall(function()
+                    module.GetOurOrganizations()
+                end)
+                if (not hasOrgSupport) and dmhub.isAdminAccount then
+                    success()
+                else
+                    moduleInstance:ReserveAuthorID{
+                        success = success,
 
-							failure = function(msg)
-								statusLabel.text = string.format("Uploading the module failed: %s", msg)
-								dmhub.Debug(string.format("Module:: Upload failed: %s", msg))
-							end,
-						}
-					end,
-
-					failure = function()
-						statusLabel.text = "The author ID you chose is no longer available."
-
-					end,
-				}
+                        failure = function(msg)
+                            statusLabel.text = msg or "The author ID you chose is no longer available."
+                        end,
+                    }
+                end
 
 				
 			--assets.ShareMap{
@@ -1668,7 +2728,6 @@ local showShareModuleDialog = function(options)
 		classes = {'status-label', 'hidden'},
 		halign = "center",
 		valign = "center",
-		floating = true,
 		text = "Uploading...",
 	}
 
@@ -1680,7 +2739,7 @@ local showShareModuleDialog = function(options)
 			flow = "horizontal",
 			width = "auto",
 			height = "auto",
-			y = 30,
+			tmargin = 10,
 			moduleUploaded = function(element)
 				element:SetClass("collapsed", false)
 			end,
@@ -1791,6 +2850,11 @@ local showShareModuleDialog = function(options)
 		}
 	end
 
+	minEngineVersionInput = gui.Input{
+		text = dmhub.version,
+		characterLimit = 32,
+	}
+
 	local previewImage = gui.Panel{
 		classes = {"hidden"},
 		bgimage = "panels/square.png",
@@ -1826,12 +2890,9 @@ local showShareModuleDialog = function(options)
 
 	local rightPublishingPanel
 
-	local pastePreviewImageButton = gui.PrettyButton{
+	local pastePreviewImageButton = gui.Button{
 		text = 'Paste Image',
-		classes = {cond(dmhub.HaveImageInClipboard(), nil, 'collapsed')},
-		width = 160,
-		height = 40,
-		fontSize = 14,
+		classes = {"sizeL", cond(dmhub.HaveImageInClipboard(), nil, 'collapsed')},
 		halign = "center",
 		click = function(element)
 			if not dmhub.HaveImageInClipboard() then
@@ -1937,7 +2998,119 @@ local showShareModuleDialog = function(options)
 		previewImageStatusLabel,
 	}
 
+    local coverDocumentOptions = {}
+    coverDocumentOptions[#coverDocumentOptions+1] = {
+        id = "none",
+        text = "None",
+    }
+    local documents = dmhub.GetTable(CustomDocument.tableName) or {}
+    for _, doc in pairs(documents) do
+        if not doc.hidden then
+            coverDocumentOptions[#coverDocumentOptions+1] = {
+                id = doc.id,
+                text = doc.name,
+            }
+        end
+    end
 
+    --Publish As: choose whether to publish personally or as a creator
+    --organization the user belongs to. This replaces the old admin-only
+    --"Official Module" checkbox; "codex" is now an organization, though a
+    --legacy codex option is kept for admins who are not members of it yet.
+    --On engine builds without the organizations API this degrades to the old
+    --behavior: admins get a Myself/Codex choice, everyone else no panel.
+    local hasOrgSupport = pcall(function()
+        module.GetOurOrganizations()
+    end)
+
+    local GetOurOrganizationsSafe = function()
+        if not hasOrgSupport then
+            return {}
+        end
+        return module.GetOurOrganizations()
+    end
+
+    local publishAsPanel = nil
+    local m_publishAsOrg = false
+
+    if isNewModule then
+        local BuildPublishAsOptions = function()
+            local result = {{ id = "self", text = "Myself" }}
+            local hasCodex = false
+            for _,org in ipairs(GetOurOrganizationsSafe()) do
+                result[#result+1] = { id = org.id, text = org.displayName }
+                if org.id == "codex" then
+                    hasCodex = true
+                end
+            end
+            if dmhub.isAdminAccount and (not hasCodex) then
+                result[#result+1] = { id = "codex", text = "Codex (Official)" }
+            end
+            return result
+        end
+
+        local SelectedPublishAs = function()
+            local authorid = string.lower(moduleInstance.authorid or "")
+            for _,org in ipairs(GetOurOrganizationsSafe()) do
+                if org.id == authorid then
+                    return authorid
+                end
+            end
+            if authorid == "codex" and dmhub.isAdminAccount then
+                return "codex"
+            end
+            return "self"
+        end
+
+        local publishAsOptions = BuildPublishAsOptions()
+        if #publishAsOptions > 1 then
+            m_publishAsOrg = SelectedPublishAs() ~= "self"
+
+            local dropdown
+            dropdown = gui.Dropdown{
+                options = publishAsOptions,
+                idChosen = SelectedPublishAs(),
+                width = 260,
+                change = function(element)
+                    ---@cast element Dropdown
+                    if element.idChosen == "self" then
+                        moduleInstance.authorid = module.savedAuthorid or dmhub.GetDisplayName(dmhub.userid)
+                    else
+                        moduleInstance.authorid = element.idChosen --[[@as string]]
+                    end
+                    m_publishAsOrg = element.idChosen ~= "self"
+                    dialogPanel:FireEventTree("refreshModule")
+                end,
+            }
+
+            publishAsPanel = gui.Panel{
+                classes = {'form-entry'},
+                create = function(element)
+                    if not hasOrgSupport then
+                        return
+                    end
+                    --membership may have changed since login; refresh and rebuild the options.
+                    module.RefreshOurOrganizations{
+                        success = function(orgs)
+                            if not element.valid then
+                                return
+                            end
+                            local selected = dropdown.idChosen
+                            dropdown.options = BuildPublishAsOptions()
+                            dropdown.idChosen = selected
+                        end,
+                    }
+                end,
+
+                gui.Label{
+                    classes = {'formLabel'},
+                    text = 'Publish As:',
+                },
+
+                dropdown,
+            }
+        end
+    end
 
 	local leftPublishingPanel = gui.Panel{
 		flow = "vertical",
@@ -1945,8 +3118,16 @@ local showShareModuleDialog = function(options)
 		height = "auto",
 		valign = "top",
 
+        publishAsPanel,
+
 		gui.Panel{
 			classes = {'form-entry'},
+
+			--when publishing as an organization the identity comes from the
+			--Publish As dropdown, so the personal author name row hides.
+			refreshModule = function(element)
+				element:SetClass("collapsed", m_publishAsOrg)
+			end,
 
 			gui.Label{
 				classes = {'formLabel'},
@@ -1969,6 +3150,9 @@ local showShareModuleDialog = function(options)
 			gui.Label{
 				classes = {"formLabel", cond(isNewModule and module.savedAuthorid == nil, "collapsed")},
 				text = moduleInstance.authorid,
+                refreshModule = function(element)
+					element.text = moduleInstance.authorid
+                end,
 			},
 		},
 
@@ -1985,6 +3169,9 @@ local showShareModuleDialog = function(options)
 			height = "auto",
 			maxWidth = 500,
 
+			refreshModule = function(element)
+				element:SetClass("collapsed", (not isNewModule) or module.savedAuthorid ~= nil or m_publishAsOrg)
+			end,
 		},
 
 
@@ -2035,15 +3222,21 @@ local showShareModuleDialog = function(options)
 					element.text = "Your module will be published with the unique ID <b>" .. moduleInstance.fullid .. "</b>"
 				elseif authorIdsAvailable[moduleInstance.authorid] == nil and authorIdsUnavailable[moduleInstance.authorid] == nil then
 					element.text = "Checking availability of author name..."
-					moduleInstance:CheckAuthorIDAvailable(function(id, val)
-						if val then
-							authorIdsAvailable[id] = true
-						else
-							authorIdsUnavailable[id] = true
-						end
 
-						dialogPanel:FireEventTree("refreshModule")
-					end)
+                    if moduleInstance.authorid == "codex" and dmhub.isAdminAccount then
+                        authorIdsAvailable["codex"] = true
+                        dialogPanel:FireEventTree("refreshModule")
+                    else
+                        moduleInstance:CheckAuthorIDAvailable(function(id, val)
+                            if val then
+                                authorIdsAvailable[id] = true
+                            else
+                                authorIdsUnavailable[id] = true
+                            end
+
+                            dialogPanel:FireEventTree("refreshModule")
+                        end)
+                    end
 				elseif authorIdsUnavailable[moduleInstance.authorid] then
 					element.text = "The author name you chose has already been used by another user. Please choose a different name."
 				elseif moduleInstance.idvalid and moduleIdsAvailable[moduleInstance.fullid] == nil and moduleIdsUnavailable[moduleInstance.fullid] == nil then
@@ -2057,9 +3250,28 @@ local showShareModuleDialog = function(options)
 							if id ~= nil then
 								moduleIdsUnavailable[id] = true
 								dialogPanel:FireEventTree("refreshModule")
+
+								--A module we deleted keeps its id but is stripped
+								--from every list the picker offers, so "select it
+								--to update it" sends the user somewhere it cannot
+								--appear. Find out which case this is.
+								module.DownloadModuleInfo{
+									moduleid = id,
+									success = function(info)
+										local deleted = false
+										pcall(function() deleted = info.deleted == true end)
+										if deleted then
+											moduleIdsDeleted[id] = true
+											dialogPanel:FireEventTree("refreshModule")
+										end
+									end,
+									failure = function() end,
+								}
 							end
 						end,
 					}
+				elseif moduleInstance.idvalid and moduleIdsDeleted[moduleInstance.fullid] then
+					element.text = "You deleted a module with this name. Publishing will restore it and replace it with this version."
 				elseif moduleInstance.idvalid and moduleIdsUnavailable[moduleInstance.fullid] then
 					element.text = "You already published a module with this name. Select it to update it with a new version."
 				else
@@ -2117,6 +3329,17 @@ local showShareModuleDialog = function(options)
 			}
 		},
 
+		gui.Panel{
+			classes = {'form-entry'},
+
+			gui.Label{
+				classes = {'formLabel'},
+				text = 'Minimum Engine Version:',
+			},
+
+			minEngineVersionInput,
+		},
+
 
 		gui.Input{
 			multiline = true,
@@ -2133,6 +3356,24 @@ local showShareModuleDialog = function(options)
 
 		versionNotesInput,
 
+        gui.Panel{
+            classes = {'form-entry'},
+            gui.Label{
+                classes = {'formLabel'},
+                text = 'Cover Document:',
+            },
+            gui.Dropdown{
+                idChosen = moduleInstance.coverDocumentId or "none",
+                options = coverDocumentOptions,
+                hasSearch = true,
+                sort = true,
+                change = function(element)
+                    ---@cast element Dropdown
+                    moduleInstance.coverDocumentId = element.idChosen ~= "none" and element.idChosen --[[@as string]] or nil
+                end,
+            },
+        },
+
 
 		gui.Panel{
 			classes = {'form-entry'},
@@ -2143,28 +3384,25 @@ local showShareModuleDialog = function(options)
 			},
 
 			gui.Dropdown{
-				options = {
-					{
-						id = "unlisted",
-						text  = "Private",
-					},
-					{
-						id = "public",
-						text = "Public"
-					},
-					{
-						id = "premium",
-						text = "Premium",
-						hidden = not dmhub.isAdminAccount,
-					}
-				},
-				idChosen = cond(moduleInstance.published, "public", "unlisted"),
+				options = ListingOptions(),
+				idChosen = ListingIdFor(moduleInstance),
 				events = {
 					change = function(element)
-						moduleInstance.published = element.idChosen == "public"
-						moduleInstance.premium = element.idChosen == "premium"
+						---@cast element Dropdown
+						SetListing(element.idChosen)
 						dialogPanel:FireEventTree("refreshModule")
-					end
+					end,
+					--the module type changed (page 1): offer Unlisted only for
+					--Encounter of the Week, and drop it if the type moved away.
+					refreshListing = function(element)
+						---@cast element Dropdown
+						element.options = ListingOptions()
+						if moduleInstance.moduleType ~= "eotw" and element.idChosen == "eotwunlisted" then
+							moduleInstance.publishingProperties.eotwUnlisted = nil
+							moduleInstance.published = false
+							element.idChosen = "unlisted"
+						end
+					end,
 				}
 			}
 		},
@@ -2176,10 +3414,16 @@ local showShareModuleDialog = function(options)
 			height = "auto",
 			valign = "top",
 			refreshModule = function(element)
-				if moduleInstance.published then
+				if moduleInstance.deprecated then
+					element.text = string.format("DEPRECATED: %s\n\nThis module cannot be updated or published while it is deprecated.", moduleInstance.deprecationMessage)
+				elseif moduleInstance.deleted then
+					element.text = "This module will be deleted. Users who already installed it into their games will be able to continue to use its contents"
+				elseif moduleInstance.published and ListingIdFor(moduleInstance) == "eotwunlisted" then
+					element.text = "Your module's encounters join the Encounter of the Week pool, but the module is not listed in the module browser: only those you share its ID with can install it directly."
+				elseif moduleInstance.published then
 					element.text = "Others will be able to search for and install your module."
 				elseif moduleInstance.premium then
-					element.text = "Your module will be available in the store. It must have a corresponding store entry to unlock it."
+					element.text = "Your module will be available to those who have a key that unlocks it. Once you have created your module you can create keys under Settings -> Account. Each key may be used once."
 				else
 					element.text = "Your module can only be installed by those who you share its ID with. Choose an ID that cannot be guessed to ensure this module remains private."
 				end
@@ -2196,7 +3440,7 @@ local showShareModuleDialog = function(options)
 			text = "The DMHub module system is for distributing content that you are legally entitled to share. You retain ownership of any content you have created, but by sharing it in a module you grant permission for other DMHub users to use and share it within DMHub.",
 		},
 
-		gui.Check{
+		gui.Check{styles = g_CheckboxStyles,
 			valign = "top",
 			halign = "left",
 			value = conditionsAgreed,
@@ -2209,7 +3453,7 @@ local showShareModuleDialog = function(options)
 			end,
 		},
 
-		gui.Check{
+		gui.Check{styles = g_CheckboxStyles,
 			classes = {cond(moduleInstance.published == false, "collapsed")},
 			valign = "top",
 			halign = "left",
@@ -2220,7 +3464,7 @@ local showShareModuleDialog = function(options)
 				moduleInstance.dmhubCanUse = element.value
 			end,
 			refreshModule = function(element)
-				element:SetClass("collapsed", not moduleInstance.published)
+				element:SetClass("collapsed", not moduleInstance.published or ListingIdFor(moduleInstance) == "eotwunlisted")
 			end,
 		},
 	}
@@ -2238,43 +3482,75 @@ local showShareModuleDialog = function(options)
 
 	local mapFolderHierarchy
 
-	local folderOptions = gui.Panel{
-		classes = {"linkContainer"},
+	--Maps left at the top level of the Maps tree end up ungrouped when the
+	--module is installed, so nudge the author as soon as one is included.
+	--updatecounts is fired tree-wide off the dialog's think handler whenever
+	--the selection changes, so this rides the same refresh as the (n/m) counts.
+	local topLevelMapWarning = gui.Label{
+		classes = {"collapsed"},
+		width = "auto",
+		height = "auto",
+		maxWidth = 340,
+		halign = "left",
+		vmargin = 4,
+		fontSize = 14,
+		color = "red",
+		text = "When creating a module it is recommended to place maps within a folder for easy grouping when installed.",
+		updatecounts = function(element)
+			if mapFolderHierarchy == nil then
+				return
+			end
 
-		gui.Label{
-			classes = {"link"},
-			text = "All Maps",
-			click = function(element)
-				mapFolderHierarchy:FireEventTree("selection", "all")
-			end,
-		},
+			local counts = { n = 0 }
+			mapFolderHierarchy:FireEventTree("counttoplevelmaps", counts)
+			element:SetClass("collapsed", counts.n == 0)
+		end,
+	}
+
+	local folderOptions = gui.Panel{
+		width = "100%",
+		height = "auto",
+		halign = "left",
+		flow = "vertical",
+
 		gui.Panel{
-			classes = {"linkDivider"},
+			classes = {"linkContainer"},
+
+			gui.Label{
+				classes = {"link"},
+				text = "All Maps",
+				click = function(element)
+					mapFolderHierarchy:FireEventTree("selection", "all")
+				end,
+			},
+			gui.Panel{
+				classes = {"linkDivider"},
+			},
+			gui.Label{
+				classes = {"link"},
+				text = "Current Map",
+				click = function(element)
+					mapFolderHierarchy:FireEventTree("selection", "this")
+				end,
+			},
+			gui.Panel{
+				classes = {"linkDivider"},
+			},
+			gui.Label{
+				classes = {"link"},
+				text = "No Maps",
+				click = function(element)
+					mapFolderHierarchy:FireEventTree("selection", "none")
+				end,
+			},
 		},
-		gui.Label{
-			classes = {"link"},
-			text = "Current Map",
-			click = function(element)
-				mapFolderHierarchy:FireEventTree("selection", "this")
-			end,
-		},
-		gui.Panel{
-			classes = {"linkDivider"},
-		},
-		gui.Label{
-			classes = {"link"},
-			text = "No Maps",
-			click = function(element)
-				mapFolderHierarchy:FireEventTree("selection", "none")
-			end,
-		},
+
+		topLevelMapWarning,
 	}
 
 	mapFolderHierarchy = CreateMapFolderPanel(game.rootMapFolder, true, folderOptions)
 
 
-	--Colors come from the active color scheme; rows flip to the inverse
-	--colors on hover/drag. Layout stays here.
 	local assetsCustomStyles = {
 		{
 			classes = {"row"},
@@ -2376,12 +3652,99 @@ local showShareModuleDialog = function(options)
 
 
 	local createModuleLabel = gui.Label{
-		fontSize = 24,
+		classes = {"sizeXl"},
 		width = "auto",
 		height = "auto",
 		halign = "center",
 		valign = "top",
 		text = cond(isNewModule, "Create a Module", "Update Module"),
+	}
+
+	--Module Type: dropdown at the top of the dialog, a line describing the
+	--chosen type, and the errors/warnings its validator raises against the
+	--current selection. Re-validated on every updatecounts, which the think
+	--handler fires after each dependency recompute.
+	local moduleTypeDescription = gui.Label{
+		classes = {"moduleTypeDescription"},
+		text = GetModuleType(moduleInstance.moduleType).description,
+	}
+
+	local moduleTypeMessages = gui.Panel{
+		classes = {"moduleTypeMessages", "collapsed"},
+	}
+
+	local RefreshModuleType = function()
+		local typeInfo = GetModuleType(moduleInstance.moduleType)
+		moduleTypeDescription.text = typeInfo.description
+
+		local errors, warnings = {}, {}
+		if typeInfo.validate ~= nil then
+			errors, warnings = typeInfo.validate(ModuleTypeContext())
+		end
+		--holds Proceed until every selected map's content is known.
+		if SearcherPending() then
+			errors[#errors+1] = "Reading the selected maps to find everything they use..."
+		end
+		m_moduleTypeErrors = errors
+
+		local children = {}
+		for _,msg in ipairs(errors) do
+			children[#children+1] = gui.Label{
+				classes = {"moduleTypeMessage", "moduleTypeError"},
+				text = msg,
+			}
+		end
+		for _,msg in ipairs(warnings) do
+			children[#children+1] = gui.Label{
+				classes = {"moduleTypeMessage", "moduleTypeWarning"},
+				text = msg,
+			}
+		end
+		moduleTypeMessages.children = children
+		moduleTypeMessages:SetClass("collapsed", #children == 0)
+
+		if dialogPanel ~= nil and dialogPanel.valid then
+			dialogPanel:FireEventTree("refreshListing")
+		end
+		shareButton:FireEvent("refreshModule")
+	end
+
+	local moduleTypeOptions = {}
+	for _,info in ipairs(g_moduleTypes) do
+		if info.available == nil or info.available() or info.id == moduleInstance.moduleType then
+			moduleTypeOptions[#moduleTypeOptions+1] = { id = info.id, text = info.text }
+		end
+	end
+
+	local moduleTypePanel = gui.Panel{
+		classes = {"moduleTypePanel"},
+		updatecounts = function(element)
+			RefreshModuleType()
+		end,
+
+		gui.Panel{
+			classes = {'form-entry'},
+			width = "100%",
+
+			gui.Label{
+				classes = {'formLabel'},
+				text = 'Module Type:',
+			},
+
+			gui.Dropdown{
+				options = moduleTypeOptions,
+				idChosen = moduleInstance.moduleType,
+				width = 260,
+				change = function(element)
+					---@cast element Dropdown
+					moduleInstance.moduleType = element.idChosen --[[@as string]]
+					RefreshModuleType()
+				end,
+			},
+		},
+
+		moduleTypeDescription,
+		moduleTypeMessages,
 	}
 
 
@@ -2396,6 +3759,8 @@ local showShareModuleDialog = function(options)
 
 		createModuleLabel,
 
+		moduleTypePanel,
+
 		publishingPanel,
 
 		assetsPanel,
@@ -2403,13 +3768,79 @@ local showShareModuleDialog = function(options)
 
 	local m_dependenciesDirty = true
 
-	local m_dependencySearcher = nil
+	--One step of m_autoPublish, run by the think handler once the dependency
+	--pass is up to date. "select" ticks every encounter map not claimed by
+	--another of this game's Encounter of the Week modules; after that each
+	--step re-runs the type's checks (which tick the script documents) until a
+	--run changes nothing, then publishes or gives the dialog back.
+	local AutoPublishStep = function()
+		local auto = m_autoPublish
+		if auto == nil then
+			return
+		end
+		auto.thinks = (auto.thinks or 0) + 1
+		if auto.thinks < 2 then
+			--give the asset rows a frame to finish registering.
+			return
+		end
+
+		if auto.phase == nil then
+			auto.phase = "settle"
+			local eotw = rawget(_G, "EncounterOfTheWeek")
+			local exclude = auto.excludeAssets or {}
+			local ctx = ModuleTypeContext()
+			for guid,info in pairs(assetInfo) do
+				if info.type == "map" and not exclude[guid] and eotw ~= nil and eotw.IsEncounterMapName(info.displayName) then
+					ctx.include(guid)
+				end
+			end
+			return
+		end
+
+		if SearcherPending() then
+			--map data is still downloading; a pass runs when it lands.
+			return
+		end
+
+		RefreshModuleType()
+		if m_dependenciesDirty then
+			--the checks ticked something; wait for the next dependency pass.
+			return
+		end
+
+		m_autoPublish = nil
+
+		if #m_moduleTypeErrors > 0 then
+			createModuleLabel.text = "Publish stopped: fix the problems below"
+			statusLabel:SetClass("hidden", true)
+			contentPanel:SetClass("hidden", false)
+			footerPanel:SetClass("hidden", false)
+			backButton:SetClass("hidden", false)
+			shareButton:FireEvent("refreshModule")
+			return
+		end
+
+		--a first publish: show the publishing page for the module id, author
+		--name and terms. Proceed stays hidden until those are filled in.
+		if auto.firstPublish then
+			statusLabel:SetClass("hidden", true)
+			contentPanel:SetClass("hidden", false)
+			footerPanel:SetClass("hidden", false)
+			backButton:SetClass("hidden", false)
+			shareButton:FireEvent("click")
+			return
+		end
+
+		--page 1 -> page 2 -> upload, exactly as the author's two clicks.
+		shareButton:FireEvent("click")
+		statusLabel.text = string.format("Publishing %s...", moduleInstance.fullid or moduleid or "the module")
+		shareButton:FireEvent("click")
+	end
 
 
 
-	--The framedPanel theme rule draws the dialog frame; these local rules are
-	--layout plus dialog-specific text sizing, with colors as scheme tokens.
 	local dialogCustomStyles = {
+
 			{
 				selectors = {'content-panel'},
 				width = '90%',
@@ -2477,7 +3908,7 @@ local showShareModuleDialog = function(options)
 				textAlignment = 'topleft',
 				valign = 'top',
 				width = '60%',
-				height = 100,
+				height = 80,
 				vmargin = 8,
 			},
 			{
@@ -2526,18 +3957,85 @@ local showShareModuleDialog = function(options)
 				height = "auto",
 				halign = "center",
 			},
+			{
+				selectors = {'moduleTypePanel'},
+				width = '60%',
+				height = 'auto',
+				halign = 'center',
+				valign = 'top',
+				flow = 'vertical',
+				vmargin = 8,
+			},
+			{
+				selectors = {'moduleTypeDescription'},
+				width = '100%',
+				height = 'auto',
+				fontSize = 14,
+				color = '@fg',
+				vmargin = 4,
+			},
+			{
+				selectors = {'moduleTypeMessages'},
+				width = '100%',
+				height = 'auto',
+				flow = 'vertical',
+			},
+			{
+				selectors = {'moduleTypeMessage'},
+				width = '100%',
+				height = 'auto',
+				fontSize = 14,
+				vmargin = 2,
+			},
+			{
+				selectors = {'moduleTypeMessage', 'moduleTypeError'},
+				color = '@danger',
+			},
+			{
+				selectors = {'moduleTypeMessage', 'moduleTypeWarning'},
+				color = '@warning',
+			},
 	}
+
+	-- Bind the hidden-entries onChange now that dialogPanel/moduleInstance
+	-- are both reachable by upvalue. Persisting to publishingProperties +
+	-- (for existing modules) uploading immediately makes the hide survive a
+	-- dialog close without finishing the publish flow.
+	g_dialogState.onChange = function()
+		moduleInstance.publishingProperties.hiddenEntries = hiddenEntries
+		if not isNewModule then
+			moduleInstance:Upload{}
+		end
+		if dialogPanel ~= nil then
+			dialogPanel:FireEventTree("updatecounts")
+		end
+	end
 
 	dialogPanel = gui.Panel{
 		id = 'ShareDialog',
 		classes = {"framedPanel"},
 		width = 1024,
-		height = 900,
+		height = 980,
 		styles = ThemeEngine.MergeStyles(dialogCustomStyles),
 
 		thinkTime = 0.1,
 
+		destroy = function(element)
+			g_dialogState = nil
+		end,
+
 		think = function(element)
+			if m_dependencySearcher ~= nil and m_dependencySearcher.revision ~= m_searcherRevision then
+				m_searcherRevision = m_dependencySearcher.revision
+				m_dependenciesDirty = true
+			end
+
+			local exclusions = GetModuleType(moduleInstance.moduleType).excludedDependencyTypes
+			if m_dependencySearcher ~= nil and m_searcherExclusions ~= exclusions then
+				m_dependencySearcher = nil
+				m_dependenciesDirty = true
+			end
+
 			if m_dependenciesDirty then
 				local count = 0
 				for k,item in pairs(addressableAssets) do
@@ -2545,7 +4043,18 @@ local showShareModuleDialog = function(options)
 				end
 				dmhub.Debug(string.format("ASSETS:: HAVE %d", count))
 				if m_dependencySearcher == nil then
-					m_dependencySearcher = module.CreateDependencySearcher(allAssets)
+					local candidates = allAssets
+					if exclusions ~= nil then
+						candidates = {}
+						for guid,entry in pairs(allAssets) do
+							if not exclusions[entry.check.data.type] then
+								candidates[guid] = entry
+							end
+						end
+					end
+					m_dependencySearcher = module.CreateDependencySearcher(candidates)
+					m_searcherExclusions = exclusions
+					m_searcherRevision = m_dependencySearcher.revision
 				end
 
 				m_dependencyAssets = m_dependencySearcher:Search(addressableAssets)
@@ -2557,10 +4066,18 @@ local showShareModuleDialog = function(options)
 
 				downloadSizeLabel:FireEvent("calculate")
 			end
+
+			if m_autoPublish ~= nil and not m_dependenciesDirty then
+				AutoPublishStep()
+			end
 		end,
 
 		createasset = function(element, check)
 			dmhub.Debug(string.format("CREATE ASSET:: %s", check.data.assetid))
+			assetInfo[check.data.assetid] = {
+				type = check.data.type,
+				displayName = check.data.displayName,
+			}
 			if check.data.addressable ~= false then
 				allAssets[check.data.assetid] = {
 					check = check
@@ -2600,22 +4117,31 @@ local showShareModuleDialog = function(options)
 
 		gui.Panel{
 
-			selfStyle = {
-				width = '60%',
-				height = 100,
-				valign = 'bottom',
-				halign = 'center',
-			},
+			width = '60%',
+			height = 100,
+			valign = 'bottom',
+			halign = 'center',
 
 			backButton,
 			shareButton,
 			sharePanel,
 		},
 
-		statusLabel,
-		moduleCodePanel,
+		--One centered column, so a status that wraps (the Encounter of the
+		--Week pool sentence) pushes the Module ID row down instead of under it.
+		gui.Panel{
+			floating = true,
+			halign = "center",
+			valign = "center",
+			width = "auto",
+			height = "auto",
+			flow = "vertical",
+			statusLabel,
+			moduleCodePanel,
+		},
 
-		gui.CloseButton{
+		gui.Button{
+            classes = {"closeButton"},
 			halign = "right",
 			valign = "top",
 			floating = true,
@@ -2635,17 +4161,26 @@ local showShareModuleDialog = function(options)
 	dialogPanel:FireEventTree("refreshModule")
 
 	if not isNewModule then
-		dialogPanel:FireEventTree("includedAssets", includedAssets, m_dependencyAssets, true)
+		dialogPanel:FireEventTree("includedAssets", includedAssets, m_dependencyAssets, true, true)
 	end
 
-	--Re-resolve the token colors if the user switches theme or color scheme
-	--while the dialog is open.
+	if m_autoPublish ~= nil then
+		--only the progress line shows while it runs; AutoPublishStep brings the
+		--content page back if the checks fail.
+		contentPanel:SetClass("hidden", true)
+		footerPanel:SetClass("hidden", true)
+		backButton:SetClass("hidden", true)
+		shareButton:SetClass("hidden", true)
+		statusLabel.text = string.format("Selecting the encounter content for %s...", moduleInstance.fullid or moduleid or "the module")
+		statusLabel:SetClass("hidden", false)
+	end
+
 	ThemeEngine.OnThemeChanged(mod, function()
 		if dialogPanel ~= nil and dialogPanel.valid then
 			dialogPanel.styles = ThemeEngine.MergeStyles(dialogCustomStyles)
 		end
 		if assetsPanel ~= nil and assetsPanel.valid then
-			assetsPanel.styles = ThemeEngine.MergeTokens(assetsCustomStyles)
+			assetsPanel.styles = ThemeEngine.MergeTokens(assetsCustomStyles) --[[@as StyleArgs[] ]]
 		end
 	end)
 end
@@ -2685,6 +4220,13 @@ mod.shared.ShowShareDialog = function()
 		modulesIncluded[key] = true
 	end
 
+	--The two sources above are concatenated in whatever order they arrive,
+	--which reads as random once you have more than a couple of modules. Sort
+	--before appending "Create a New Module" so that entry stays at the bottom.
+	table.sort(moduleOptions, function(a,b)
+		return string.lower(a.text) < string.lower(b.text)
+	end)
+
 	moduleOptions[#moduleOptions+1] = {
 		id = "new",
 		text = "Create a New Module",
@@ -2704,7 +4246,7 @@ mod.shared.ShowShareDialog = function()
 	end
 
 	local infoDisplay = gui.Label{
-		fontSize = 16,
+		classes = {"sizeM"},
 		textAlignment = "center",
 		width = "60%",
 		height = "auto",
@@ -2744,12 +4286,70 @@ mod.shared.ShowShareDialog = function()
 	end
 
 
+	local moduleSelectionDropdown
 	moduleSelectionDropdown = gui.Dropdown{
+		classes = {"form"},
+		width = 400,
 		options = moduleOptions,
 		idChosen = defaultModuleSelected,
-		create = GetModuleInfo,
+		create = function(element)
+			GetModuleInfo(element)
+
+			--refresh organization membership so modules published by fellow
+			--org members since login appear in the list. (Entries rebuilt here
+			--skip the local module-info check; DownloadModuleInfo fetches the
+			--record when one is selected.)
+			local hasOrgSupport = pcall(function()
+				module.GetOurOrganizations()
+			end)
+			if hasOrgSupport then
+				module.RefreshOurOrganizations{
+					success = function(orgs)
+						if not element.valid then
+							return
+						end
+
+						local opts = {}
+						local included = {}
+						for _,info in ipairs(module.GetModulesPublishedFromThisGame()) do
+							opts[#opts+1] = {
+								id = info.id,
+								text = info.id,
+								mtime = info.mtime,
+							}
+							included[info.id] = true
+						end
+
+						for _,key in ipairs(module.GetOurPublishedModules()) do
+							if not included[key] then
+								opts[#opts+1] = {
+									id = key,
+									text = key,
+								}
+								included[key] = true
+							end
+						end
+
+						--Sorted the same way the initial build is: this rebuild
+						--replaces the whole options list, so leaving it out
+						--undoes that sort a moment after the dropdown appears.
+						table.sort(opts, function(a,b)
+							return string.lower(a.text) < string.lower(b.text)
+						end)
+
+						opts[#opts+1] = {
+							id = "new",
+							text = "Create a New Module",
+						}
+
+						local selected = element.idChosen
+						element.options = opts
+						element.idChosen = selected
+					end,
+				}
+			end
+		end,
 		change = GetModuleInfo,
-		width = 200,
 	}
 
 	local moduleSelection = gui.Panel{
@@ -2757,20 +4357,18 @@ mod.shared.ShowShareDialog = function()
 		valign = "top",
 		width = "40%",
 		gui.Label{
-			classes = {"formLabel"},
+			classes = {"form"},
 			text = "Module:",
 		},
 
 		moduleSelectionDropdown,
 	}
 
-	shareButton = gui.PrettyButton{
+	shareButton = gui.Button{
+		classes = {"sizeL"},
 		text = 'Proceed >>>',
-		width = 240,
-		height = 70,
 		halign = 'right',
 		valign = 'center',
-		fontSize = 20,
 		floating = true,
 		events = {
 			click = function(element)
@@ -2799,7 +4397,7 @@ mod.shared.ShowShareDialog = function()
 	}
 
 	statusLabel = gui.Label{
-		fontSize = 16,
+		classes = {"sizeM"},
 		width = "60%",
 		height = "auto",
 		valign = "center",
@@ -2820,64 +4418,10 @@ mod.shared.ShowShareDialog = function()
 		statusLabel,
 	}
 
-	--The old Styles.Form rules this dialog's body depends on, with colors as
-	--scheme tokens. The theme sheet's own form rules use a different
-	--authoring pattern, so these must ride along locally.
-	local dialogCustomStyles = {
-		{
-			selectors = {"formPanel"},
-			flow = "horizontal",
-			width = "100%",
-			height = "auto",
-			valign = "top",
-			vmargin = 4,
-		},
-		{
-			selectors = {"formLabel"},
-			fontSize = 16,
-			color = "@fgStrong",
-			width = "auto",
-			height = "auto",
-			minWidth = 140,
-			halign = "right",
-			valign = "center",
-			hmargin = 8,
-		},
-		{
-			selectors = {"formInput"},
-			fontSize = 16,
-			width = 180,
-			height = 26,
-			color = "@fg",
-			halign = "right",
-			valign = "center",
-			textAlignment = "left",
-		},
-		{
-			selectors = {"formInput", "multiline"},
-			textAlignment = "topleft",
-		},
-		{
-			selectors = {"formDropdown"},
-			halign = 'right',
-			vmargin = 4,
-			width = 240,
-			height = 30,
-		},
-		{
-			selectors = {"formValue"},
-			halign = 'right',
-			vmargin = 4,
-			width = 180,
-			height = 30,
-			fontSize = 14,
-		},
-	}
-
 	dialogPanel = gui.Panel{
 		id = 'ShareDialog',
 		classes = {"framedPanel"},
-		styles = ThemeEngine.MergeStyles(dialogCustomStyles),
+		styles = ThemeEngine.GetStyles(),
 
 		width = 1024,
 		height = 900,
@@ -2891,18 +4435,17 @@ mod.shared.ShowShareDialog = function()
 
 			floating = true,
 
-			selfStyle = {
-				width = '60%',
-				height = 100,
-				valign = 'bottom',
-				halign = 'center',
-			},
+			width = '60%',
+			height = 100,
+			valign = 'bottom',
+			halign = 'center',
 
 			shareButton,
 		},
 
 
-		gui.CloseButton{
+		gui.Button{
+            classes = {"closeButton"},
 			halign = "right",
 			valign = "top",
 			floating = true,
@@ -2920,17 +4463,664 @@ mod.shared.ShowShareDialog = function()
 	gui.ShowModal(dialogPanel, {nofade = true})
 	dialogPanel:FireEventTree("refreshModule", {nofade = true})
 
-	--Re-resolve if the user switches theme while the dialog is open.
 	ThemeEngine.OnThemeChanged(mod, function()
 		if dialogPanel ~= nil and dialogPanel.valid then
-			dialogPanel.styles = ThemeEngine.MergeStyles(dialogCustomStyles)
+			dialogPanel.styles = ThemeEngine.GetStyles()
 		end
 	end)
 
 end
 
 
-mod.shared.ShowDownloadShareDialog = function()
+--Which modules a creator includes with their Patreon, per publishing
+--organization. This is deliberately NOT ModuleLua.hasAccessThroughPatreon:
+--that answers "did MY membership unlock this", which is false for everyone who
+--is not already a patron -- i.e. exactly the audience the livery is for. The
+--org's ModuleAuthor record is publicly readable, so anyone who can see the card
+--can see whether it comes with a membership.
+--
+--Memoized because it is one fetch per organization and a grid renders dozens of
+--cards from a handful of authors. Cached for the session: a creator adding a
+--module to their Patreon list mid-session will not show until the next launch,
+--which is fine for a browse grid and is the price of not refetching per card.
+local g_patreonOrgInfo = {}        --orgid (lower) -> {modules=set, campaign={name,url}|nil, displayName, logo, url, time}, once loaded
+local g_patreonOrgInfoMaxAge = 300 --seconds a cached entry serves before it is looked up again (branding edits show up within this)
+local g_patreonOrgWaiting = {}     --orgid (lower) -> list of callbacks, while in flight
+
+--callback receives {modules = set of fullid (lower), campaign = {name, url} or
+--nil, displayName = string or nil}. Called synchronously when already cached,
+--which is the common case and keeps the card from flickering into its livery.
+local function QueryPatreonOrgInfo(orgid, callback)
+	if orgid == nil or orgid == "" then
+		callback({modules = {}})
+		return
+	end
+
+	local key = string.lower(orgid)
+
+	local cached = g_patreonOrgInfo[key]
+	if cached ~= nil and (cached.time == nil or dmhub.Time() - cached.time < g_patreonOrgInfoMaxAge) then
+		callback(cached)
+		return
+	end
+
+	local waiting = g_patreonOrgWaiting[key]
+	if waiting ~= nil then
+		waiting[#waiting+1] = callback
+		return
+	end
+
+	g_patreonOrgWaiting[key] = {callback}
+
+	local finish = function(result)
+		result.time = dmhub.Time()
+		g_patreonOrgInfo[key] = result
+		local queue = g_patreonOrgWaiting[key]
+		g_patreonOrgWaiting[key] = nil
+		for _,fn in ipairs(queue or {}) do
+			fn(result)
+		end
+	end
+
+	module.GetOrganizationInfo{
+		orgid = orgid,
+		success = function(info)
+			local modules = {}
+			for _,id in ipairs(info.patreonModules or {}) do
+				modules[string.lower(id)] = true
+			end
+			--patreonCampaign is the org's PUBLIC campaign identity ({name,
+			--url}), published when the creator links their campaign. It is
+			--what lets the offer panel name the actual creator and open the
+			--right campaign instead of hardcoding MCDM's.
+			--logo and url are the organization's branding, set by its owner
+			--in Settings > Editing; both nil until set.
+			finish({
+				modules = modules,
+				campaign = rawget(info, "patreonCampaign"),
+				displayName = info.displayName,
+				logo = rawget(info, "logo"),
+				url = rawget(info, "url"),
+			})
+		end,
+		failure = function(msg)
+			--the overwhelmingly common failure is "this module was published by
+			--a person, not an organization", which has no ModuleAuthor record.
+			--An empty set is the right answer, and caching it is what stops us
+			--asking again for every other card by the same author.
+			finish({modules = {}})
+		end,
+	}
+end
+
+--compatibility wrapper: callback receives just the included-module set.
+local function QueryPatreonModulesForOrg(orgid, callback)
+	QueryPatreonOrgInfo(orgid, function(info)
+		callback(info.modules or {})
+	end)
+end
+
+--Builds one module card. Hoisted to file scope so the settings screen can
+--render the same widget for the modules a Patreon membership unlocks; it used
+--to be a local of ShowDownloadShareDialog. The only thing it took from that
+--closure was what a click does, which is now options.press(moduleInfo).
+local CreateModuleDisplaySlot = function(options)
+	local resultPanel
+	local moduleHeading = gui.Label{
+		classes = {"moduleHeading"},
+	}
+
+	local newBadge = gui.Panel{
+		bgimage = "ui-icons/newbadge.png",
+		bgcolor = "white",
+		x = -8,
+		y = -8,
+		width = 32,
+		height = 32,
+		floating = true,
+		halign = "left",
+		valign = "top",
+	}
+
+	--modules an administrator has deprecated are still listed in the
+	--Installed/Published/Purchased tabs (they are filtered out of browse),
+	--so mark them clearly.
+	local deprecatedBadge = gui.Label{
+		text = "DEPRECATED",
+		bgimage = "panels/square.png",
+		bgcolor = "#661111",
+		color = "#ffaaaa",
+		bold = true,
+		fontSize = 12,
+		width = "auto",
+		height = "auto",
+		hpad = 6,
+		vpad = 2,
+		borderBox = true,
+		floating = true,
+		halign = "center",
+		valign = "top",
+		y = 4,
+		hover = function(element)
+			gui.Tooltip(element.data.message)(element)
+		end,
+		data = {
+			message = "",
+		},
+	}
+
+	local installCheck = gui.Panel{
+		classes = {"installCheck"},
+	}
+
+	local headingAndInstall = gui.Panel{
+		flow = "horizontal",
+		width = "auto",
+		height = "auto",
+		halign = "left",
+		valign = "top",
+		moduleHeading,
+		installCheck,
+	}
+
+	local headingPanel = gui.Panel{
+		flow = "vertical",
+		halign = "left",
+		valign = "top",
+		width = "auto",
+		height = "auto",
+		hmargin = 4,
+		headingAndInstall,
+		gui.Panel{
+			classes = {"moduleHeadingDivider"},
+		}
+	}
+
+	local authorLabel = gui.Label{
+		classes = {"moduleAuthor"},
+		valign = "bottom",
+	}
+
+	local iconContainer = gui.Panel{
+		classes = {"framedPanel"},
+		width = 96,
+		height = 96,
+		hmargin = 4,
+		vmargin = 8,
+		data = {
+			imageid = nil,
+		},
+		setimage = function(element, imageid)
+			if element.data.imageid == imageid then
+				return
+			end
+			element.data.imageid = imageid
+			element.children = {
+				gui.Panel{
+					classes = {"moduleIcon"},
+					autosizeimage = true,
+					bgimageStreamed = imageid,
+				}
+			}
+		end,
+	}
+
+	local detailsLabel = gui.Label{
+		classes = {"moduleDetails"},
+	}
+
+	local detailsPanel = gui.Panel{
+		flow = "horizontal",
+		halign = "left",
+		valign = "top",
+		width = "auto",
+		height = "auto",
+		iconContainer,
+		detailsLabel,
+	}
+
+	local publishedLabel = gui.Label{
+		classes = {"publishedLabel"},
+		floating = true,
+		text = "Published",
+	}
+
+	local installCountLabel = gui.Label{
+		classes = {"installCountLabel"},
+		text = "0",
+	}
+
+	local installCountIcon = gui.Panel{
+		classes = {"installCountIcon"},
+		hover = function(element)
+			gui.Tooltip(string.format("This module has been installed by %s users.", installCountLabel.text))(element)
+		end,
+	}
+
+	local installCountPanel = gui.Panel{
+		classes = {"installCountPanel"},
+		valign = "bottom",
+		halign = "right",
+		installCountLabel,
+		installCountIcon,
+	}
+
+
+	local upvoteCountLabel = gui.Label{
+		classes = {"installCountLabel"},
+		text = "0",
+	}
+
+	local upvoteCountIcon = gui.Panel{
+		classes = {"upvoteCountIcon"},
+		valign = "center",
+		halign = "right",
+		bgimage = "icons/icon_arrow/icon_arrow_29.png",
+	}
+
+	local upvoteCountPanel = gui.Panel{
+		flow = "horizontal",
+		width = "auto",
+		height = "auto",
+		valign = "top",
+		halign = "right",
+		upvoteCountLabel,
+		upvoteCountIcon,
+	}
+
+	local statsPanel = gui.Panel{
+		flow = "vertical",
+		floating = true,
+		halign = "right",
+		valign = "center",
+		width = "auto",
+		height = "100%",
+
+		upvoteCountPanel,
+
+		installCountPanel,
+		authorLabel,
+	}
+
+	resultPanel = gui.Panel{
+		classes = {"framedPanel", "moduleItem", "collapsed"},
+		headingPanel,
+		detailsPanel,
+		publishedLabel,
+
+		statsPanel,
+
+		newBadge,
+		deprecatedBadge,
+
+		data = {
+			moduleInfo = nil,
+		},
+
+		press = function(element)
+			--the owner of the slot decides what a click means: the browser
+			--swaps to its detail pane, the account panel opens the browser.
+			if options ~= nil and options.press ~= nil and element.data.moduleInfo ~= nil then
+				options.press(element.data.moduleInfo)
+			end
+		end,
+
+		setmodule = function(element, moduleInfo)
+			element.data.moduleInfo = moduleInfo
+
+			if moduleInfo == nil then
+				element:SetClass("collapsed", true)
+				return
+			end
+
+			if moduleInfo.coverart ~= nil then
+				iconContainer:FireEvent("setimage", moduleInfo.coverart)
+			else
+				iconContainer:FireEvent("setimage", "panels/logo/DMHubLogo.png")
+			end
+
+			element:SetClass("collapsed", false)
+			moduleHeading.text = moduleInfo.name or moduleInfo.fullid
+			authorLabel.text = string.format("by %s", moduleInfo.authorid)
+			detailsLabel.text = moduleInfo.details
+
+			element:SetClassTree("published", cond(moduleInfo.publishedFromThisGame, true, false))
+			element:SetClassTree("installed", cond(moduleInfo.installedVersion, true, false))
+			element:SetClassTree("loaded", cond(moduleInfo.loadedVersion, true, false))
+
+			--a module the publishing organization includes with their Patreon
+			--gets the patron livery -- blue interior, orange frame -- for
+			--everyone who can see the card, patron or not. The lookup is async
+			--the first time we see an author, so clear the class up front
+			--rather than leave the previous module's livery on a recycled slot.
+			local fullid = moduleInfo.fullid
+			element:SetClass("patreonModule", false)
+			QueryPatreonOrgInfo(moduleInfo.authorid, function(info)
+				--the slot is reused as the grid scrolls and re-searches, so a
+				--late answer must be checked against what the card shows NOW,
+				--not against the module that asked for it.
+				if element.valid and element.data.moduleInfo ~= nil and element.data.moduleInfo.fullid == fullid then
+					element:SetClass("patreonModule", (info.modules or {})[string.lower(fullid)] == true)
+
+					--an organization is credited by its display name rather
+					--than its raw author id.
+					if info.displayName ~= nil and info.displayName ~= "" then
+						authorLabel.text = string.format("by %s", info.displayName)
+					end
+				end
+			end)
+
+			installCountPanel:SetClass("hidden", true)
+
+			newBadge:SetClass("hidden", true)
+
+			deprecatedBadge:SetClass("hidden", not moduleInfo.deprecated)
+			if moduleInfo.deprecated then
+				local state = "It is disabled in your games unless you enable it again."
+				if moduleInfo.deprecationOverridden then
+					state = "You have chosen to enable it in this game anyway."
+				end
+				deprecatedBadge.data.message = string.format("%s\n\n%s", moduleInfo.deprecationMessage, state)
+			end
+
+			moduleInfo:QueryStats(function(modid, stats)
+				if element.valid and modid == moduleInfo.fullid then
+					local versions = moduleInfo.versions
+
+					local moduleAge = math.max(1, TimestampAgeInSeconds(versions[1].createTimestamp))
+
+					if moduleAge < 24*60*60*3 then
+						--modules less than 3 days old get a new badge.
+						newBadge:SetClass("hidden", false)
+					end
+
+					installCountPanel:SetClass("hidden", false)
+					installCountLabel.text = string.format("%d", stats.installs)
+					upvoteCountLabel.text = string.format("%d", stats.votes+1)
+					upvoteCountIcon:SetClass("upvoted", moduleInfo.vote > 0)
+				end
+			end)
+		end,
+
+		refreshModule = function(element)
+			element:FireEvent("setmodule", element.data.moduleInfo)
+		end,
+	}
+
+	return resultPanel
+end
+
+--Cross-mod entry points, populated at the end of this file once the dialog
+--exists. mod.shared is scoped to ONE mod, and the account screen that renders
+--these cards lives in DMHub_Titlescreen while this file is DMHub_Core_Panels,
+--so sharing has to go through a global -- the same convention ThemeEngine and
+--CharacterPanel use.
+ModuleBrowser = {}
+
+--options.focusModule (a ModuleLua) opens straight onto that module's detail
+--page instead of the browse grid. Used by the account screen, so clicking a
+--module a Patreon membership unlocks lands on the real page with its Install
+--button rather than on a second, half-built copy of it.
+--Card styling for the module grid. Hoisted alongside CreateModuleDisplaySlot so
+--anything rendering those cards outside this dialog can apply the same rules --
+--without them a slot has no size and its details text runs off the panel.
+--
+--Deliberately NOT dialogCustomStyles, which also defines framedPanel but sizes
+--it to the whole 1080-based dialog frame.
+--Patron livery: a module our Patreon membership unlocks wears the MCDM d20
+--logo's colors -- a blue sheen inside an orange frame -- so it reads as "this
+--one came with your membership" at a glance in a grid of otherwise identical
+--grey cards. The detail page it opens onto wears the same livery, so the page
+--is visibly the same thing as the card that was clicked.
+--
+--Literal hex rather than theme tokens on purpose: these are the logo's brand
+--colors, and they must stay the logo's colors when the user switches theme.
+--Overrides framedPanel's @surfaceLinear/@fg pair, which is a single-selector
+--rule, so any two-selector rule built from this wins.
+local patreonLiveryProperties = {
+	borderWidth = 3,
+	borderColor = "#e8701c",
+	gradient = {
+		point_a = {x = 0, y = 1},
+		point_b = {x = 1, y = 0},
+		stops = {
+			{position = 0,    color = "#0a1a2c"},
+			{position = 0.55, color = "#173c5c"},
+			{position = 1,    color = "#2a678f"},
+		},
+	},
+}
+
+--One style rule wearing the livery. The properties are shared so the card and
+--the detail page cannot drift apart, but each caller needs its own selectors
+--and may layer extra properties on top.
+local function PatreonLiveryStyle(selectors, extraProperties)
+	local result = {selectors = selectors}
+	for k,v in pairs(patreonLiveryProperties) do
+		result[k] = v
+	end
+
+	for k,v in pairs(extraProperties or {}) do
+		result[k] = v
+	end
+
+	return result
+end
+
+local moduleDisplayCustomStyles = {
+
+		{
+			selectors = {"moduleItem"},
+			width = 312,
+			height = 138,
+			pad = 6,
+			halign = "left",
+			valign = "top",
+			margin = 8,
+			flow = "vertical",
+		},
+		{
+			selectors = {"moduleItem", "loaded"},
+		},
+		{
+			selectors = {"moduleItem", "installed"},
+		},
+		{
+			selectors = {"moduleItem", "published"},
+		},
+		{
+			selectors = {"moduleItem", "hover"},
+			brightness = 1.8,
+			transitionTime = 0.1,
+		},
+
+		--see patreonLiveryProperties above for why the card wears the logo's
+		--colors and why they are literal hex.
+		PatreonLiveryStyle({"moduleItem", "patreonModule"}),
+
+		--the shared hover rule's 1.8 blows the blue out to white; the livery is
+		--already bright, so it needs a gentler lift.
+		PatreonLiveryStyle({"moduleItem", "patreonModule", "hover"}, {
+			brightness = 1.35,
+			borderColor = "#ff9440",
+			transitionTime = 0.1,
+		}),
+		{
+			selectors = {"moduleHeading"},
+			color = "@fgStrong",
+			fontFace = "@heading",
+			fontSize = 18,
+			minFontSize = 14,
+			fontWeight = "light",
+			maxWidth = 230,
+			width = "auto",
+			halign = "left",
+			valign = "top",
+			height = 24,
+			wrap = false,
+			textOverflow = "truncate",
+		},
+		{
+			selectors = {"moduleHeadingDivider"},
+			bgimage = "panels/square.png",
+			bgcolor = "@border",
+			width = 240,
+			height = 1,
+			vmargin = 1,
+			halign = "left",
+		},
+		{
+			selectors = {"installCheck"},
+			hidden = 1,
+			bgcolor = "white",
+			width = 20,
+			height = 20,
+			hmargin = 6,
+			valign = "center",
+			bgimage = "ui-icons/module-checkmark.png",
+		},
+		{
+			selectors = {"installCheck", "installed"},
+			hidden = 0,
+		},
+		{
+			selectors = {"moduleAuthor"},
+			color = "@fgMuted",
+			fontSize = 12,
+			width = "auto",
+			maxWidth = 160,
+			height = 14,
+			halign = "right",
+			valign = "bottom",
+			italics = true,
+			wrap = false,
+			textOverflow = "ellipsis",
+		},
+		{
+			selectors = {"moduleIcon"},
+			bgcolor = "white",
+			width = "auto",
+			height = "auto",
+			maxWidth = 92,
+			maxHeight = 92,
+			cornerRadius = 2,
+			valign = "center",
+			halign = "center",
+		},
+		{
+			selectors = {"moduleDetails"},
+			color = "@fg",
+			fontFace = "@label",
+			fontSize = 12,
+			width = "auto",
+			height = "auto",
+			vmargin = 4,
+			maxWidth = 160,
+			maxHeight = 90,
+			halign = "left",
+			valign = "top",
+			textOverflow = "ellipsis",
+		},
+
+		{
+			selectors = {"publishedLabel"},
+			hidden = 1,
+		},
+		{
+			selectors = {"publishedLabel", "published"},
+		--	hidden = 0,
+			color = "@fgStrong",
+			fontSize = 12,
+			halign = "right",
+			valign = "bottom",
+			width = "auto",
+			height = "auto",
+		},
+		{
+			selectors = {"installCountLabel"},
+			fontSize = 16,
+			minFontSize = 12,
+			color = "@fg",
+			width = "auto",
+			height = "auto",
+			valign = "center",
+			hmargin = 2,
+		},
+
+		{
+			selectors = {"installCountIcon"},
+			width = 16,
+			height = 16,
+			bgcolor = "white",
+			bgimage = "ui-icons/downloadicon.png",
+
+		},
+
+		{
+			selectors = {"upvoteCountIcon"},
+			width = 16,
+			height = 16,
+			bgcolor = "white",
+			bgimage = "ui-icons/heartunclicked.png",
+
+		},
+
+		{
+			selectors = {"upvoteCountIcon", "upvoted"},
+			bgimage = "ui-icons/heartclicked.png",
+		},
+
+		{
+			selectors = {"installCountPanel"},
+			width = "auto",
+			height = "auto",
+			flow = "horizontal",
+		},
+
+		{
+			selectors = {"pagingArrow"},
+			bgimage = "panels/InventoryArrow.png",
+			bgcolor = "white",
+			height = 40,
+			width = 20,
+			hmargin = 4,
+			halign = "center",
+		},
+
+		{
+			selectors = {"pagingArrow", "hover"},
+			brightness = 1.5,
+		},
+
+		-- Pill-bar styling for the tab strip: only the end options get
+		-- rounded corners, and middle options drop their left/right borders
+		-- so the strip reads as one continuous control. cornerRadius pairs
+		-- the corners by diagonal: x1 = top-left, x2 = bottom-right (TL-BR
+		-- diagonal); y1 = top-right, y2 = bottom-left (TR-BL diagonal).
+		-- border keys are (x1, x2, y1, y2) = (left, right, bottom, top).
+		-- The two-selector specificity beats the rounded theme variant's
+		-- flat `enumSliderOption` cornerRadius rule.
+		{
+			selectors = {"enumSliderOption", "firstOption"},
+			cornerRadius = {x1 = 5, x2 = 0, y1 = 0, y2 = 5},
+			border = {x1 = 2, x2 = 0, y1 = 2, y2 = 2},
+		},
+		{
+			selectors = {"enumSliderOption", "middleOption"},
+			cornerRadius = 0,
+			border = {x1 = 0, x2 = 0, y1 = 2, y2 = 2},
+		},
+		{
+			selectors = {"enumSliderOption", "lastOption"},
+			cornerRadius = {x1 = 0, x2 = 5, y1 = 5, y2 = 0},
+			border = {x1 = 0, x2 = 2, y1 = 2, y2 = 2},
+		},
+
+}
+
+mod.shared.ShowDownloadShareDialog = function(options)
+	options = options or {}
+
 	local m_moduleIndex
 	local m_displayedItemIds = {}
 
@@ -2949,252 +5139,6 @@ mod.shared.ShowDownloadShareDialog = function()
 	}
 
 
-	local CreateModuleDisplaySlot = function()
-		local resultPanel
-		local moduleHeading = gui.Label{
-			--Color comes from the {moduleHeading} rule; an inline color here
-			--would override the scheme.
-			classes = {"moduleHeading"},
-		}
-
-		local newBadge = gui.Panel{
-			bgimage = "ui-icons/newbadge.png",
-			bgcolor = "white",
-			x = -8,
-			y = -8,
-			width = 32,
-			height = 32,
-			floating = true,
-			halign = "left",
-			valign = "top",
-		}
-
-		local installCheck = gui.Panel{
-			classes = {"installCheck"},
-		}
-
-		local headingAndInstall = gui.Panel{
-			flow = "horizontal",
-			width = "auto",
-			height = "auto",
-			halign = "left",
-			valign = "top",
-			moduleHeading,
-			installCheck,
-		}
-
-		local headingPanel = gui.Panel{
-			flow = "vertical",
-			halign = "left",
-			valign = "top",
-			width = "auto",
-			height = "auto",
-			hmargin = 4,
-			headingAndInstall,
-			gui.Panel{
-				classes = {"moduleHeadingDivider"},
-				bgimage = "panels/square.png",
-			}
-		}
-
-		local authorLabel = gui.Label{
-			classes = {"moduleAuthor"},
-			valign = "bottom",
-		}
-
-		local iconContainer = gui.Panel{
-			classes = {"framedPanel"},
-			width = 96,
-			height = 96,
-			hmargin = 4,
-			vmargin = 8,
-			data = {
-				imageid = nil,
-			},
-			setimage = function(element, imageid)
-				if element.data.imageid == imageid then
-					return
-				end
-				element.data.imageid = imageid
-				element.children = {
-					gui.Panel{
-						classes = {"moduleIcon"},
-						autosizeimage = true,
-						bgimageStreamed = imageid,
-					}
-				}
-			end,
-		}
-
-		local detailsLabel = gui.Label{
-			classes = {"moduleDetails"},
-		}
-
-		local detailsPanel = gui.Panel{
-			flow = "horizontal",
-			halign = "left",
-			valign = "top",
-			width = "auto",
-			height = "auto",
-			iconContainer,
-			detailsLabel,
-		}
-
-		local publishedLabel = gui.Label{
-			classes = {"publishedLabel"},
-			floating = true,
-			text = "Published",
-		}
-
-		local installCountLabel = gui.Label{
-			classes = {"installCountLabel"},
-			text = "0",
-		}
-
-		local installCountIcon = gui.Panel{
-			classes = {"installCountIcon"},
-			hover = function(element)
-				gui.Tooltip(string.format("This module has been installed by %s users.", installCountLabel.text))(element)
-			end,
-		}
-
-		local installCountPanel = gui.Panel{
-			classes = {"installCountPanel"},
-			valign = "bottom",
-			halign = "right",
-			installCountLabel,
-			installCountIcon,
-		}
-
-
-		local upvoteCountLabel = gui.Label{
-			classes = {"installCountLabel"},
-			text = "0",
-		}
-
-		local upvoteCountIcon = gui.Panel{
-			classes = {"upvoteCountIcon"},
-			valign = "center",
-			halign = "right",
-			bgimage = "icons/icon_arrow/icon_arrow_29.png",
-		}
-
-		local upvoteCountPanel = gui.Panel{
-			flow = "horizontal",
-			width = "auto",
-			height = "auto",
-			valign = "top",
-			halign = "right",
-			upvoteCountLabel,
-			upvoteCountIcon,
-		}
-
-		local statsPanel = gui.Panel{
-			flow = "vertical",
-			floating = true,
-			halign = "right",
-			valign = "center",
-			width = "auto",
-			height = "100%",
-
-			upvoteCountPanel,
-
-			installCountPanel,
-			authorLabel,
-		}
-
-		local dmhubCanUsePanel = nil
-		if dmhub.isAdminAccount then
-			dmhubCanUsePanel = gui.Label{
-				halign = "left",
-				valign = "bottom",
-				width = "auto",
-				height = "auto",
-				fontSize = 12,
-				floating = true,
-				text = "can use: false",
-			}
-		end
-
-		resultPanel = gui.Panel{
-			classes = {"framedPanel", "moduleItem", "collapsed"},
-			headingPanel,
-			detailsPanel,
-			publishedLabel,
-
-			statsPanel,
-
-			newBadge,
-
-			dmhubCanUsePanel,
-
-			data = {
-				moduleInfo = nil,
-			},
-
-			press = function(element)
-				moduleGridContainer:SetClass("collapsed", true)
-				moduleDetailedDisplay:SetClass("collapsed", false)
-				moduleDetailedDisplay:FireEvent("displayModule", element.data.moduleInfo)
-			end,
-
-			setmodule = function(element, moduleInfo)
-				element.data.moduleInfo = moduleInfo
-
-				if moduleInfo == nil then
-					element:SetClass("collapsed", true)
-					return
-				end
-
-				if moduleInfo.coverart ~= nil then
-					iconContainer:FireEvent("setimage", moduleInfo.coverart)
-				else
-					iconContainer:FireEvent("setimage", "panels/logo/DMHubLogo.png")
-				end
-
-				element:SetClass("collapsed", false)
-				moduleHeading.text = moduleInfo.name or moduleInfo.fullid
-				authorLabel.text = string.format("by %s", moduleInfo.authorid)
-				detailsLabel.text = moduleInfo.details
-
-				if dmhubCanUsePanel ~= nil then
-					dmhubCanUsePanel.text = string.format("dmhub: %s", json(moduleInfo.dmhubCanUse))
-				end
-
-				element:SetClassTree("published", cond(moduleInfo.publishedFromThisGame, true, false))
-				element:SetClassTree("installed", cond(moduleInfo.installedVersion, true, false))
-				element:SetClassTree("loaded", cond(moduleInfo.loadedVersion, true, false))
-
-				installCountPanel:SetClass("hidden", true)
-
-				newBadge:SetClass("hidden", true)
-
-				moduleInfo:QueryStats(function(modid, stats)
-					if element.valid and modid == moduleInfo.fullid then
-						local versions = moduleInfo.versions
-
-						local moduleAge = math.max(1, TimestampAgeInSeconds(versions[1].createTimestamp))
-
-						if moduleAge < 24*60*60*3 then
-							--modules less than 3 days old get a new badge.
-							newBadge:SetClass("hidden", false)
-						end
-
-						installCountPanel:SetClass("hidden", false)
-						installCountLabel.text = string.format("%d", stats.installs)
-						upvoteCountLabel.text = string.format("%d", stats.votes+1)
-						upvoteCountIcon:SetClass("upvoted", moduleInfo.vote > 0)
-					end
-				end)
-			end,
-
-			refreshModule = function(element)
-				element:FireEvent("setmodule", element.data.moduleInfo)
-			end,
-		}
-
-		return resultPanel
-	end
 
 	local pageLeft
 	local pageRight
@@ -3208,7 +5152,15 @@ mod.shared.ShowDownloadShareDialog = function()
 
 	local gridItems = {}
 	for i=1,nrows*ncols do
-		gridItems[#gridItems+1] = CreateModuleDisplaySlot()
+		gridItems[#gridItems+1] = CreateModuleDisplaySlot{
+			--what a click meant before the factory was hoisted: hide the grid,
+			--show the detail pane for this module.
+			press = function(moduleInfo)
+				moduleGridContainer:SetClass("collapsed", true)
+				moduleDetailedDisplay:SetClass("collapsed", false)
+				moduleDetailedDisplay:FireEvent("displayModule", moduleInfo)
+			end,
+		}
 	end
 
 	local SetDisplayedModules = function(items)
@@ -3244,7 +5196,6 @@ mod.shared.ShowDownloadShareDialog = function()
 		end
 
 		m_latestSearch = search
-			index = m_tabSelected,
 
 		m_moduleIndex:Search{
 			text = search,
@@ -3255,8 +5206,23 @@ mod.shared.ShowDownloadShareDialog = function()
 				end
 
 				local items = {}
-				
+
+				--an Unlisted Encounter of the Week module is in the index only so
+				--the encounter pool can find it; the browsing tabs leave it out
+				--unless the search is exactly its module ID (how it is shared).
+				local browsing = m_tabSelected == "hot" or m_tabSelected == "new" or m_tabSelected == "best"
+				local searchId = string.lower(string.match(search or "", "^%s*(.-)%s*$") or "")
+
 				for _,item in ipairs(result.items) do
+					local unlisted = false
+					if browsing then
+						pcall(function()
+							unlisted = item.publishingProperties.eotwUnlisted == true and string.lower(item.fullid or "") ~= searchId
+						end)
+					end
+					if unlisted then
+						goto continue
+					end
 					local versions = item.versions
 					local stats = item.cachedStats
 					if stats == nil then
@@ -3282,6 +5248,7 @@ mod.shared.ShowDownloadShareDialog = function()
 						update = latestVersionAge,
 						score = score
 					}
+					::continue::
 				end
 
 				table.sort(items, function(a,b)
@@ -3298,7 +5265,16 @@ mod.shared.ShowDownloadShareDialog = function()
 				searchFailedLabel:SetClass("collapsed", true)
 
 				if #result.items == 0 then
-					
+
+					--the Patreon tab is shown to anyone with a linked account, so
+					--"no matching modules found" is misleading when nothing is
+					--wrong: their creators simply have not included anything yet.
+					if m_tabSelected == "patreon" then
+						searchFailedLabel.text = "None of the creators you support on Patreon have included modules with their membership yet."
+					else
+						searchFailedLabel.text = "No matching modules found"
+					end
+
 					searchFailedLabel:SetClass("collapsed", false)
 					moduleGridContainer:SetClass("collapsed", true)
 					moduleDetailedDisplay:SetClass("collapsed", true)
@@ -3327,6 +5303,33 @@ mod.shared.ShowDownloadShareDialog = function()
 			search = "",
 		}
 	}
+
+	--organization branding under the author line: the logo the owner
+	--uploaded and a link to their website. Both stay collapsed for modules
+	--published by an organization without branding, or by a person.
+	local detailedDisplayOrgLogo = gui.Panel{
+		classes = {"collapsed"},
+		width = "auto",
+		height = "auto",
+		maxWidth = 240,
+		maxHeight = 96,
+		autosizeimage = true,
+		bgcolor = "white",
+		halign = "left",
+		vmargin = 4,
+	}
+
+	local detailedDisplayOrgLink = gui.Label{
+		classes = {"authorLabel", "link", "collapsed"},
+		data = {
+			url = nil,
+		},
+		click = function(element)
+			if element.data.url ~= nil then
+				dmhub.OpenURL(element.data.url)
+			end
+		end,
+	}
 	local detailedDisplayID = gui.Label{
 		classes = {"idLabel"},
 
@@ -3341,7 +5344,7 @@ mod.shared.ShowDownloadShareDialog = function()
 
 		gui.Panel{
 			bgimage = "icons/icon_app/icon_app_108.png",
-			bgcolor = Styles.textColor,
+			bgcolor = "white",
 			x = 20,
 			width = 16,
 			height = 16,
@@ -3356,8 +5359,17 @@ mod.shared.ShowDownloadShareDialog = function()
 		},
 
 	}
+	--warning shown above the module body when an administrator has deprecated it.
+	local detailedDisplayDeprecated = gui.Label{
+		classes = {"bodyLabel", "collapsed"},
+		bold = true,
+		color = "#ff6666",
+		markdown = false,
+	}
+
 	local detailedDisplayBody = gui.Label{
 		classes = {"bodyLabel"},
+        markdown = true,
 	}
 
 	local detailedDisplayImage = gui.Panel{
@@ -3386,9 +5398,7 @@ mod.shared.ShowDownloadShareDialog = function()
 
 
 	local installCountLabel = gui.Label{
-		fontFace = "Inter",
 		fontSize = 24,
-		color = "white",
 		width = "auto",
 		height = "auto",
 		hmargin = 6,
@@ -3396,10 +5406,10 @@ mod.shared.ShowDownloadShareDialog = function()
 	}
 
 	local installCountIcon = gui.Panel{
+		classes = {"iconButton"},
 		width = 40,
 		height = 40,
 		halign = "right",
-		bgcolor = "white",
 		bgimage = "ui-icons/downloadicon.png",
 		hover = function(element)
 			gui.Tooltip(string.format("This module has been installed by %s users.", installCountLabel.text))(element)
@@ -3416,9 +5426,7 @@ mod.shared.ShowDownloadShareDialog = function()
 	}
 
 	local upvoteCountLabel = gui.Label{
-		fontFace = "Inter",
 		fontSize = 24,
-		color = "white",
 		width = "auto",
 		height = "auto",
 		hmargin = 6,
@@ -3426,21 +5434,20 @@ mod.shared.ShowDownloadShareDialog = function()
 	}
 
 	local upvoteCountIcon = gui.Panel{
+		classes = {"iconButton"},
 		width = 40,
 		height = 40,
 		halign = "right",
+		--the two heart images stay in styles (not inline) so the upvoted swap
+		--can win on specificity; an inline bgimage would suppress both rules.
 		styles = {
 			{
-				bgcolor = "white",
+				selectors = {"iconButton"},
 				bgimage = "ui-icons/heartunclicked.png",
 			},
 			{
-				selectors = {"upvoted"},
+				selectors = {"iconButton", "upvoted"},
 				bgimage = "ui-icons/heartclicked.png",
-			},
-			{
-				selectors = {"hover"},
-				brightness = 2,
 			},
 		},
 		linger = function(element)
@@ -3474,74 +5481,85 @@ mod.shared.ShowDownloadShareDialog = function()
 		upvoteCountIcon,
 	}
 
-	local statsPanel = gui.Panel{
-		classes = {"hidden"},
-		floating = true,
-		halign = "right",
-		valign = "top",
-		flow = "vertical",
+	--Favorite star: marks the module as one the "Create New Campaign" screen
+	--should offer as an adventure to install into a new game (see
+	--ModuleFavorites at the top of this file). Per account, so it is
+	--meaningful for any published module, ours included.
+	local favoriteLabel = gui.Label{
+		fontSize = 16,
 		width = "auto",
 		height = "auto",
-		hmargin = 26,
-
-		installCountPanel,
-		upvoteCountPanel,
+		hmargin = 6,
+		valign = "center",
+		text = "Favorite",
 	}
 
-	local m_moduleErrors = {}
-
-
-	local m_installing = false
-
-	local installLabel
-	local uninstallButton
-
-	local installButton =
-		gui.PrettyButton{
-			styles = {
-				{
-					selectors = {"label"},
-					halign = "center",
-					valign = "center",
-				},
-			},
-			halign = "right",
-			valign = "bottom",
-			width = 180,
-			height = 52,
-			fontSize = 24,
-			text = "Install",
-			click = function(element)
-				m_installing = moduleDetailedDisplay.data.moduleInfo.fullid
-				local modInstalling = m_installing
-				moduleDetailedDisplay.data.moduleInfo:Install{
-					success = function()
-						m_installing = false
-						GameHud.instance.dialog.sheet:FireEventTree("moduleInstalled")
-					end,
-					error = function(message)
-						m_moduleErrors[modInstalling] = message
-					end,
-				}
-
-				installLabel:FireEvent("think")
-			end,
-		}
-	
-	uninstallButton = gui.Panel{
-		classes = {"collapsed"},
-		width = 16,
-		height = 16,
-		bgimage = "icons/icon_tool/icon_tool_44.png",
+	local favoriteIcon = gui.Panel{
+		classes = {"iconButton", "favoriteStar"},
+		width = 40,
+		height = 40,
+		halign = "right",
+		bgimage = "ui-icons/ph-star-fill.png",
 		styles = {
 			{
-				bgcolor = "white",
+				selectors = {"favoriteStar"},
+				bgcolor = "#777777",
 			},
 			{
-				selectors = {"hover"},
-				bgcolor = "red",
-			}
+				selectors = {"favoriteStar", "hover"},
+				bgcolor = "#bbbbbb",
+			},
+			{
+				selectors = {"favoriteStar", "favorited"},
+				bgcolor = "#f0c860",
+			},
+			{
+				selectors = {"favoriteStar", "favorited", "hover"},
+				bgcolor = "#ffe08a",
+			},
 		},
+		linger = function(element)
+			local text
+			if element:HasClass("favorited") then
+				text = "A favorite: offered as an adventure to add when you create a new campaign. Press to remove."
+			else
+				text = "Favorite this module to offer it as an adventure to add when you create a new campaign."
+			end
+			gui.Tooltip(text)(element)
+		end,
+
+		refreshFavorite = function(element)
+			local moduleInfo = moduleDetailedDisplay.data.moduleInfo
+			element:SetClass("favorited", moduleInfo ~= nil and ModuleFavorites.Is(moduleInfo.fullid))
+		end,
+
+		press = function(element)
+			local moduleInfo = moduleDetailedDisplay.data.moduleInfo
+			if moduleInfo == nil then
+				return
+			end
+			ModuleFavorites.Toggle(moduleInfo.fullid)
+			element:FireEvent("refreshFavorite")
+		end,
+	}
+
+	local favoritePanel = gui.Panel{
+		width = "auto",
+		height = "auto",
+		flow = "horizontal",
+		halign = "right",
+		vmargin = 4,
+		favoriteLabel,
+		favoriteIcon,
+	}
+
+	local uninstallButton = gui.Panel{
+		classes = {"iconButton", "withDanger", "collapsed"},
+		width = 40,
+		height = 40,
+		halign = "right",
+		tmargin = 40,
+		bgimage = "icons/icon_tool/icon_tool_44.png",
 
 		press = function(element)
 			gui.ModalMessage{
@@ -3565,6 +5583,332 @@ mod.shared.ShowDownloadShareDialog = function()
 		end,
 	}
 
+	local statsPanel = gui.Panel{
+		classes = {"hidden"},
+		floating = true,
+		halign = "right",
+		valign = "top",
+		flow = "vertical",
+		width = "auto",
+		height = "auto",
+		hmargin = 26,
+
+		installCountPanel,
+		upvoteCountPanel,
+		favoritePanel,
+		uninstallButton,
+	}
+
+	local m_moduleErrors = {}
+
+
+	local m_installing = false
+
+	local installLabel
+
+	local installButton =
+		gui.Button{
+			classes = {"sizeXxl"},
+			halign = "right",
+			valign = "bottom",
+			width = 180,
+			height = 52,
+			fontSize = 24,
+			text = "Install",
+			click = function(element)
+				m_installing = moduleDetailedDisplay.data.moduleInfo.fullid
+				local modInstalling = m_installing
+                local coverdocid = moduleDetailedDisplay.data.moduleInfo.coverDocumentId
+				moduleDetailedDisplay.data.moduleInfo:Install{
+					success = function()
+						m_installing = false
+						GameHud.instance.dialog.sheet:FireEventTree("moduleInstalled")
+
+                                print("DOC:: COVERDOC:", coverdocid)
+                        if coverdocid ~= nil then
+
+                            local nattempts = 0
+                            local showdoc
+                            showdoc = function()
+                                    local doc = dmhub.GetTable(CustomDocument.tableName)[coverdocid]
+                                    print("DOC:: SEARCH FOR", coverdocid, doc)
+                                    if doc ~= nil then
+                                        gui.CloseModal()
+                                        print("DOC:: SHOW")
+                                        doc:ShowDocument()
+                                        return
+                                    end
+
+                                    if nattempts < 64 then
+                                        nattempts = nattempts+1
+                                        dmhub.Schedule(0.2, showdoc)
+                                    else
+                                        print("DOC:: GIVE UP")
+                                    end
+                                end
+                            showdoc()
+                        end
+					end,
+					error = function(message)
+						m_moduleErrors[modInstalling] = message
+					end,
+				}
+
+				installLabel:FireEvent("think")
+			end,
+		}
+
+	--"Get this with a membership" for a premium module a creator includes with
+	--their Patreon. Those modules are listed for everyone, patron or not (see
+	--Module.offeredWithPatreon), so their page has to answer "how do I get
+	--this?" -- pointing at a store this build does not have would not.
+	local patreonOfferPanel
+	local patreonOfferLabel
+	local patreonConnectButton
+	local patreonBecomePatronButton
+	local patreonCheckAgainButton
+	local patreonOfferStatus
+	local m_patreonLink = nil
+
+	--the publishing org's Patreon info for the module currently displayed,
+	--loaded by displayModule through QueryPatreonOrgInfo: {fullid, offered,
+	--campaign, displayName}. nil until the lookup lands. Deliberately the same
+	--publicly-readable lookup the card livery uses rather than the C# flag, so
+	--it works for ANY creator organization on any engine build.
+	local m_patreonOrgOffer = nil
+
+	--whether the displayed module is offered with the publisher's Patreon.
+	--Gated on the hidden "patreonsub" preference like the rest of the feature.
+	local function OfferedWithPatreon(moduleInfo)
+		if dmhub.GetSettingValue("patreonsub") ~= true then
+			return false
+		end
+		return m_patreonOrgOffer ~= nil and m_patreonOrgOffer.fullid == moduleInfo.fullid
+			and m_patreonOrgOffer.offered == true
+	end
+
+	--the creator's name for the offer copy: prefer the campaign's own name,
+	--then the organization's display name.
+	local function PatreonCreatorName()
+		if m_patreonOrgOffer == nil then
+			return "creator's"
+		end
+		local campaign = m_patreonOrgOffer.campaign
+		if campaign ~= nil and campaign.name ~= nil and campaign.name ~= "" then
+			return campaign.name
+		end
+		if m_patreonOrgOffer.displayName ~= nil and m_patreonOrgOffer.displayName ~= "" then
+			return m_patreonOrgOffer.displayName
+		end
+		return "creator's"
+	end
+
+	--where "Become a Patron" goes: the org's published campaign url, with the
+	--historical MCDM url as a fallback for their org only (their record may
+	--predate the campaign-identity field). nil hides the button.
+	local function PatreonCampaignUrl()
+		if m_patreonOrgOffer == nil then
+			return nil
+		end
+		local campaign = m_patreonOrgOffer.campaign
+		if campaign ~= nil and campaign.url ~= nil and campaign.url ~= "" then
+			return campaign.url
+		end
+		if m_patreonOrgOffer.orgid == "codex" then
+			local patreon = rawget(_G, "PatreonAccount")
+			if patreon ~= nil then
+				return patreon.mcdmCampaignUrl
+			end
+		end
+		return nil
+	end
+
+	--whether a Patreon account is linked at all, which is a different question
+	--from whether it is entitled to anything. A linked non-patron needs the
+	--campaign link; the Connect button would only re-link the same account.
+	local function HasPatreonLinked()
+		local result = false
+		pcall(function()
+			result = dmhub.patreonUserId ~= nil and dmhub.patreonUserId ~= ""
+		end)
+		return result
+	end
+
+	--the link flow lives in SettingsScreen (a different mod), published as a
+	--global the way ModuleBrowser is. rawget so a partial load degrades to "no
+	--Connect button" instead of erroring on an unset global.
+	local function PatreonAccountGlobal()
+		return rawget(_G, "PatreonAccount")
+	end
+
+	patreonOfferLabel = gui.Label{
+		width = 340,
+		height = "auto",
+		fontSize = 16,
+		halign = "right",
+		textAlignment = "right",
+		text = "",
+	}
+
+	patreonOfferStatus = gui.Label{
+		classes = {"collapsed"},
+		width = 340,
+		height = "auto",
+		fontSize = 14,
+		italics = true,
+		halign = "right",
+		textAlignment = "right",
+		text = "",
+	}
+
+	patreonConnectButton = gui.Button{
+		classes = {"collapsed"},
+		width = 240,
+		height = 40,
+		fontSize = 18,
+		halign = "right",
+		vmargin = 4,
+		text = "Connect Patreon Account",
+		click = function(element)
+			local patreon = PatreonAccountGlobal()
+			if patreon == nil or patreon.BeginLink == nil then
+				return
+			end
+
+			element:SetClass("collapsed", true)
+			patreonOfferStatus:SetClass("collapsed", false)
+
+			m_patreonLink = patreon.BeginLink{
+				alive = function() return patreonOfferPanel.valid end,
+				progress = function(text)
+					patreonOfferStatus.text = text
+				end,
+				linked = function(data)
+					m_patreonLink = nil
+					--the entitlement itself lands on /Patrons a moment later;
+					--the think tick above notices and swaps in Install by
+					--itself once the engine sees it.
+					patreonOfferStatus.text = "Patreon account connected."
+				end,
+				failed = function(msg)
+					m_patreonLink = nil
+					patreonOfferStatus.text = msg
+					patreonConnectButton:SetClass("collapsed", HasPatreonLinked())
+				end,
+			}
+		end,
+	}
+
+	--Backstop for a dropped webhook: one call re-pulls the user's memberships
+	--server-side and rewrites their entitlements; the engine's live /Patrons
+	--monitor then flips the page to Install by itself if access arrived.
+	patreonCheckAgainButton = gui.Button{
+		classes = {"collapsed"},
+		width = 240,
+		height = 30,
+		fontSize = 14,
+		halign = "right",
+		vmargin = 4,
+		text = "Check Again",
+		click = function(element)
+			element.interactable = false
+			patreonOfferStatus.text = "Checking your Patreon memberships..."
+			patreonOfferStatus:SetClass("collapsed", false)
+			net.Post{
+				url = dmhub.cloudFunctionsBaseUrl .. "/patreonRefreshOrgEntitlements",
+				data = {},
+				success = function(response)
+					if not element.valid then
+						return
+					end
+					element.interactable = true
+					if type(response) == "table" and response.ok then
+						--if access arrived, the /Patrons mirror flips the page
+						--to Install within moments; this covers the other case.
+						patreonOfferStatus.text = "Checked. Your membership does not include this module yet."
+					else
+						patreonOfferStatus.text = "Could not check your memberships. Please try again."
+					end
+				end,
+				error = function(msg)
+					if not element.valid then
+						return
+					end
+					element.interactable = true
+					patreonOfferStatus.text = "Could not contact the server. Please try again."
+				end,
+			}
+		end,
+	}
+
+	patreonBecomePatronButton = gui.Button{
+		width = 240,
+		height = 40,
+		fontSize = 18,
+		halign = "right",
+		vmargin = 4,
+		text = "Become a Patron",
+		click = function(element)
+			local url = PatreonCampaignUrl()
+			if url ~= nil then
+				dmhub.OpenURL(url)
+			end
+		end,
+	}
+
+	patreonOfferPanel = gui.Panel{
+		classes = {"collapsed"},
+		flow = "vertical",
+		width = "auto",
+		height = "auto",
+		halign = "right",
+		valign = "bottom",
+
+		refreshOffer = function(element)
+			local linked = HasPatreonLinked()
+
+			patreonOfferStatus:SetClass("collapsed", true)
+			patreonConnectButton:SetClass("collapsed", linked or PatreonAccountGlobal() == nil)
+			patreonCheckAgainButton:SetClass("collapsed", not linked)
+			patreonBecomePatronButton:SetClass("collapsed", PatreonCampaignUrl() == nil)
+
+			local creatorName = PatreonCreatorName()
+			if linked then
+				patreonOfferLabel.text = string.format("This module is included with the %s Patreon. Your Patreon account is connected, but your membership does not include it yet.", creatorName)
+			else
+				patreonOfferLabel.text = string.format("This module is included with the %s Patreon. Connect your Patreon account, or become a patron, to get it.", creatorName)
+			end
+		end,
+
+		patreonOfferLabel,
+		patreonOfferStatus,
+		patreonConnectButton,
+		patreonCheckAgainButton,
+		patreonBecomePatronButton,
+	}
+
+	--think below runs ten times a second, so only touch the panel when the
+	--answer actually changes; re-setting the same text every tick dirties
+	--layout for nothing.
+	local m_patreonOfferState = nil
+	local function ShowPatreonOffer(show)
+		local state = "hidden"
+		if show then
+			state = cond(HasPatreonLinked(), "linked", "unlinked")
+		end
+
+		if state == m_patreonOfferState then
+			return
+		end
+		m_patreonOfferState = state
+
+		patreonOfferPanel:SetClass("collapsed", state == "hidden")
+
+		if state ~= "hidden" then
+			patreonOfferPanel:FireEvent("refreshOffer")
+		end
+	end
+
 	installLabel =
 		gui.Label{
 			text = "",
@@ -3577,6 +5921,26 @@ mod.shared.ShowDownloadShareDialog = function()
 			end,
 			think = function(element)
 				local mod = moduleDetailedDisplay.data.moduleInfo
+
+				--decided up front, not inside the premium branch below, so the
+				--earlier returns cannot leave the offer stranded on screen
+				--behind a deprecation or install message.
+				ShowPatreonOffer(mod.premium and (not mod.owned) and OfferedWithPatreon(mod)
+					and (not (mod.deprecated and not mod.deprecationOverridden))
+					and mod.fullid ~= m_installing
+					and (not mod.publishedFromThisGame))
+
+				--a deprecated module is disabled by default in every game, so
+				--there is nothing to gain by newly installing it. A game which
+				--has already explicitly enabled it keeps the normal buttons.
+				--Uninstalling is still offered so a game can be cleaned up.
+				if mod.deprecated and not mod.deprecationOverridden then
+					installButton:SetClass("collapsed", true)
+					element.text = "This module has been deprecated and cannot be installed."
+					uninstallButton:SetClass("collapsed", mod.installedVersion == nil)
+					return
+				end
+
 				if mod.fullid == m_installing then
 					installButton:SetClass("collapsed", true)
 					element.text = "Installing..."
@@ -3594,17 +5958,33 @@ mod.shared.ShowDownloadShareDialog = function()
 					return
 				end
 
+				--on the titlescreen a Hero module goes into the player's
+				--inventory (the panel above), which installs it here itself.
+				if dmhub.isLobbyGame and mod.isHeroModule then
+					installButton:SetClass("collapsed", true)
+					uninstallButton:SetClass("collapsed", true)
+					element.text = ""
+					return
+				end
+
 				if mod.premium and (not mod.owned) then
 					installButton:SetClass("collapsed", true)
-					element.text = "This module is a premium module and must be purchased in the store"
 					uninstallButton:SetClass("collapsed", true)
+
+					--the offer panel says how to get it; a store message would
+					--be wrong, since these builds have no store.
+					if m_patreonOfferState ~= nil and m_patreonOfferState ~= "hidden" then
+						element.text = ""
+					else
+						element.text = "This module is a premium module and must be purchased in the store"
+					end
 					return
 				end
 
 				if mod.installedVersion ~= mod.latestVersion and mod.installationBandwidthInKBytes > dmhub.uploadQuotaRemaining/1024 then
 					installButton:SetClass("collapsed", true)
 					element.text = "Not enough bandwidth to install"
-					uninstallButton:SetClass("collapsed", true)
+					uninstallButton:SetClass("collapsed", mod.installedVersion == nil)
 					return
 				end
 
@@ -3617,7 +5997,7 @@ mod.shared.ShowDownloadShareDialog = function()
 				end
 
 				if mod.installedVersion ~= mod.latestVersion then
-					uninstallButton:SetClass("collapsed", true)
+					uninstallButton:SetClass("collapsed", false)
 					installButton:SetClass("collapsed", false)
 					installButton.text = "Update"
 					element.text = string.format("Version %s is installed", mod.installedVersion, mod.latestVersion)
@@ -3630,50 +6010,191 @@ mod.shared.ShowDownloadShareDialog = function()
 
 			end,
 		}
-	
-	local bandwidthLabel = gui.Label{
-		width = "auto",
-		height = "auto",
-		halign = "left",
-		valign = "bottom",
-		fontSize = 14,
 
-		thinkTime = 0.5,
+	--Admin only: approve or reject the code in the displayed Hero module's
+	--newest version (see HeroModuleReviewAfterPublish). Players can add a Hero
+	--module version with code to their inventory only once it is approved.
+	local heroReviewStatus
+	local heroReviewPanel
+	local m_heroReviewVersionId = nil
 
-		think = function(element)
-			element:FireEvent("newModule")
-		end,
+	local SetHeroReview = function(status)
+		local mod = moduleDetailedDisplay.data.moduleInfo
+		local versionid = m_heroReviewVersionId
+		if mod == nil or versionid == nil then
+			return
+		end
+		heroReviewStatus.text = "Saving..."
+		mod:SetHeroReview{
+			versionid = versionid,
+			status = status,
+			success = function()
+				if heroReviewPanel.valid then
+					heroReviewPanel:FireEvent("newModule")
+				end
+			end,
+			error = function(msg)
+				if heroReviewStatus.valid then
+					heroReviewStatus.text = string.format("Saving the review failed: %s", msg)
+				end
+			end,
+		}
+	end
 
-		newModule = function(element)
-			local mod = moduleDetailedDisplay.data.moduleInfo
-			local operation = cond(mod.installedVersion ~= nil, "update", "install")
-			if mod.installedVersion == mod.latestVersion or mod.publishedFromThisGame then
-				element.text = ""
-			elseif mod.installationBandwidthInKBytes == 0 then
-				element.text = string.format("This module requires no bandwidth to %s", operation)
-			else
-				element.text = string.format("Bandwidth required to %s module: %.1fMB\nBandwidth remaining this month: %.1fMB", operation, mod.installationBandwidthInKBytes/1024, dmhub.uploadQuotaRemaining/(1024*1024))
-
-			end
-		end,
+	heroReviewStatus = gui.Label{
+		text = "",
+		fontSize = 16,
+		halign = "right",
 	}
 
-	local bandwidthPanel = gui.Panel{
-		floating = true,
+	heroReviewPanel = gui.Panel{
+		classes = {"collapsed"},
 		width = "auto",
 		height = "auto",
 		flow = "vertical",
-		halign = "left",
-		valign = "bottom",
-		bandwidthLabel,
-		gui.Label{
-			text = "Support us on Patreon for more bandwidth",
-			classes = {"link"},
-			fontSize = 14,
-			click = function(element)
-				dmhub.OpenRegisteredURL("Patreon")
-			end,
-		}
+		halign = "right",
+		vmargin = 4,
+		newModule = function(element)
+			local mod = moduleDetailedDisplay.data.moduleInfo
+			m_heroReviewVersionId = nil
+			local versions = mod ~= nil and mod.versions or {}
+			local latest = versions[#versions]
+			local show = dmhub.isAdminAccount and mod ~= nil and mod.isHeroModule and latest ~= nil
+			element:SetClass("collapsed", not show)
+			if not show then
+				return
+			end
+
+			local fullid = mod.fullid
+			m_heroReviewVersionId = latest.dataid
+			heroReviewStatus.text = "Checking the Hero module review..."
+			mod:QueryHeroReviews{
+				success = function(reviews)
+					local shown = moduleDetailedDisplay.data.moduleInfo
+					if not element.valid or shown == nil or shown.fullid ~= fullid then
+						return
+					end
+					local review = reviews[latest.dataid]
+					if review == nil then
+						heroReviewStatus.text = string.format("Hero review of v%s: none (no code, or never sent for review)", latest.version)
+					else
+						heroReviewStatus.text = string.format("Hero review of v%s: %s", latest.version, review.status)
+					end
+				end,
+			}
+		end,
+
+		heroReviewStatus,
+		gui.Panel{
+			width = "auto",
+			height = "auto",
+			flow = "horizontal",
+			halign = "right",
+			gui.Button{
+				text = "Approve Code",
+				width = 140,
+				height = 32,
+				fontSize = 16,
+				hmargin = 4,
+				click = function(element)
+					SetHeroReview("approved")
+				end,
+			},
+			gui.Button{
+				text = "Reject Code",
+				width = 140,
+				height = 32,
+				fontSize = 16,
+				click = function(element)
+					SetHeroReview("rejected")
+				end,
+			},
+		},
+	}
+
+	--Hero modules: add to / remove from the player's inventory (HeroModules.lua),
+	--which makes the module's classes and ancestries available to their heroes
+	--on the titlescreen and in every game those heroes enter.
+	local heroInventoryLabel = gui.Label{
+		text = "",
+		fontSize = 16,
+		width = "auto",
+		height = "auto",
+		halign = "right",
+		valign = "center",
+		hmargin = 8,
+	}
+
+	local heroInventoryButton = gui.Button{
+		classes = {"sizeXxl"},
+		text = "Add to my Inventory",
+		width = 240,
+		height = 52,
+		halign = "right",
+		click = function(element)
+			local mod = moduleDetailedDisplay.data.moduleInfo
+			if mod == nil then
+				return
+			end
+			if HeroModules.IsAdded(mod.fullid) then
+				HeroModules.Remove(mod.fullid)
+			else
+				HeroModules.Add(mod.fullid)
+			end
+			element:FireEventOnParents("refreshHeroInventory")
+		end,
+	}
+
+	local heroInventoryPanel = gui.Panel{
+		classes = {"collapsed"},
+		width = "auto",
+		height = "auto",
+		flow = "horizontal",
+		halign = "right",
+		vmargin = 4,
+		create = function(element)
+			HeroModules.Listen(element)
+		end,
+		heroModulesChanged = function(element)
+			element:FireEvent("refreshHeroInventory")
+		end,
+		newModule = function(element)
+			element:FireEvent("refreshHeroInventory")
+		end,
+		refreshHeroInventory = function(element)
+			local mod = moduleDetailedDisplay.data.moduleInfo
+			local show = mod ~= nil and mod.isHeroModule
+				and not (mod.deprecated and not mod.deprecationOverridden)
+			element:SetClass("collapsed", not show)
+			if not show then
+				return
+			end
+
+			--an owned premium Hero module is always in the inventory.
+			if mod.premium then
+				heroInventoryButton:SetClass("collapsed", true)
+				heroInventoryLabel.text = cond(mod.owned, "In your Inventory", "")
+				return
+			end
+
+			heroInventoryButton:SetClass("collapsed", false)
+			if HeroModules.IsAdded(mod.fullid) then
+				heroInventoryButton.text = "Remove from Inventory"
+				local err = HeroModules.GetError(mod.fullid)
+				if err ~= nil then
+					heroInventoryLabel.text = string.format("<color=#ff8888>%s</color>", err)
+				elseif HeroModules.IsEnabled(mod.fullid) then
+					heroInventoryLabel.text = "In your Inventory"
+				else
+					heroInventoryLabel.text = "In your Inventory (switched off)"
+				end
+			else
+				heroInventoryButton.text = "Add to my Inventory"
+				heroInventoryLabel.text = ""
+			end
+		end,
+		heroInventoryLabel,
+		heroInventoryButton,
 	}
 
 	local installPanel = gui.Panel{
@@ -3684,6 +6205,9 @@ mod.shared.ShowDownloadShareDialog = function()
 		halign = "right",
 		valign = "bottom",
 		margin = 8,
+		heroReviewPanel,
+		heroInventoryPanel,
+		patreonOfferPanel,
 		gui.Panel{
 			width = "auto",
 			height = "auto",
@@ -3691,7 +6215,6 @@ mod.shared.ShowDownloadShareDialog = function()
 			halign = "right",
 			valign = "bottom",
 			installLabel,
-			uninstallButton,
 		},
 		installButton,
 	}
@@ -3708,6 +6231,11 @@ mod.shared.ShowDownloadShareDialog = function()
 				selectors = {"moduleDetailedDisplay"},
 				flow = "vertical",
 			},
+
+			--the detail page for a Patreon module wears the same livery as the
+			--card that opened it. No hover variant: framedPanel has no hover
+			--rule, and a full-page panel should not light up under the cursor.
+			PatreonLiveryStyle({"moduleDetailedDisplay", "patreonModule"}),
 			{
 				selectors = {"detailsPanel"},
 				width = "95%",
@@ -3770,11 +6298,64 @@ mod.shared.ShowDownloadShareDialog = function()
 		displayModule = function(element, moduleInfo)
 			element.data.moduleInfo = moduleInfo
 
+			--same livery as the grid card, and the same async lookup: clear it
+			--up front so the previous module's livery doesn't linger on this
+			--one panel, and check on arrival that the page still shows the
+			--module that asked. The same lookup also feeds the offer panel
+			--(m_patreonOrgOffer): which creator, their campaign, and whether
+			--this module is on their included list.
+			local fullid = moduleInfo.fullid
+			local authorid = moduleInfo.authorid
+			element:SetClass("patreonModule", false)
+			m_patreonOrgOffer = nil
+			detailedDisplayOrgLogo:SetClass("collapsed", true)
+			detailedDisplayOrgLink:SetClass("collapsed", true)
+			detailedDisplayOrgLink.data.url = nil
+			QueryPatreonOrgInfo(authorid, function(info)
+				if element.valid and element.data.moduleInfo ~= nil and element.data.moduleInfo.fullid == fullid then
+					local offered = (info.modules or {})[string.lower(fullid)] == true
+					element:SetClass("patreonModule", offered)
+					m_patreonOrgOffer = {
+						fullid = fullid,
+						orgid = string.lower(authorid or ""),
+						offered = offered,
+						campaign = info.campaign,
+						displayName = info.displayName,
+					}
+
+					--organization branding: display name as the author, then
+					--the logo and website when the owner has set them.
+					if info.displayName ~= nil and info.displayName ~= "" then
+						detailedDisplayAuthor.text = string.format("by %s", info.displayName)
+					end
+
+					if info.logo ~= nil then
+						detailedDisplayOrgLogo.bgimage = info.logo
+						detailedDisplayOrgLogo:SetClass("collapsed", false)
+					end
+
+					if info.url ~= nil and info.url ~= "" then
+						detailedDisplayOrgLink.text = info.url
+						detailedDisplayOrgLink.data.url = info.url
+						detailedDisplayOrgLink:SetClass("collapsed", false)
+					end
+				end
+			end)
+
 			detailedDisplayTitle.text = moduleInfo.name or moduleInfo.fullid
 			detailedDisplayAuthor.text = string.format("by %s", moduleInfo.authorid)
 			detailedDisplayAuthor.data.search = string.format("author:%s", moduleInfo.authorid)
 			detailedDisplayID.data.id = moduleInfo.fullid
 			detailedDisplayID.text = string.format("Unique ID: %s", moduleInfo.fullid)
+
+			detailedDisplayDeprecated:SetClass("collapsed", not moduleInfo.deprecated)
+			if moduleInfo.deprecated then
+				local state = "It is disabled in your games unless you enable it again in Compendium -> Manage Compendium."
+				if moduleInfo.deprecationOverridden then
+					state = "You have chosen to enable it in this game anyway."
+				end
+				detailedDisplayDeprecated.text = string.format("DEPRECATED: %s\n\n%s", moduleInfo.deprecationMessage, state)
+			end
 
 			local details = moduleInfo.details or ""
 
@@ -3791,6 +6372,11 @@ mod.shared.ShowDownloadShareDialog = function()
 			end
 
 			detailedDisplayBody.text = details
+
+			--one panel serves every module in this dialog, and the engine leaves the old sprite
+			--up when an image will not resolve -- without this, a module whose cover art cannot
+			--be loaded displays the previously viewed module's art under its own name.
+			detailedDisplayImage.bgimage = nil
 
 			if moduleInfo.coverart ~= nil then
 				detailedDisplayImage.bgimage = moduleInfo.coverart
@@ -3819,6 +6405,7 @@ mod.shared.ShowDownloadShareDialog = function()
 					upvoteCountLabel.text = string.format("%d", stats.votes+1)
 
 					upvoteCountIcon:FireEvent("refreshUpvote")
+					favoriteIcon:FireEvent("refreshFavorite")
 				end
 			end)
 		end,
@@ -3828,15 +6415,18 @@ mod.shared.ShowDownloadShareDialog = function()
 			vscroll = true,
 			detailedDisplayTitle,
 			detailedDisplayAuthor,
+			detailedDisplayOrgLogo,
+			detailedDisplayOrgLink,
 			detailedDisplayID,
+			detailedDisplayDeprecated,
 			detailedDisplayPanel,
 			statsPanel,
 		},
 
 		installPanel,
-		bandwidthPanel,
 
-		gui.CloseButton{
+		gui.Button{
+            classes = {"closeButton"},
 			halign = "right",
 			valign = "top",
 			floating = true,
@@ -3860,6 +6450,15 @@ mod.shared.ShowDownloadShareDialog = function()
 				moduleDisplayPanel:SetClass("collapsed", false)
 
 				ShowSearch("")
+
+				--jump straight to a module if we were opened for one. Done after
+				--ShowSearch so the grid behind it is still populated and the
+				--detail pane's back button has something to return to.
+				if options.focusModule ~= nil then
+					moduleGridContainer:SetClass("collapsed", true)
+					moduleDetailedDisplay:SetClass("collapsed", false)
+					moduleDetailedDisplay:FireEvent("displayModule", options.focusModule)
+				end
 
 			end,
 
@@ -3933,181 +6532,47 @@ mod.shared.ShowDownloadShareDialog = function()
 		pagingSection,
 	}
 
-	--Text colors come from the active color scheme. White stays on icon
-	--tints (bgcolor "white" shows the image untinted, it isn't a color).
-	local moduleDisplayCustomStyles = {
 
-			{
-				selectors = {"moduleItem"},
-				width = 312,
-				height = 138,
-				pad = 6,
-				halign = "left",
-				valign = "top",
-				margin = 8,
-				flow = "vertical",
-			},
-			{
-				selectors = {"moduleItem", "loaded"},
-			},
-			{
-				selectors = {"moduleItem", "installed"},
-			},
-			{
-				selectors = {"moduleItem", "published"},
-			},
-			{
-				selectors = {"moduleItem", "hover"},
-				brightness = 1.8,
-				transitionTime = 0.1,
-			},
-			{
-				selectors = {"moduleHeading"},
-				color = "@fgStrong",
-				fontFace = "Inter",
-				fontSize = 18,
-				minFontSize = 14,
-				fontWeight = "light",
-				maxWidth = 230,
-				width = "auto",
-				halign = "left",
-				valign = "top",
-				height = 24,
-				wrap = false,
-				textOverflow = "truncate",
-			},
-			{
-				selectors = {"moduleHeadingDivider"},
-				bgcolor = "@border",
-				width = 240,
-				height = 1,
-				vmargin = 1,
-				halign = "left",
-			},
-			{
-				selectors = {"installCheck"},
-				hidden = 1,
-				bgcolor = "white",
-				width = 20,
-				height = 20,
-				hmargin = 6,
-				valign = "center",
-				bgimage = "ui-icons/module-checkmark.png",
-			},
-			{
-				selectors = {"installCheck", "installed"},
-				hidden = 0,
-			},
-			{
-				selectors = {"moduleAuthor"},
-				color = "@fgMuted",
-				fontSize = 12,
-				width = "auto",
-				maxWidth = 160,
-				height = 14,
-				halign = "right",
-				valign = "bottom",
-				italics = true,
-				wrap = false,
-				textOverflow = "ellipsis",
-			},
-			{
-				selectors = {"moduleIcon"},
-				bgcolor = "white",
-				width = "auto",
-				height = "auto",
-				maxWidth = 92,
-				maxHeight = 92,
-				cornerRadius = 2,
-				valign = "center",
-				halign = "center",
-			},
-			{
-				selectors = {"moduleDetails"},
-				color = "@fg",
-				fontFace = "Inter",
-				fontSize = 12,
-				width = "auto",
-				height = "auto",
-				vmargin = 4,
-				maxWidth = 160,
-				maxHeight = 90,
-				halign = "left",
-				valign = "top",
-				textOverflow = "ellipsis",
-			},
+	-- Positional classes drive asymmetric corner rounding + adjacent-border
+	-- removal so the strip reads as a single pill bar rather than a row of
+	-- separate chips. "Purchased" and "Published Modules" can be collapsed,
+	-- so the visibly-last tab is computed from their visibility.
+	local hasPurchased = #module.GetOurPurchasedModules() > 0
+	local hasPublished = #module.GetOurPublishedModules() > 0
 
-			{
-				selectors = {"publishedLabel"},
-				hidden = 1,
-			},
-			{
-				selectors = {"publishedLabel", "published"},
-			--	hidden = 0,
-				color = "@fgStrong",
-				fontSize = 12,
-				halign = "right",
-				valign = "bottom",
-				width = "auto",
-				height = "auto",
-			},
-			{
-				selectors = {"installCountLabel"},
-				fontSize = 16,
-				minFontSize = 12,
-				color = "@fg",
-				width = "auto",
-				height = "auto",
-				valign = "center",
-				hmargin = 2,
-			},
+	--Patreon tab: shown to anyone with a linked Patreon account, not merely to
+	--those who currently have modules through it. A patron whose creators have
+	--not included anything yet should still see where it will appear, and the
+	--tab's own empty state says so. pcall because an older engine build has no
+	--such property. The hidden "patreonsub" preference gates the whole
+	--in-development feature, so the tab stays hidden until it is turned on.
+	local hasPatreon = false
+	if dmhub.GetSettingValue("patreonsub") then
+		pcall(function()
+			hasPatreon = dmhub.patreonUserId ~= nil and dmhub.patreonUserId ~= ""
+		end)
+	end
 
-			{
-				selectors = {"installCountIcon"},
-				width = 16,
-				height = 16,
-				bgcolor = "white",
-				bgimage = "ui-icons/downloadicon.png",
+	local lastVisibleTab
+	if hasPublished then
+		lastVisibleTab = "published"
+	elseif hasPatreon then
+		lastVisibleTab = "patreon"
+	elseif hasPurchased then
+		lastVisibleTab = "purchased"
+	else
+		lastVisibleTab = "installed"
+	end
 
-			},
-
-			{
-				selectors = {"upvoteCountIcon"},
-				width = 16,
-				height = 16,
-				bgcolor = "white",
-				bgimage = "ui-icons/heartunclicked.png",
-
-			},
-
-			{
-				selectors = {"upvoteCountIcon", "upvoted"},
-				bgimage = "ui-icons/heartclicked.png",
-			},
-
-			{
-				selectors = {"installCountPanel"},
-				width = "auto",
-				height = "auto",
-				flow = "horizontal",
-			},
-
-			{
-				selectors = {"pagingArrow"},
-				bgimage = "panels/InventoryArrow.png",
-				bgcolor = "white",
-				height = 40,
-				width = 20,
-				hmargin = 4,
-				halign = "center",
-			},
-
-			{
-				selectors = {"pagingArrow", "hover"},
-				brightness = 1.5,
-			},
-
-	}
+	local TabPosition = function(tab)
+		if tab == "hot" then
+			return "firstOption"
+		elseif tab == lastVisibleTab then
+			return "lastOption"
+		else
+			return "middleOption"
+		end
+	end
 
 	moduleDisplayPanel = gui.Panel{
 		classes = {"collapsed"},
@@ -4117,9 +6582,12 @@ mod.shared.ShowDownloadShareDialog = function()
 
 		styles = ThemeEngine.MergeTokens(moduleDisplayCustomStyles),
 
-		gui.Input{
+		--the canonical search field; look comes from DefaultStyles'
+		--searchInput rules.
+		gui.SearchInput{
 			valign = "top",
 			vmargin = 20,
+			borderBox = true,
 			placeholderText = "Search for modules...",
 			editlag = 0.3,
 			edit = function(element)
@@ -4138,10 +6606,10 @@ mod.shared.ShowDownloadShareDialog = function()
 		},
 
 		gui.Panel{
-			styles = Styles.AdvantageBar,
-			classes = {"advantage-bar"},
+			classes = {"enumSlider"},
 			valign = "top",
 			width = "auto",
+			height = 28,
 
 			select = function(element, childSelected)
 				local children = element.children
@@ -4155,8 +6623,10 @@ mod.shared.ShowDownloadShareDialog = function()
 			end,
 
 			gui.Label{
-				classes = {"advantage-element", "selected"},
+				classes = {"enumSliderOption", TabPosition("hot"), "selected"},
 				text = "Hot",
+				width = "auto",
+				hpad = 14,
 				data = {
 					tab = "hot",
 				},
@@ -4168,8 +6638,10 @@ mod.shared.ShowDownloadShareDialog = function()
 
 
 			gui.Label{
-				classes = {"advantage-element"},
+				classes = {"enumSliderOption", TabPosition("new")},
 				text = "New",
+				width = "auto",
+				hpad = 14,
 				data = {
 					tab = "new",
 				},
@@ -4180,8 +6652,10 @@ mod.shared.ShowDownloadShareDialog = function()
 			},
 
 			gui.Label{
-				classes = {"advantage-element"},
+				classes = {"enumSliderOption", TabPosition("best")},
 				text = "Best",
+				width = "auto",
+				hpad = 14,
 				data = {
 					tab = "best",
 				},
@@ -4192,8 +6666,10 @@ mod.shared.ShowDownloadShareDialog = function()
 			},
 
 			gui.Label{
-				classes = {"advantage-element"},
+				classes = {"enumSliderOption", TabPosition("installed")},
 				text = "Installed",
+				width = "auto",
+				hpad = 14,
 				data = {
 					tab = "installed",
 				},
@@ -4203,8 +6679,10 @@ mod.shared.ShowDownloadShareDialog = function()
 				end,
 			},
 			gui.Label{
-				classes = {"advantage-element", cond(#module.GetOurPurchasedModules() == 0, "collapsed")},
+				classes = {"enumSliderOption", TabPosition("purchased"), cond(not hasPurchased, "collapsed")},
 				text = "Purchased",
+				width = "auto",
+				hpad = 14,
 				data = {
 					tab = "purchased",
 				},
@@ -4214,8 +6692,23 @@ mod.shared.ShowDownloadShareDialog = function()
 				end,
 			},
 			gui.Label{
-				classes = {"advantage-element", cond(#module.GetOurPublishedModules() == 0, "collapsed")},
+				classes = {"enumSliderOption", TabPosition("patreon"), cond(not hasPatreon, "collapsed")},
+				text = "Patreon",
+				width = "auto",
+				hpad = 14,
+				data = {
+					tab = "patreon",
+				},
+
+				press = function(element)
+					element.parent:FireEvent("select", element)
+				end,
+			},
+			gui.Label{
+				classes = {"enumSliderOption", TabPosition("published"), cond(not hasPublished, "collapsed")},
 				text = "Published Modules",
+				width = "auto",
+				hpad = 14,
 				data = {
 					tab = "published",
 				},
@@ -4232,21 +6725,20 @@ mod.shared.ShowDownloadShareDialog = function()
 	}
 
 
-    local aspectRatio = dmhub.screenDimensions.x/dmhub.screenDimensions.y
+    local aspectRatio = dmhub.screenDimensionsBelowTitlebar.x/dmhub.screenDimensionsBelowTitlebar.y
 
 
-	--Layout stays local; the theme provides the dialog frame and colors.
 	local dialogCustomStyles = {
 		{
 			selectors = {'framedPanel'},
-			width = 1080*aspectRatio,
-			height = 1080,
+			width = (1080-32)*aspectRatio,
+			height = (1080-32),
 			flow = 'none',
 		},
 		{
 			selectors = {'center-panel'},
 			width = 1804,
-			height = 990,
+			height = (990-32),
 			halign = 'center',
 			valign = 'center',
 			flow = 'vertical',
@@ -4286,8 +6778,8 @@ mod.shared.ShowDownloadShareDialog = function()
 			moduleDisplayPanel,
 		},
 
-
-		gui.CloseButton{
+		gui.Button{
+            classes = {"closeButton"},
 			halign = "right",
 			valign = "top",
 			floating = true,
@@ -4303,14 +6795,12 @@ mod.shared.ShowDownloadShareDialog = function()
 
 	gui.ShowModal(dialogPanel)
 
-	--Re-resolve the token colors if the user switches theme or color scheme
-	--while the dialog is open.
 	ThemeEngine.OnThemeChanged(mod, function()
 		if dialogPanel ~= nil and dialogPanel.valid then
 			dialogPanel.styles = ThemeEngine.MergeStyles(dialogCustomStyles)
 		end
 		if moduleDisplayPanel ~= nil and moduleDisplayPanel.valid then
-			moduleDisplayPanel.styles = ThemeEngine.MergeTokens(moduleDisplayCustomStyles)
+			moduleDisplayPanel.styles = ThemeEngine.MergeTokens(moduleDisplayCustomStyles) --[[@as StyleArgs[] ]]
 		end
 	end)
 
@@ -4331,13 +6821,11 @@ mod.shared.ShowExportDialog = function()
 	local settingsContainer
 
 	local exportButton
-	exportButton = gui.PrettyButton{
+	exportButton = gui.Button{
+		classes = {"sizeL"},
 		text = 'Export Map',
-		width = 240,
-		height = 70,
 		halign = 'center',
 		valign = 'center',
-		fontSize = 28,
 		events = {
 			click = function(element)
 				if exportType == "image" then
@@ -4382,7 +6870,6 @@ mod.shared.ShowExportDialog = function()
 						complete = function()
 							settingsContainer.children = {
 								gui.Label{
-									fontSize = 14,
 									text = "Export Complete",
 									width = "auto",
 									height = "auto",
@@ -4408,159 +6895,13 @@ mod.shared.ShowExportDialog = function()
 		height = "auto",
 		flow = "horizontal",
 
+		--the tour is a seamless loop: a sweep across the map and back, fading floors
+		--from the top down and back up. duration is one full loop.
 		refreshTour = function(element)
 			MapExport:SetMapTourExport{
 				width = tourWidth,
 				height = tourHeight,
 				duration = duration,
-				startDuration = 2,
-				sheet = function()
-					return gui.Panel{
-						id = "exportHud",
-						--Styles.default never existed; this was always nil.
-						flow = "none",
-						width = 1920,
-						height = 1080,
-						gui.Panel{
-							bgimageAlpha = "panels/gamescreen/loadingscreen4.png",
-							width = "100%",
-							height = "100%",
-
-							styles = {
-								{
-									opacity = 0,
-								},
-								{
-									classes = {"open"},
-									bgimage = cond(game.currentMap.loadingScreenImage ~= nil, game.currentMap.loadingScreenImage, "panels/square.png"),
-									bgcolor = cond(game.currentMap.loadingScreenImage ~= nil, "white", "black"),
-									alphaThreshold = 1,
-									alphaThresholdFade = 0.1,
-									opacity = 1,
-								},
-								{
-									classes = {"endopen"},
-									bgcolor = cond(game.currentMap.loadingScreenImage ~= nil, "#ffffff00", "#00000000"),
-									alphaThreshold = -0.1,
-									transitionTime = 0.8,
-								},
-
-							},
-
-
-							thinkOpen = function(element, t)
-								element:SetClass("open", true)
-								element:SetClass("endopen", t >= 0.6)
-							end,
-							thinkClose = function(element)
-								element:SetClass("open", false)
-							end,
-							think = function(element)
-								element:SetClass("open", false)
-							end,
-
-
-						},
-
-						gui.Label{
-							id = "exportLabel",
-							halign = "center",
-							valign = "center",
-							fontSize = 96,
-							fontFace = "SellYourSoul",
-							text = game.currentMap.description,
-							width = "auto",
-							height = "auto",
-							styles = {
-								{
-									color = "#ffffffff",
-								},
-								{
-									classes = {"~shown"},
-									color = "#00000000",
-									transitionTime = 0.2,
-								},
-
-							},
-							thinkOpen = function(element, t)
-								element:SetClass("shown", t < 0.7)
-							end,
-							thinkClose = function(element)
-								element:SetClass("shown", false)
-							end,
-							think = function(element)
-								element:SetClass("shown", false)
-							end,
-						},
-
-
-
-						gui.Panel{
-							bgimage = "panels/square.png",
-							bgcolor = "black",
-							width = "100%",
-							height = "100%",
-
-							styles = {
-								{
-									opacity = 0,
-								},
-								{
-									classes = {"shown"},
-									transitionTime = 0.2,
-									opacity = 1,
-								}
-							},
-
-							thinkOpen = function(element, t)
-								element:SetClassTree("shown", false)
-							end,
-							thinkClose = function(element)
-								element:SetClassTree("shown", true)
-							end,
-							think = function(element)
-								element:SetClassTree("shown", false)
-							end,
-
-							gui.Panel{
-								width = "auto",
-								height = "auto",
-								flow = "vertical",
-								halign = "center",
-								valign = "center",
-								styles = {
-									{
-										opacity = 0,
-										color = "#ffffff00",
-									},
-									{
-										classes = {"shown"},
-										opacity = 1,
-										color = "white",
-										transitionTime = 0.2,
-									}
-
-								},
-								gui.Panel{
-									width = 768,
-									height = 768,
-									halign = "center",
-									bgimage = "panels/logo/DMHubLogo.png",
-									bgcolor = "white",
-								},
-								gui.Label{
-									fontFace = "cambria",
-									fontSize = 40,
-									width = "auto",
-									height = "auto",
-									halign = "center",
-									text = "www.dmhubapp.com",
-								}
-							}
-
-						},
-					}
-				end,
 			}
 		end,
 
@@ -4569,12 +6910,14 @@ mod.shared.ShowExportDialog = function()
 		},
 		gui.Input{
 			width = 100,
+			hmargin = 8,
 			text = tostring(tourWidth),
 			change = function(element)
-				if tonumber(element.text) == nil then
+				local n = tonumber(element.text)
+				if n == nil then
 					element.text = tostring(tourWidth)
 				else
-					tourWidth = math.floor(tonumber(element.text))
+					tourWidth = math.floor(n)
 				end
 
 				tourSettingsPanel:FireEvent("refreshTour")
@@ -4586,12 +6929,14 @@ mod.shared.ShowExportDialog = function()
 		},
 		gui.Input{
 			width = 100,
+			hmargin = 8,
 			text = tostring(tourHeight),
 			change = function(element)
-				if tonumber(element.text) == nil then
+				local n = tonumber(element.text)
+				if n == nil then
 					element.text = tostring(tourHeight)
 				else
-					tourHeight = math.floor(tonumber(element.text))
+					tourHeight = math.floor(n)
 				end
 
 				tourSettingsPanel:FireEvent("refreshTour")
@@ -4611,6 +6956,8 @@ mod.shared.ShowExportDialog = function()
 
 		gui.Dropdown{
 			idChosen = hz,
+			width = 200,
+			hmargin = 8,
 			options = {
 				{
 					id = "60",
@@ -4622,7 +6969,8 @@ mod.shared.ShowExportDialog = function()
 				},
 			},
 			change = function(element)
-				hz = element.idChosen
+				---@cast element Dropdown
+				hz = element.idChosen --[[@as string]]
 			end,
 
 		},
@@ -4632,9 +6980,10 @@ mod.shared.ShowExportDialog = function()
 		},
 
 		gui.Input{
+			classes = {"sizeS"},
+			hmargin = 8,
 			width = 40,
 			height = 22,
-			fontSize = 18,
 			text = tostring(duration),
 			change = function(element)
 				local val = tonumber(element.text)
@@ -4652,8 +7001,6 @@ mod.shared.ShowExportDialog = function()
 			text = "seconds",
 			width = "auto",
 			height = "auto",
-			color = "white",
-			fontSize = 18,
 		},
 	}
 
@@ -4661,17 +7008,17 @@ mod.shared.ShowExportDialog = function()
 		width = "auto",
 		height = "auto",
 		flow = "horizontal",
+		tmargin = 8,
 		gui.Label{
 			text = "Pixels-per-tile:",
 			width = 'auto',
 			height = 'auto',
-			color = 'white',
-			fontSize = 18,
 		},
 		gui.Input{
+			classes = {"sizeS"},
 			width = 40,
 			height = 22,
-			fontSize = 18,
+			lmargin = 8,
 			text = tostring(MapExport.ppu),
 			change = function(element)
 				MapExport.ppu = tonumber(element.text)
@@ -4684,16 +7031,17 @@ mod.shared.ShowExportDialog = function()
 		width = "auto",
 		height = "auto",
 		flow = "horizontal",
+		tmargin = 20,
 		gui.Label{
 			text = "Export Type:",
 			width = 'auto',
 			height = 'auto',
-			color = 'white',
-			fontSize = 18,
 		},
 
 		gui.Dropdown{
 			idChosen = exportType,
+			lmargin = 8,
+			width = 200,
 			options = {
 				{
 					id = "image",
@@ -4710,7 +7058,8 @@ mod.shared.ShowExportDialog = function()
 				},
 			},
 			change = function(element)
-				exportType = element.idChosen
+				---@cast element Dropdown
+				exportType = element.idChosen --[[@as string]]
 				if exportType == "tour" then
 					tourSettingsPanel:FireEvent("refreshTour")
 				else
@@ -4746,6 +7095,7 @@ mod.shared.ShowExportDialog = function()
 
 	local previewImage
 	previewImage = gui.Panel{
+		classes = {"bordered"},
 		bgimage = '#MapExport',
 		autosizeimage = true,
 		maxWidth = 600,
@@ -4755,8 +7105,6 @@ mod.shared.ShowExportDialog = function()
 		halign = "center",
 		valign = "center",
 		bgcolor = "white",
-		borderWidth = 2,
-		borderColor = "black",
 	}
 
 	local previewImageContainer = gui.Panel{
@@ -4772,17 +7120,6 @@ mod.shared.ShowExportDialog = function()
 		height = "auto",
 		flow = "vertical",
 
-		styles = {
-			{
-				selectors = {"label"},
-				color = "white",
-				fontSize = 18,
-				width = "auto",
-				height = "auto",
-			}
-
-		},
-
 		exportTypePanel,
 		videoSettingsPanel,
 		tourSettingsPanel,
@@ -4792,110 +7129,21 @@ mod.shared.ShowExportDialog = function()
 
 	}
 
-	--Layout stays local; colors come from the scheme. The modal-button-panel
-	--rule used to come from Styles.Panel, so it rides along here now.
-	local dialogCustomStyles = {
-			{
-				selectors = {'framedPanel'},
-				width = 1000,
-				height = 900,
-				flow = 'none',
-			},
-			{
-				selectors = {'content-panel'},
-				width = '90%',
-				height = '80%',
-				valign = 'top',
-				halign = 'center',
-				flow = 'vertical',
-				vmargin = 20,
-			},
-			{
-				selectors = {'form-entry'},
-				width = '60%',
-				height = 40,
-				valign = 'top',
-				halign = 'center',
-				flow = 'horizontal',
-				vmargin = 8,
-			},
-			{
-				selectors = {'formLabel'},
-				width = '40%',
-				height = 40,
-				fontSize = 18,
-				color = '@fgStrong',
-			},
-			{
-				selectors = {'dropdown'},
-				width = 200,
-				height = 40,
-				fontSize = 18,
-				color = '@fgStrong',
-			},
-			{
-				selectors = {'dropdown-option'},
-				priority = 20,
-				width = 200,
-				height = 40,
-				fontSize = 18,
-				color = '@fgStrong',
-			},
-			{
-				selectors = {'input'},
-				fontSize = 18,
-				width = 200,
-				height = 24,
-			},
-			{
-				selectors = {'share-input'},
-				textAlignment = 'left',
-				width = 400,
-				height = 24,
-				fontSize = 20,
-			},
-			{
-				selectors = {'description-input'},
-				textAlignment = 'topleft',
-				valign = 'top',
-				width = '60%',
-				height = 100,
-				vmargin = 8,
-			},
-			{
-				selectors = {'status-label'},
-				fontSize = 20,
-				width = 'auto',
-				height = 'auto',
-				valign = 'center',
-				halign = 'center',
-				maxWidth = 400,
-				color = '@fgStrong',
-			},
-			{
-				selectors = {'share-panel'},
-				flow = 'vertical',
-				height = 'auto',
-				width = '100%',
-			},
-			{
-				selectors = {'modal-button-panel'},
-				priority = 10,
-				width = '100%-50',
-				height = 100,
-				valign = 'bottom',
-				halign = 'center',
-				flow = 'horizontal',
-			},
-	}
-
 	local dialogPanel = gui.Panel{
 		id = 'ShareDialog',
 		classes = {'framedPanel'},
-		styles = ThemeEngine.MergeStyles(dialogCustomStyles),
+		styles = ThemeEngine.GetStyles(),
+		width = 1000,
+		height = 900,
+		flow = 'none',
 
 		gui.Panel{
-			classes = {'content-panel'},
+			width = '90%',
+			height = '80%',
+			valign = 'top',
+			halign = 'center',
+			flow = 'vertical',
+			vmargin = 20,
 
 			previewImageContainer,
 			settingsContainer,
@@ -4903,14 +7151,17 @@ mod.shared.ShowExportDialog = function()
 		},
 
 		gui.Panel{
-			classes = {'modal-button-panel'},
+			width = '100%-50',
+			height = 100,
+			valign = 'bottom',
+			halign = 'center',
+			flow = 'horizontal',
 
-			gui.PrettyButton{
+			gui.Button{
+				classes = {"sizeM"},
 				text = 'Close',
 				escapeActivates = true,
 				escapePriority = EscapePriority.EXIT_DIALOG,
-				width = 140,
-				height = 60,
 				halign = 'right',
 				events = {
 					click = function(element)
@@ -4924,15 +7175,245 @@ mod.shared.ShowExportDialog = function()
 	}
 
 	gui.ShowModal(dialogPanel)
-
-	--Re-resolve the token colors if the user switches theme while open.
-	ThemeEngine.OnThemeChanged(mod, function()
-		if dialogPanel ~= nil and dialogPanel.valid then
-			dialogPanel.styles = ThemeEngine.MergeStyles(dialogCustomStyles)
-		end
-	end)
 end
 
+
+--- Publish Encounter Update ---------------------------------------------------
+--One-click republish for Encounter of the Week authors (Codex menu). Finds the
+--Encounter of the Week module published from this game and runs the publish
+--dialog in its autoPublish mode: every encounter map, the script documents
+--and everything they need are ticked, and a new version goes up with the
+--module's existing listing, cover and author. With no such module yet it
+--offers a first publish: the same content selection on a new Unlisted
+--Encounter of the Week module, stopping on the page where the author picks
+--its id and (if they have none yet) their author name.
+
+--A small modal for the steps before the publish dialog takes over. Returns
+--setText(text) and setButtons({ {text, click}, ... }); valid() is false once
+--the author closed it, so a late download does not reopen anything.
+local ShowQuickPublishNotice = function()
+	local label = gui.Label{
+		classes = {"sizeM"},
+		width = "100%",
+		height = "auto",
+		textAlignment = "center",
+		textWrap = true,
+		text = "",
+	}
+
+	local buttonRow = gui.Panel{
+		width = "100%",
+		height = "auto",
+		flow = "vertical",
+		halign = "center",
+		tmargin = 16,
+	}
+
+	local panel = gui.Panel{
+		classes = {"framedPanel"},
+		styles = ThemeEngine.GetStyles(),
+		width = 560,
+		height = "auto",
+		pad = 24,
+		borderBox = true,
+		flow = "vertical",
+
+		gui.Label{
+			classes = {"sizeXl", "bold"},
+			width = "100%",
+			height = "auto",
+			textAlignment = "center",
+			bmargin = 12,
+			text = "Publish Encounter Update",
+		},
+		label,
+		buttonRow,
+
+		gui.Button{
+			classes = {"closeButton"},
+			halign = "right",
+			valign = "top",
+			floating = true,
+			escapeActivates = true,
+			escapePriority = EscapePriority.EXIT_DIALOG,
+			click = function(element)
+				gui.CloseModal()
+			end,
+		},
+	}
+
+	gui.ShowModal(panel)
+
+	return {
+		valid = function()
+			return panel.valid
+		end,
+		setText = function(text)
+			label.text = text
+		end,
+		setButtons = function(buttons)
+			local children = {}
+			for _,b in ipairs(buttons) do
+				children[#children+1] = gui.Button{
+					classes = {"sizeM"},
+					width = 320,
+					halign = "center",
+					vmargin = 4,
+					text = b.text,
+					click = b.click,
+				}
+			end
+			buttonRow.children = children
+		end,
+	}
+end
+
+mod.shared.QuickPublishEncounters = function()
+	local notice = ShowQuickPublishNotice()
+	notice.setText("Looking for this game's Encounter of the Week module...")
+
+	local ShowNoModule = function()
+		notice.setText("No Encounter of the Week module has been published from this game yet. Create one now: its encounter maps and script documents are selected for you, then you choose its module ID (and an author name, if you don't have one yet). After that, Publish Encounter Update republishes it in one step.")
+		notice.setButtons{
+			{
+				text = "Create Encounter Module...",
+				click = function()
+					gui.CloseModal()
+					showShareModuleDialog{
+						moduleType = "eotw",
+						listing = "eotwunlisted",
+						autoPublish = { firstPublish = true },
+					}
+				end,
+			},
+			{
+				text = "Choose Another Module...",
+				click = function()
+					gui.CloseModal()
+					mod.shared.ShowShareDialog()
+				end,
+			},
+		}
+	end
+
+	--found: every live eotw module of this game, sorted by id.
+	local Publish = function(target, found)
+		if target.deprecated then
+			notice.setText(string.format("%s is deprecated, so it can no longer be updated.", target.fullid))
+			notice.setButtons{}
+			return
+		end
+
+		--maps another of this game's encounter modules ships stay out of this one.
+		local exclude = {}
+		for _,other in ipairs(found) do
+			if other.fullid ~= target.fullid then
+				local included = nil
+				pcall(function() included = other.publishingProperties.includedAssets end)
+				for guid,_ in pairs(included or {}) do
+					exclude[guid] = true
+				end
+			end
+		end
+
+		dmhub.SetSettingValue("module:lastpublished", target.fullid)
+		gui.CloseModal()
+		showShareModuleDialog{
+			moduleid = target.fullid,
+			moduleInfo = target,
+			autoPublish = { excludeAssets = exclude },
+		}
+	end
+
+	local ids = {}
+	for _,info in ipairs(module.GetModulesPublishedFromThisGame()) do
+		if info.id ~= nil and info.id ~= "" then
+			ids[#ids+1] = info.id
+		end
+	end
+
+	if #ids == 0 then
+		ShowNoModule()
+		return
+	end
+
+	local found = {}
+	local remaining = #ids
+	local Finish = function()
+		remaining = remaining - 1
+		if remaining > 0 or not notice.valid() then
+			return
+		end
+
+		table.sort(found, function(a, b) return a.fullid < b.fullid end)
+		if #found == 0 then
+			ShowNoModule()
+			return
+		end
+
+		if #found == 1 then
+			Publish(found[1], found)
+			return
+		end
+
+		--several: the one shipping the current map, if exactly one does.
+		local holding = {}
+		for _,info in ipairs(found) do
+			local included = nil
+			pcall(function() included = info.publishingProperties.includedAssets end)
+			if included ~= nil and included[game.currentMapId] then
+				holding[#holding+1] = info
+			end
+		end
+		if #holding == 1 then
+			Publish(holding[1], found)
+			return
+		end
+
+		notice.setText("This game has published several Encounter of the Week modules. Which one should be updated?")
+		local buttons = {}
+		for _,info in ipairs(found) do
+			buttons[#buttons+1] = {
+				text = string.format("%s (%s)", info.name or info.fullid, info.fullid),
+				click = function()
+					Publish(info, found)
+				end,
+			}
+		end
+		notice.setButtons(buttons)
+	end
+
+	for _,id in ipairs(ids) do
+		module.DownloadModuleInfo{
+			moduleid = id,
+			success = function(info)
+				if info ~= nil and info.moduleType == "eotw" and not info.deleted then
+					found[#found+1] = info
+				end
+				Finish()
+			end,
+			failure = function(msg)
+				printf("Publish Encounter Update: could not fetch module %s: %s", tostring(id), tostring(msg))
+				Finish()
+			end,
+		}
+	end
+end
+
+Commands.quickpublishencounters = mod.shared.QuickPublishEncounters
+Commands.Register{
+	name = "Publish Encounter Update",
+	group = "share",
+	command = "quickpublishencounters",
+	ord = 4,
+	dmonly = true,
+	--only in an authoring game: EotW on and its code loaded here.
+	filtered = function()
+		local enabled = false
+		pcall(function() enabled = dmhub.GetSettingValue("dev:encounteroftheweek") == true end)
+		return not (enabled and rawget(_G, "EncounterMontage") ~= nil)
+	end,
+}
 
 Commands.downloadcontent = mod.shared.ShowDownloadShareDialog
 Commands.Register{
@@ -4954,9 +7435,18 @@ Commands.Register{
 
 Commands.sharecontent = mod.shared.ShowShareDialog
 Commands.Register{
-	name = "Publish Module...",
+	name = "Create Module...",
 	group = "share",
 	command = "sharecontent",
 	ord = 2,
 	dmonly = true,
 }
+
+--Populated here, at the bottom, because ShowDownloadShareDialog is assigned
+--partway down the file and both entry points must exist before anything in
+--another mod reaches for them.
+ModuleBrowser.CreateModuleSlot = CreateModuleDisplaySlot
+ModuleBrowser.ShowDialog = mod.shared.ShowDownloadShareDialog
+--the card rules a slot needs; apply with ThemeEngine.MergeTokens on whatever
+--panel is hosting the slots.
+ModuleBrowser.moduleStyles = moduleDisplayCustomStyles

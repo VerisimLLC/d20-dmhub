@@ -12,7 +12,7 @@ Interactive = {
 
         local id = string.format("%s.%s", modid, args.id)
 
-        g_interactives = args
+        g_interactives[id] = args
     end,
 
 }
@@ -28,7 +28,7 @@ dmhub.GetObjectInteractives = function()
         }
     end
 
-    table.sort(result, function(a,b) return a.name < b.name end)
+    table.sort(result, function(a,b) return a.text < b.text end)
     return result
 end
 
@@ -76,7 +76,7 @@ dmhub.ShowObjectInteractive = function(objid, interactiveid)
     end
 
     local CreateView = function()
-        local fn = info[mode]
+        local fn = info[currentMode]
         if fn == nil then
             return nil
         end
@@ -101,7 +101,7 @@ dmhub.ShowObjectInteractive = function(objid, interactiveid)
 
     local parentPanel = gui.Panel{
         width = "100%",
-        height = "!00%",
+        height = "100%",
         bgimage = "panels/square.png",
         bgcolor = "#000000f2",
         styles = {
@@ -113,7 +113,7 @@ dmhub.ShowObjectInteractive = function(objid, interactiveid)
         },
 
         press = function(element)
-            self:CloseModal()
+            gui.CloseModal()
         end,
 
         escapeActivates = true,
@@ -123,4 +123,50 @@ dmhub.ShowObjectInteractive = function(objid, interactiveid)
     }
 
     return parentPanel
+end
+
+--A map teleporter that leads to more than one place (several teleporters share its link
+--name, e.g. one stairwell serving three floors) asks where to go, then sends the tokens
+--there with dmhub.UseTeleporter. Returning false lets the engine send them to the first.
+dmhub.ChooseTeleporterDestination = function(info)
+    if gamehud == nil or info == nil or info.destinations == nil or #info.destinations == 0 then
+        return false
+    end
+
+    local dialog
+
+    local destinationButtons = {}
+    for _,dest in ipairs(info.destinations) do
+        destinationButtons[#destinationButtons+1] = gui.Button{
+            classes = {"sizeL"},
+            width = 360,
+            halign = "center",
+            vmargin = 4,
+            text = dest.label,
+            click = function(element)
+                dmhub.UseTeleporter{
+                    floorid = info.floorid,
+                    objid = info.objid,
+                    tokens = info.tokens,
+                    destination = dest.id,
+                }
+                if dialog ~= nil and dialog.valid then
+                    dialog:FireEvent("close")
+                end
+            end,
+        }
+    end
+
+    dialog = gamehud:ModalDialog{
+        title = cond(info.stairwell, "Which Floor?", "Where To?"),
+        width = 520,
+        height = 170 + 50 * #destinationButtons,
+        flow = "vertical",
+        buttons = {
+            { text = "Stay Here", escapeActivates = true },
+        },
+        children = destinationButtons,
+    }
+
+    return true
 end
