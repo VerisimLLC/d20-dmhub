@@ -544,7 +544,7 @@ Out of scope for the YAML-only start. Every one of these must be gated on the D4
 | 7.23 | An Unarmed Strike counts as one attack of the Attack action / Extra Attack | Not modelled. | Separate action |
 | 7.24 | Bugs, not 2024 rules (affect 5e too): `WeaponProperty.Get` returns the code builtin before the table record, so property `details` text never shows in tooltips (`Equipment.lua` ~788); the GoblinScript `size` symbol calls `creature:GetBaseCreatureSizeNumber()` on the class instead of `c` (`Creature.lua:6292`), so off-map creatures read size 0; the sheet's DC column ignores a behavior's `dcvalue` (Hide shows DC 10, rolls against 15). | | |
 
-Decision for you: Insight and Investigation keep `hasPassive: true` from SRD 5.1. SRD 5.2.1 defines only Passive Perception (p. 185). Removing the flags changes the sheet, so they were left.
+Decided (user, 2026-11-12): Insight and Investigation no longer have passive scores in 5.5e; SRD 5.2.1 defines only Passive Perception (p. 186). Data-only change in `dmhub-dnd2024`, 5e unchanged.
 
 To check, not yet known to need code: whether Thaumaturge's bonus to Arcana/Religion (a d20 roll modifier) is applied when the check is rolled (the sheet's static skill bonus leaves it out), and whether Turn Undead's "ends early if it takes damage" can be expressed on the effect.
 
