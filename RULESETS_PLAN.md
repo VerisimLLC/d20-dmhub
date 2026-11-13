@@ -461,6 +461,8 @@ Original plan:
 
 **Engine fix:** a new table folder now gets its id from `_meta.yaml` or the items' `_table` (`LocalAssetDirectory.ResolveTableIdFromFolder`). Committed in `C:\dev\dmhub` as `4d095a90e`, not pushed; tested in a DMHub dev build from `C:\dev\d20-dmhub`, which has the same change uncommitted.
 
+**Phase 6, round 1 (2026-11-12).** Six agents in parallel, then backgrounds once the feat ids existed; every batch reviewed, spot-checked in the authoring game and committed separately in `dmhub-dnd2024`: spells 4-5 (`347f3bb`), feats and the 2024 ASI/Fighting Style prefabs (`bdc4b13`), species with lineages as subraces (`658425a`), spells 6-9 (`515f2b3`), spells 2-3 (`c00f5d1`), backgrounds (`35b902b`), spells 0-1 (`ec96c57`), spell lists and checker spell references (`c8ba0ba`). All 339 spells, 17 feats, 4 backgrounds and 9 species are authored. Insight and Investigation lost their 5.1 passive scores (`238363d`). **Coverage:** 1,403 entries; 14 tested, 553 authored, 836 todo (remaining: classes 247 entries, magic items 258, monsters 235, animals 95).
+
 **Gotchas found** (also in the repo README):
 - **A new table folder could register under its folder name** (fixed by `4d095a90e`) (`spelllists`, `tbl-gear`) instead of its `_meta.yaml` id when the hot-reload watcher sees the folder before the `_meta`. A game reload fixes it. Worth an engine fix (C#, commit from `C:\dev\dmhub`).
 - The 5e Lua seeds the nine standard weapon properties into an empty game, and Local Assets writes them out without a `_meta.yaml`. Their ids (`ammo`, `finesse`, ...) are read by code, so they were kept.
@@ -545,6 +547,86 @@ Out of scope for the YAML-only start. Every one of these must be gated on the D4
 | 7.24 | Bugs, not 2024 rules (affect 5e too): `WeaponProperty.Get` returns the code builtin before the table record, so property `details` text never shows in tooltips (`Equipment.lua` ~788); the GoblinScript `size` symbol calls `creature:GetBaseCreatureSizeNumber()` on the class instead of `c` (`Creature.lua:6292`), so off-map creatures read size 0; the sheet's DC column ignores a behavior's `dcvalue` (Hide shows DC 10, rolls against 15). | | |
 
 Decided (user, 2026-11-12): Insight and Investigation no longer have passive scores in 5.5e; SRD 5.2.1 defines only Passive Perception (p. 186). Data-only change in `dmhub-dnd2024`, 5e unchanged.
+
+**Found in Phase 6, round 1 (spells, feats, species, backgrounds; 2026-11-12).** Grouped by the batch that found them; several recur across batches (lingering areas, repeat saves, effects ending on damage, "creatures of your choice"), which makes them the highest-value code work. Page numbers are SRD 5.2.1.
+
+#### Spells 4-5 (347f3bb)
+- Lingering/moving areas: save/damage on enter, end turn in, or moved into (Black Tentacles p.113, Cloudkill p.116, Insect Plague p.143, Wall of Fire p.172, Conjure Woodland Beings p.118, Guardian of Faith p.137, Conjure Elemental p.118)
+- Repeat save that deals damage on failure; effect triggers can't read the caster's spell save DC (Phantasmal Killer p.152, Conjure Elemental p.118); counting successes/failures (Contagion p.119)
+- Saves repeated when damaged / effects ending on damage (Dominate Beast p.125, Dominate Person p.126, Charm Monster p.114, Modify Memory p.150)
+- Advantage on the save if you or allies are fighting it (Charm Monster, Dominate Beast/Person, Modify Memory)
+- Unlimited "each creature of your choice" targeting; "up to six in a sphere" (Compulsion p.117, Mass Cure Wounds p.147)
+- Upcast growing area (Confusion p.117, Private Sanctum p.156, Creation p.121) or duration (Dominate, Geas p.135, Planar Binding p.152, Modify Memory)
+- Reusing a spell's action on later turns without a slot (Arcane Hand p.110, Telekinesis p.167, Compulsion, Control Water p.119, Arcane Eye p.110)
+- Long-rest timing: penalty -1 per Long Rest (Raise Dead p.157); "until you finish a Long Rest" (Contact Other Plane p.119)
+- Invisibility ending on attack/damage/spell (Mislead p.150)
+- Condition immunity against magical sources only (Freedom of Movement p.134)
+- Remove one Exhaustion level / curse / ability or HP-max reduction (Greater Restoration p.137)
+- HP max can't be reduced; ally at 0 HP regains 1 at turn start (Aura of Life p.111)
+
+#### Feats
+- Ability score caps (20; 30 for boons) not enforced (p. 87-88)
+- Repeatable feats: CharacterFeatChoice marks every feat unique; a feat's inner choices are keyed by fixed guid (p. 87)
+- Per-die damage minimum (Great Weapon Fighting p. 88); roll damage twice keep either (Savage Attacker p. 87)
+- "Grappled by you" symbol (Grappler p. 87); ignore Resistance (Boon of Irresistible Offense p. 88); light-level conditions (Night Spirit p. 88)
+- Prerequisite "has Fighting Style / Spellcasting feature" not expressible (p. 87-88)
+
+#### Species
+- Breath Weapon replaces one attack of the Attack action (Dragonborn p. 84) -- same as 7.14
+- Innate species spells can't also be cast with spell slots (usesSpellSlots false) (Elf p. 84, Gnome p. 85, Tiefling p. 86)
+- Heroic Inspiration granted on a Long Rest (Human Resourceful p. 86)
+- Powerful Build: carrying capacity multiply, Advantage on checks to end Grappled (Goliath p. 86)
+- Trance: sleep immunity, 4-hour Long Rest (Elf p. 84); Halfling Nimbleness (p. 86)
+- Goliath boons "after you hit": no on-hit trigger that doesn't loop on its own damage (p. 85)
+- Checker: validate the `spell` key of innate spell modifiers (TODO in check.py)
+
+#### Spells 6-9 (see commit message)
+- Repeat save only on an apply-effect behavior with its own first save (Sunburst p.167, Weird p.174, Power Word Stun p.154); three-successes counting (Flesh to Stone p.133, Prismatic Spray p.154, Prismatic Wall p.155); repeat on damage (Dominate Monster p.125); end-with-action save uses fixed DC (Irresistible Dance p.143)
+- Duration not GoblinScript, so not slot-dependent (Mass Suggestion p.148, Dominate Monster p.125)
+- Walls/persistent zones (Blade Barrier p.113, Wall of Ice p.172, Wall of Thorns p.173, Incendiary Cloud p.142, Earthquake p.127, Storm of Vengeance p.165, Tsunami p.171)
+- Several areas per cast (Meteor Swarm p.149); per-target random table (Prismatic Spray p.154); delayed detonation (Delayed Blast Fireball p.122)
+- "Dies" only sets HP 0 (Power Word Kill p.154, Divine Word p.125); "can't cast spells" (Befuddlement p.112)
+- Spell-level immunity, antimagic (Globe of Invulnerability p.136, Antimagic Field p.109); aura retaliation save (Holy Aura p.141); HP max floor 1 (Harm p.139)
+- Re-trigger/move a spell effect on later turns (Arcane Sword, Conjure Fey, Sunbeam, Conjure Celestial, Eyebite)
+
+#### Spells 2-3
+- DATA TODO: lingering areas need map objects (ActivatedAbilityAuraBehavior needs objectid); dmhub-dnd5e/objects has 8 -- consider copying the aura objects (Darkness p.122, Daylight p.122, Web p.174, Spike Growth p.164, Sleet Storm p.163, Stinking Cloud p.165, Flaming Sphere p.132, Wind Wall p.174, Plant Growth p.153, Magic Circle p.145, Tiny Hut p.169, Moonbeam p.150)
+- Aura triggers only on enter: no start/end-of-turn-in-area, no once-per-turn (Moonbeam, Spirit Guardians p.164, Web, Sleet Storm, Stinking Cloud, Conjure Animals p.117, Gust of Wind p.138)
+- Effect-granted abilities don't carry caster's DC/upcast (Spirit Guardians p.164, Dragon's Breath p.126)
+- Repeatable action tied to an active spell (Flame Blade p.132, Vampiric Touch p.171, Call Lightning p.114, Heat Metal p.139, Moonbeam, Detect Thoughts p.123)
+- No walking-Speed symbol (Alter Self p.107, Spider Climb p.164)
+- Heal equal to damage dealt (Vampiric Touch); half damage on a miss (Acid Arrow p.107)
+- "Any number of creatures of your choice" (Enthrall p.128, Beacon of Hope p.112)
+- Save Disadvantage by creature type (Shatter p.161); "regains max from healing" (Beacon of Hope)
+- One endTrigger per effect; no spell-cast trigger (Invisibility p.143); no on-spell-end effect (Haste p.139)
+- Weapon enchantment (Magic Weapon p.146); action economy: extra limited action (Haste), no reactions/action-or-bonus (Slow p.163)
+- Save only for unwilling targets (Enlarge/Reduce p.127, Levitate p.144)
+- Counterspell p.120, Dispel Magic p.124, Revivify p.159 behaviors
+- Two casting times (Plant Growth p.153)
+
+#### Backgrounds
+- Soldier's equipment Gaming Set can't be tied to the Gaming Set chosen for the tool proficiency ("same as above", p. 83).
+
+#### Spells 0-1
+- Marker-only effects: can't regain HP (Chill Touch p.115), no Opportunity Attacks (Shocking Grasp p.162), no benefit from Invisible (Faerie Fire p.129, Starry Wisp p.165)
+- Light emitted by a spell or effect (Dancing Lights p.121, Produce Flame p.156)
+- Damage-dice triggers: exploding 8s (Sorcerous Burst p.163), doubles leap (Chromatic Orb p.115)
+- Smites as part of the hit, doubled on a Critical Hit (Divine Smite p.125, Searing Smite p.160, Ensnaring Strike p.128)
+- Start-of-turn save with no initial save (Searing Smite); two-stage save (Sleep p.163); save triggered by damage, with Advantage (Hideous Laughter p.140)
+- Escape by Strength (Athletics) check against the spell save DC (Ensnaring Strike, Entangle p.128); ends when you or allies damage it (Animal Friendship p.107, Charm Person p.115)
+- Secondary area centered on the target (Ice Knife p.141); forced Reaction movement (Dissonant Whispers p.124)
+- Hex/Hunter's Mark: upcast Concentration duration, moving the mark (p.140-141)
+- Caster-based recurring benefit on the target (Heroism p.140)
+- Weapon attacks with the spellcasting ability and a changed damage die (Shillelagh p.162, True Strike p.171)
+- Shield's +5 can't change the triggering hit; per-spell damage immunity (Magic Missile) (p.161)
+- Bug: `armorclasscalculation` filterCondition is never honored (`CharacterModifier.lua` ~1467 compares a boolean with 0)
+
+#### SRD inconsistency (not code)
+- Phantasmal Force's header lists Bard, Sorcerer and Wizard, and Mind Spike's lists Sorcerer, but the class spell-list tables (and the PDF) omit them. The module's lists follow the spell headers.
+
+#### Data still to add
+- Map objects for placed areas: the 5e module ships aura objects in `objects/`; copying them would let Darkness, Web, Spike Growth, Moonbeam and other placed areas work.
+- Goodberry item (Goodberry p.137); monsters for summons (Find Familiar, Find Steed, Animate Dead, Conjure spells).
 
 To check, not yet known to need code: whether Thaumaturge's bonus to Arcana/Religion (a d20 roll modifier) is applied when the check is rolled (the sheet's static skill bonus leaves it out), and whether Turn Undead's "ends early if it takes damage" can be expressed on the effect.
 
