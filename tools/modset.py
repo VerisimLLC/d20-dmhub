@@ -404,6 +404,7 @@ def cmd_checkin(spec, args):
     keys = args.only.split(",") if args.only else None
     engine = args.engine or lua("return dmhub.version")
     ids = [m["guid"] for m in spec["mods"] if (keys is None or m["key"] in keys)]
+    ensure_synced(ids)
     code = """
 local ids = dmhub.FromJson(IDS).result
 local pending = {}
