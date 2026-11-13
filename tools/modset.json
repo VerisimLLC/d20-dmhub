@@ -1,0 +1,964 @@
+{
+  "_doc": "DMHub's new CodeMod set (SHARED_UI_LAYER_PLAN.md in the engine repo). Read and written by tools/modset.py. 'root': 'codex' = a folder of the Draw Steel Codex checkout (mods/settings.json gitroots.codex), '' = this d20 repo. 'only' = the folder's files this mod registers (the folder is shared with a legacy mod); 'exclude' = folder files it does not register. 'order' = file load order; for codex mods it is the Codex cloud order (refresh with 'modset.py codex-order' against a running Codex). 'deps' = keys of other mods here. 'guid' is filled in by 'modset.py create'.",
+  "engineRepoCodex": "C:\\dev\\dmhub\\draw-steel-codex",
+  "mods": [
+    {
+      "key": "boot",
+      "name": "d20 Boot",
+      "root": "",
+      "folder": "DMHub Titlescreen",
+      "only": [
+        "D20Settings"
+      ],
+      "deps": [],
+      "guid": "2f1b5c44-380d-4ee5-a1fb-5652169dc775"
+    },
+    {
+      "key": "utils",
+      "name": "Core Utils",
+      "root": "codex",
+      "folder": "DMHub Utils",
+      "deps": [
+        "boot"
+      ],
+      "order": [
+        "Utils",
+        "UIText",
+        "CoroutineUtils",
+        "PrettyPrint",
+        "SourceReference",
+        "MarkdownRenderUtils",
+        "GoblinScript",
+        "TableCache",
+        "CompendiumReference",
+        "GoblinScriptProse"
+      ],
+      "guid": "1db8a898-b44a-4409-ba7c-dd464e9ed351"
+    },
+    {
+      "key": "coreui",
+      "name": "Core UI",
+      "root": "codex",
+      "folder": "DMHub Core UI",
+      "deps": [
+        "boot",
+        "utils"
+      ],
+      "exclude": [
+        "UISettings",
+        "Unused2"
+      ],
+      "order": [
+        "ThemeEngine",
+        "DefaultStyles",
+        "Dropdown",
+        "Gui",
+        "CommandBuilder",
+        "Hud",
+        "GuiUtils",
+        "CreatorCredit",
+        "MarkdownLabel",
+        "SetEditor",
+        "SettingsGui",
+        "Utils",
+        "ParticleValue",
+        "Scrollable",
+        "EnumeratedSliderControl",
+        "DockablePanel",
+        "MapToolArbiter",
+        "Multiselect",
+        "UISettings",
+        "IconEditor",
+        "FileDrops",
+        "ProgressDice",
+        "EnhIconButton",
+        "CharacterSelect",
+        "ActionButton",
+        "DialogResize",
+        "ThemeSettingsDialog",
+        "DialogShell",
+        "Unused2"
+      ],
+      "guid": "1d4a5591-cd3f-41e6-8e7e-6fa296e7d4fd"
+    },
+    {
+      "key": "title",
+      "name": "d20 Titlescreen",
+      "root": "",
+      "folder": "DMHub Titlescreen",
+      "only": [
+        "Styles",
+        "Titlescreen",
+        "D20GameSystems"
+      ],
+      "deps": [
+        "boot",
+        "utils",
+        "coreui"
+      ],
+      "order": [
+        "Styles",
+        "Titlescreen",
+        "D20GameSystems"
+      ],
+      "guid": "2a2b6013-92f3-47cd-a9f3-5a025506bccb"
+    },
+    {
+      "key": "corepanels",
+      "name": "Core Panels",
+      "root": "codex",
+      "folder": "DMHub Core Panels",
+      "deps": [
+        "coreui",
+        "utils"
+      ],
+      "exclude": [
+        "CharacterPanel",
+        "AIPanel",
+        "Devtools",
+        "DicePanel",
+        "GoblinScriptDebugger",
+        "New File2",
+        "Questboard",
+        "TriggersPanel",
+        "New File"
+      ],
+      "order": [
+        "GoblinScriptDebugger",
+        "Chat",
+        "Floors",
+        "Terrain",
+        "CharacterPanel",
+        "Tilesheet",
+        "Brush",
+        "Objects",
+        "ObjectPropertiesDialog",
+        "CreateEffectDialog",
+        "Weather",
+        "Audio",
+        "MapSettings",
+        "ModShare",
+        "HeroModules",
+        "TimeOfDay",
+        "OnlineUsers",
+        "DebugLog",
+        "Commands",
+        "ObjectImport",
+        "DicePanel",
+        "Devtools",
+        "AudioImport",
+        "MapImport",
+        "StatusPanel",
+        "VisionPerspective",
+        "ClipboardPanel",
+        "Layers",
+        "GameControls",
+        "Tutorial",
+        "InteractiveObject",
+        "MapThumbnails",
+        "MapsPanel",
+        "CreateMapDialog",
+        "MapPackBrowser",
+        "DrawingPanel",
+        "AIImporter",
+        "GoblinScriptEditor",
+        "Theme",
+        "GoblinScriptDocs",
+        "InfoDocument",
+        "InfoBubble",
+        "AIPanel",
+        "AICore",
+        "APIDocumentation",
+        "Journal",
+        "JournalPDFViewer",
+        "TriggersPanel",
+        "BackupsPanel",
+        "ElevationPanel",
+        "New File2",
+        "Questboard",
+        "JournalPDFAugmentation",
+        "New File",
+        "ScenesPanel"
+      ],
+      "guid": "2c293dd8-6227-416a-a3ab-b6f26b470d04"
+    },
+    {
+      "key": "panels",
+      "name": "d20 Panels",
+      "root": "",
+      "folder": "DMHub Core Panels",
+      "only": [
+        "CharacterPanel",
+        "AIPanel",
+        "Devtools",
+        "DicePanel",
+        "GoblinScriptDebugger"
+      ],
+      "deps": [
+        "corepanels"
+      ],
+      "order": [
+        "GoblinScriptDebugger",
+        "CharacterPanel",
+        "DicePanel",
+        "Devtools",
+        "AIPanel"
+      ],
+      "guid": "c38dfa2f-6d85-4c5f-a296-7d978403cbd8"
+    },
+    {
+      "key": "macros",
+      "name": "Macros",
+      "root": "codex",
+      "folder": "Codex Macros",
+      "deps": [
+        "utils",
+        "corepanels"
+      ],
+      "order": [
+        "Macros",
+        "TimerMacro"
+      ],
+      "guid": "babb6313-248c-40e1-beca-801c72af3bb2"
+    },
+    {
+      "key": "chatenh",
+      "name": "Chat Enhancements",
+      "root": "codex",
+      "folder": "Chat Enhancements",
+      "deps": [
+        "utils",
+        "corepanels"
+      ],
+      "order": [
+        "Core",
+        "InCharacter",
+        "Whisper"
+      ],
+      "guid": "622e5299-fd71-4a65-849b-8c17600d24d1"
+    },
+    {
+      "key": "rules",
+      "name": "d20 Rules",
+      "root": "",
+      "folder": "DMHub Game Rules",
+      "deps": [
+        "corepanels",
+        "panels",
+        "utils"
+      ],
+      "orderFrom": "legacy",
+      "guid": "ad62d7c9-5a93-47c6-9458-310e4184e25f"
+    },
+    {
+      "key": "charbase",
+      "name": "d20 Character Sheet Base",
+      "root": "",
+      "folder": "DMHub CharacterSheet Base",
+      "deps": [
+        "coreui"
+      ],
+      "orderFrom": "legacy",
+      "guid": "7219563d-307f-4d51-8169-c50bbfb51010"
+    },
+    {
+      "key": "charsheet",
+      "name": "d20 Character Sheet",
+      "root": "",
+      "folder": "DMHub CharacterSheet 5e",
+      "deps": [
+        "coreui",
+        "charbase"
+      ],
+      "orderFrom": "legacy",
+      "guid": "d10d4fbf-e4ff-4940-a82c-345a85c0e152"
+    },
+    {
+      "key": "compendium",
+      "name": "d20 Compendium",
+      "root": "",
+      "folder": "DMHub Compendium",
+      "deps": [
+        "coreui",
+        "rules"
+      ],
+      "orderFrom": "legacy",
+      "guid": "1c762e38-5fde-4ea0-8791-339a32c19e9b"
+    },
+    {
+      "key": "importers",
+      "name": "d20 Importers",
+      "root": "",
+      "folder": "DMHub Import Framework",
+      "deps": [
+        "corepanels",
+        "gamehud"
+      ],
+      "orderFrom": "legacy",
+      "guid": "11556d7b-25b1-4c59-a933-e1e45fb8048e"
+    },
+    {
+      "key": "tokenui",
+      "name": "d20 Token UI",
+      "root": "",
+      "folder": "DMHub Token UI",
+      "deps": [
+        "rules"
+      ],
+      "orderFrom": "legacy",
+      "guid": "1aff922b-1708-4f0e-acb3-3c2dbcdcba46"
+    },
+    {
+      "key": "standins",
+      "name": "d20 Stand-ins",
+      "root": "",
+      "folder": "DMHub Game Hud",
+      "only": [
+        "D20CodexCompat"
+      ],
+      "deps": [
+        "rules",
+        "charsheet",
+        "coreui"
+      ],
+      "order": [
+        "D20CodexCompat"
+      ],
+      "guid": "f8038ac5-450e-473a-ac26-372baf263d2b"
+    },
+    {
+      "key": "gamehud",
+      "name": "Game Hud",
+      "root": "codex",
+      "folder": "DMHub Game Hud",
+      "deps": [
+        "rules",
+        "charsheet",
+        "coreui",
+        "standins"
+      ],
+      "exclude": [
+        "ActionBar",
+        "InitiativeBar",
+        "RollDialog",
+        "RestDialog",
+        "RequireDCDialog",
+        "RollOnTableDialog",
+        "GameHudMenu"
+      ],
+      "order": [
+        "GameHud",
+        "Tabletop",
+        "MapPreview",
+        "SceneElements",
+        "DirectorScreen",
+        "TableDice",
+        "WindowSwitcher",
+        "TableDropDialog",
+        "ActionBar",
+        "InitiativeBar",
+        "DockablePanel",
+        "DeathScreen",
+        "NetworkStatus",
+        "RequireDCDialog",
+        "Journal",
+        "ModalDialog",
+        "RulerTool",
+        "RollDialog",
+        "RestDialog",
+        "Interactive",
+        "InteractiveSign",
+        "Importer",
+        "Keybinds",
+        "ObjectKeyFrame",
+        "ObjectEventHandler",
+        "RollOnTableDialog",
+        "FullscreenDisplay",
+        "Macros",
+        "GameHudMenu"
+      ],
+      "guid": "4f652bb3-f933-4a18-8c8b-34a28bfefc7b"
+    },
+    {
+      "key": "hud",
+      "name": "d20 Hud",
+      "root": "",
+      "folder": "DMHub Game Hud",
+      "only": [
+        "ActionBar",
+        "InitiativeBar",
+        "RollDialog",
+        "RestDialog",
+        "RequireDCDialog",
+        "RollOnTableDialog"
+      ],
+      "deps": [
+        "gamehud"
+      ],
+      "order": [
+        "ActionBar",
+        "InitiativeBar",
+        "RequireDCDialog",
+        "RollDialog",
+        "RestDialog",
+        "RollOnTableDialog"
+      ],
+      "guid": "3538466b-6209-4ac7-9cd6-6f39705e1b3c"
+    },
+    {
+      "key": "docs",
+      "name": "Document System",
+      "root": "codex",
+      "folder": "DocumentSystem",
+      "deps": [
+        "coreui",
+        "gamehud",
+        "corepanels",
+        "utils",
+        "macros"
+      ],
+      "exclude": [
+        "RichDrawsteel",
+        "RichEncounter",
+        "RichFollower",
+        "RichParty",
+        "RichResource",
+        "RichFishing",
+        "HeroicTestDocument",
+        "MontageDocument",
+        "CampaignTrackerPanel",
+        "GameOfChance",
+        "ShellGame"
+      ],
+      "order": [
+        "DocumentSystem",
+        "MarkdownDocument",
+        "DocumentImport",
+        "MontageDocument",
+        "RichImage",
+        "PuzzleFramework",
+        "RichPuzzle",
+        "PuzzleLock",
+        "PuzzleList",
+        "RichSliderPuzzle",
+        "TornPuzzleShapes",
+        "RichTornPuzzle",
+        "PuzzleTerminal",
+        "GameOfChance",
+        "ShellGame",
+        "Bar",
+        "LinkResolution",
+        "RichEncounter",
+        "RichSetting",
+        "RichParty",
+        "RichCounter",
+        "RichCheckbox",
+        "RichAudio",
+        "RichMacro",
+        "MarkdownLabel",
+        "MarkdownDocCreate",
+        "DocumentNewUser",
+        "RichTimer",
+        "RichScene",
+        "RichItemLink",
+        "RichFollower",
+        "RichDice",
+        "RichFishing",
+        "MarkdownDisplay",
+        "TextStorage",
+        "RichDrawsteel",
+        "RichReminder",
+        "RichVideo",
+        "CampaignTrackerPanel",
+        "RichResource",
+        "HeroicTestDocument"
+      ],
+      "guid": "9faff4af-4f18-46ab-8372-a38ef36f6a21"
+    },
+    {
+      "key": "chatpanel",
+      "name": "Chat Panel",
+      "root": "codex",
+      "folder": "ChatPanel",
+      "deps": [
+        "corepanels",
+        "rules",
+        "coreui",
+        "gamehud"
+      ],
+      "order": [
+        "ChatPanel",
+        "ChatItemLinks",
+        "ActionLogPanel",
+        "InCharacterChat"
+      ],
+      "guid": "be8e656d-b94f-4712-9c9f-9064bc1207bd"
+    },
+    {
+      "key": "sys5e",
+      "name": "d20 System 5e",
+      "root": "",
+      "folder": "d20 System 5e",
+      "deps": "all",
+      "order": [
+        "Main"
+      ],
+      "system": "dmhub-legacy",
+      "guid": "4c2963bc-ac89-4d35-8ef3-1e6967e03978"
+    },
+    {
+      "key": "sys55",
+      "name": "d20 System 5.5e",
+      "root": "",
+      "folder": "d20 System 5.5e",
+      "deps": "all",
+      "order": [
+        "Main"
+      ],
+      "system": "dmhub-dnd2024",
+      "guid": "b98e1ee2-aa34-45fb-b48b-92021af8fbf0"
+    },
+    {
+      "key": "sysnone",
+      "name": "d20 System None",
+      "root": "",
+      "folder": "d20 System None",
+      "deps": "all",
+      "order": [
+        "Main"
+      ],
+      "system": "dmhub-tabularasa",
+      "guid": "2b85082f-ccfd-4240-8522-733f30e5dd28"
+    }
+  ],
+  "roots": {
+    "base": "title",
+    "official": "sys5e",
+    "admin": "title"
+  },
+  "legacy": {
+    "_doc": "Legacy (pre-2026-11) DMHub mods, filled in by 'modset.py legacy' from the running app. They stay mapped to their d20 folders so the legacy release workflow keeps working; 'exclude' lists files in those folders that only the new set registers.",
+    "mods": [
+      {
+        "guid": "cd79da1c-4faa-4811-81c6-8da029136089",
+        "name": "DMHub Titlescreen",
+        "folder": "DMHub Titlescreen",
+        "files": [
+          "ThemeEngine",
+          "D20Settings",
+          "Titlescreen",
+          "Styles"
+        ],
+        "deps": []
+      },
+      {
+        "guid": "a1279f34-e23d-4a3b-ae51-daafa498752e",
+        "name": "DMHub Core UI",
+        "folder": "DMHub Core UI",
+        "files": [
+          "D20LoadOrder",
+          "DefaultStyles",
+          "Dropdown",
+          "Gui",
+          "CommandBuilder",
+          "Hud",
+          "GuiUtils",
+          "CreatorCredit",
+          "MarkdownLabel",
+          "SetEditor",
+          "SettingsGui",
+          "Utils",
+          "ParticleValue",
+          "Scrollable",
+          "EnumeratedSliderControl",
+          "DialogResize",
+          "DockablePanel",
+          "MapToolArbiter",
+          "Multiselect",
+          "IconEditor",
+          "FileDrops",
+          "ProgressDice",
+          "EnhIconButton",
+          "CharacterSelect",
+          "ActionButton",
+          "ThemeSettingsDialog",
+          "DialogShell",
+          "DocumentSystem",
+          "MarkdownDocument",
+          "DocumentImport",
+          "TextStorage",
+          "LinkResolution",
+          "Bar",
+          "RichImage",
+          "RichAudio",
+          "RichVideo",
+          "RichDice",
+          "RichCheckbox",
+          "RichCounter",
+          "RichTimer",
+          "RichSetting",
+          "RichScene",
+          "RichItemLink",
+          "RichReminder",
+          "RichMacro",
+          "MarkdownDocCreate",
+          "MarkdownDisplay",
+          "DocumentNewUser"
+        ],
+        "deps": []
+      },
+      {
+        "guid": "630cb9c8-7a2c-497c-aea7-274955c465a9",
+        "name": "DMHub Core Panels",
+        "folder": "DMHub Core Panels",
+        "files": [
+          "GoblinScriptDebugger",
+          "Chat",
+          "Floors",
+          "Terrain",
+          "CharacterPanel",
+          "Tilesheet",
+          "Brush",
+          "Objects",
+          "ObjectPropertiesDialog",
+          "CreateEffectDialog",
+          "Weather",
+          "Audio",
+          "MapSettings",
+          "ModShare",
+          "HeroModules",
+          "TimeOfDay",
+          "OnlineUsers",
+          "DebugLog",
+          "Commands",
+          "ObjectImport",
+          "DicePanel",
+          "Devtools",
+          "AudioImport",
+          "MapImport",
+          "StatusPanel",
+          "VisionPerspective",
+          "ClipboardPanel",
+          "Layers",
+          "GameControls",
+          "Tutorial",
+          "InteractiveObject",
+          "MapThumbnails",
+          "MapsPanel",
+          "CreateMapDialog",
+          "MapPackBrowser",
+          "DrawingPanel",
+          "AIImporter",
+          "GoblinScriptEditor",
+          "Theme",
+          "GoblinScriptDocs",
+          "InfoDocument",
+          "InfoBubble",
+          "AIPanel",
+          "AICore",
+          "APIDocumentation",
+          "Journal",
+          "JournalPDFViewer",
+          "New File",
+          "BackupsPanel",
+          "ElevationPanel",
+          "JournalPDFAugmentation",
+          "ScenesPanel",
+          "ChatPanel",
+          "ChatItemLinks",
+          "ActionLogPanel",
+          "InCharacterChat"
+        ],
+        "deps": [
+          "a1279f34-e23d-4a3b-ae51-daafa498752e"
+        ]
+      },
+      {
+        "guid": "a8b7a753-36a3-42d4-835a-4fe75dd95b73",
+        "name": "DMHub Utils",
+        "folder": "DMHub Utils",
+        "files": [
+          "Utils",
+          "UIText",
+          "CoroutineUtils",
+          "PrettyPrint",
+          "SourceReference",
+          "MarkdownRenderUtils",
+          "GoblinScript",
+          "TableCache",
+          "CompendiumReference",
+          "GoblinScriptProse"
+        ],
+        "deps": []
+      },
+      {
+        "guid": "34c17de9-e803-4c32-8e2e-f107838ffc51",
+        "name": "DMHub Game Rules",
+        "folder": "DMHub Game Rules",
+        "files": [
+          "DamageFlags",
+          "BasicRules",
+          "CustomFields",
+          "Skills",
+          "ProficiencyLevel",
+          "MeasurementSystem",
+          "RollableTables",
+          "Variant",
+          "Anim",
+          "DamageTypes",
+          "Projectile",
+          "Language",
+          "Party",
+          "Currency",
+          "Condition",
+          "Feat",
+          "Prerequisite",
+          "CharacterFeature",
+          "FeaturePrefab",
+          "InitiativeQueue",
+          "CharacterType",
+          "GlobalRuleMod",
+          "Background",
+          "Aura",
+          "AttackTriggeredAbility",
+          "ActivatedAbilityCast",
+          "ActivatedAbility",
+          "AbilityTransform",
+          "AbilitySummon",
+          "Loot",
+          "Equipment",
+          "EquipmentCategory",
+          "Creature",
+          "RuleUtils",
+          "Character",
+          "Monster",
+          "Spells",
+          "SpellcastingFeature",
+          "Attack",
+          "Concentration",
+          "OngoingEffect",
+          "Resource",
+          "CharacterModifier",
+          "ModifierD20Rolls",
+          "ModifierDamageRolls",
+          "ModifierProficiency",
+          "ModifierAura",
+          "ModifierModifyAbilities",
+          "Class",
+          "Race",
+          "Light",
+          "Vision",
+          "CustomAttribute",
+          "ModifierGrantSpells",
+          "ModifierSpellcasting",
+          "ModifierDamageAfterSave",
+          "ModifierGrantSpellList",
+          "BaseAttributes",
+          "AbilityRemoveCreature",
+          "AbilityRelocateCreature",
+          "AbilityPurgeEffects",
+          "AbilityDropItems",
+          "ProficiencyLevels",
+          "GoblinScriptDocs",
+          "AbilitySavingThrow",
+          "TriggeredAbility",
+          "AttributeGenerator",
+          "BackgroundCharacteristic",
+          "AbilityReplenish",
+          "WeaponProperty",
+          "AbilityCreateItem",
+          "GameSystem",
+          "dnd5e",
+          "FeaturePrefabInstance",
+          "ModifierAltSpells",
+          "ModifierGrantFeat",
+          "AbilitySkillCheck",
+          "AbilityFizzle",
+          "AbilityResetRollStatus",
+          "AbilityRoll",
+          "AbilityInvokeAbility",
+          "AbilityFloatText",
+          "AbilityTableRoll",
+          "ModifierBestowCondition",
+          "ActivatedAbilityReaction",
+          "CharacterPanelGameRules",
+          "ModifierCreatureType"
+        ],
+        "deps": [
+          "630cb9c8-7a2c-497c-aea7-274955c465a9",
+          "a8b7a753-36a3-42d4-835a-4fe75dd95b73"
+        ]
+      },
+      {
+        "guid": "1a0b4266-b68b-44bd-a389-6fc1c1b9b03e",
+        "name": "DMHub CharacterSheet Base",
+        "folder": "DMHub CharacterSheet Base",
+        "files": [
+          "CharacterSheetMain",
+          "CharacterSheetFramework",
+          "CharacterSheetAppearance",
+          "CharacterSheetIInventory",
+          "New File"
+        ],
+        "deps": []
+      },
+      {
+        "guid": "b74ac7ae-9853-497e-b033-7fb0b13bb1b6",
+        "name": "DMHub CharacterSheet 5e",
+        "folder": "DMHub CharacterSheet 5e",
+        "files": [
+          "CharacterSheet",
+          "CharacterAppearanceDep",
+          "CharacterBuilder",
+          "InventoryDeprecated",
+          "CharacterSheetSpells",
+          "CharacterSheetMainDep",
+          "RaceCarousel",
+          "BackgroundCarousel",
+          "ClassCarousel"
+        ],
+        "deps": [
+          "a1279f34-e23d-4a3b-ae51-daafa498752e",
+          "1a0b4266-b68b-44bd-a389-6fc1c1b9b03e"
+        ]
+      },
+      {
+        "guid": "1bedaffa-50b8-4e35-a384-d5977f42efeb",
+        "name": "DMHub Game Hud",
+        "folder": "DMHub Game Hud",
+        "files": [
+          "D20CodexCompat",
+          "GameHud",
+          "Tabletop",
+          "SceneElements",
+          "DirectorScreen",
+          "TableDice",
+          "WindowSwitcher",
+          "TableDropDialog",
+          "ActionBar",
+          "InitiativeBar",
+          "DockablePanel",
+          "DeathScreen",
+          "NetworkStatus",
+          "RequireDCDialog",
+          "Journal",
+          "ModalDialog",
+          "RulerTool",
+          "RollDialog",
+          "RestDialog",
+          "Interactive",
+          "InteractiveSign",
+          "Importer",
+          "Keybinds",
+          "ObjectKeyFrame",
+          "ObjectEventHandler",
+          "RollOnTableDialog",
+          "FullscreenDisplay",
+          "Macros",
+          "DocumentSystem",
+          "MarkdownDocument",
+          "DocumentImport",
+          "RichImage",
+          "Bar",
+          "LinkResolution",
+          "RichSetting",
+          "RichCounter",
+          "RichCheckbox",
+          "RichAudio",
+          "RichMacro",
+          "MarkdownLabel",
+          "MarkdownDocCreate",
+          "DocumentNewUser",
+          "RichTimer",
+          "RichScene",
+          "RichItemLink",
+          "RichDice",
+          "MarkdownDisplay",
+          "TextStorage",
+          "RichReminder",
+          "RichVideo"
+        ],
+        "deps": [
+          "34c17de9-e803-4c32-8e2e-f107838ffc51",
+          "b74ac7ae-9853-497e-b033-7fb0b13bb1b6",
+          "a1279f34-e23d-4a3b-ae51-daafa498752e"
+        ]
+      },
+      {
+        "guid": "e71e7fe8-df2e-4dcf-8866-804ce02dc080",
+        "name": "DMHub Compendium",
+        "folder": "DMHub Compendium",
+        "files": [
+          "GlobalRuleModEditor",
+          "ClassEditor",
+          "BackgroundEditor",
+          "RaceEditor",
+          "Compendium",
+          "ManageCompendium",
+          "ItemEditor",
+          "ActivatedAbilityEditor",
+          "TriggeredAbilityEditor",
+          "OngoingEffectEditor",
+          "CodeMod",
+          "Translation",
+          "ItemCompendium",
+          "GameSystemCompendium",
+          "AICompendium",
+          "New File"
+        ],
+        "deps": [
+          "a1279f34-e23d-4a3b-ae51-daafa498752e",
+          "34c17de9-e803-4c32-8e2e-f107838ffc51"
+        ]
+      },
+      {
+        "guid": "8a7fe880-ecca-4aba-8989-80c916a2203c",
+        "name": "DMHub Token UI",
+        "folder": "DMHub Token UI",
+        "files": [
+          "TokenUI",
+          "TokenEffects",
+          "Emotes",
+          "TokenUIConfig"
+        ],
+        "deps": [
+          "34c17de9-e803-4c32-8e2e-f107838ffc51"
+        ]
+      },
+      {
+        "guid": "a8e7ca10-0eff-4be7-9b8e-5b68cf946cc3",
+        "name": "DMHub Import Framework",
+        "folder": "DMHub Import Framework",
+        "files": [
+          "ImportDialog",
+          "BeyondImporter",
+          "5eTools",
+          "5eBits",
+          "ImportUtils"
+        ],
+        "deps": [
+          "630cb9c8-7a2c-497c-aea7-274955c465a9",
+          "1bedaffa-50b8-4e35-a384-d5977f42efeb"
+        ]
+      },
+      {
+        "guid": "b2f58995-4b34-40ab-9dba-5ae0ec387c33",
+        "name": "DMHub 5e System",
+        "folder": "DMHub 5e System",
+        "files": [
+          "Main"
+        ],
+        "deps": [
+          "a1279f34-e23d-4a3b-ae51-daafa498752e",
+          "630cb9c8-7a2c-497c-aea7-274955c465a9",
+          "34c17de9-e803-4c32-8e2e-f107838ffc51",
+          "b74ac7ae-9853-497e-b033-7fb0b13bb1b6",
+          "1bedaffa-50b8-4e35-a384-d5977f42efeb",
+          "e71e7fe8-df2e-4dcf-8866-804ce02dc080",
+          "8a7fe880-ecca-4aba-8989-80c916a2203c",
+          "a8e7ca10-0eff-4be7-9b8e-5b68cf946cc3"
+        ]
+      }
+    ]
+  }
+}
