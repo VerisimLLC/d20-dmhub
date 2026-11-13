@@ -783,13 +783,7 @@ Decided (user, 2026-11-12): Insight and Investigation no longer have passive sco
 - Reaction triggers (21), area targets limited to enemies or with a type filter, "Failure or Success" clauses, Melee-or-Ranged attacks (split into two abilities), hover (speed note only), "Medium or Small" sizes (first one used), darkvision "unimpeded by magical Darkness".
 
 **Found in Phase 6, round 4 (magic items; 2026-11-13).** Four agents, one slice each (`magic_items_a.py` to `_d.py`). Highest value first. The per-item partials are in each record's `implementation` and the slice scripts:
-- **Spells cast from an item have no fixed save DC or attack bonus.** The innate `spell` modifier takes only an ability. That affects about 30 items, for example:
-  - wands at DC 13, 15 or 17;
-  - the Crystal Balls and the Cube of Force at DC 17;
-  - the Dragon Orb and the Ring of Elemental Command at DC 18;
-  - the Circlet of Blasting at +5.
-
-  "Your spell save DC" also can't choose the user's own spellcasting ability; leaving it unset gives 8 + PB.
+- **Spells cast from an item had no fixed save DC or attack bonus.** *Done 2026-11-13:* the innate `spell` modifier has optional `saveDC` and `attackBonus` (GoblinScript, editable in the modifier editor). The modifier stamps them on its spell copy as `fixedSaveDC` / `fixedAttackBonus`, and `creature:SpellSaveDC` / `SpellAttackModifier` return them as they are, so bonuses to the caster's own DC don't apply (SRD p. 206). The spell tooltip shows "Cast from an item (DC: 15)". Applied to 24 items: the wands (DC 13, 15, 17), the Crystal Balls and Cube of Force (17), the Dragon Orb's Scrying and the Rings of Elemental Command (18), Ring of Animal Influence, Eyes of Charming, Helm of Telepathy, Medallion of Thoughts, Cloak of Arachnida and Wind Fan (13), the Trident of Fish Command (15), and the Circlet of Blasting (+5). Checked in the authoring game: Wand of Fireballs DC 15 and Scorching Ray +5 next to a Staff of Fire still at the user's DC. **Still open:** "your spell save DC" can't choose the user's own spellcasting ability; leaving it unset gives 8 + PB (the staffs).
 - **Charges:**
   - an ability spends exactly 1 charge (`multicharge` lets the player type more, but nothing enforces it);
   - spending charges can't upcast (Wands of Fireballs, Lightning Bolts and Magic Missiles; the Staff of Healing);

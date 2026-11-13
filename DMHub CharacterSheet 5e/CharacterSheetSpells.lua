@@ -241,6 +241,22 @@ function Spell:Render(options)
 			text = string.format("<b>%s</b>%s", self.spellcastingFeature.name, modifiersLabel),
 			width = "100%",
 		}
+	elseif self:has_key("fixedSaveDC") or self:has_key("fixedAttackBonus") then
+		--a spell cast from an item with its own numbers (CharacterModifier 'spell').
+		local parts = {}
+		if self:has_key("fixedAttackBonus") and self:HasAttack() then
+			parts[#parts+1] = string.format("Attack: %s", ModStr(self.fixedAttackBonus))
+		end
+		if self:has_key("fixedSaveDC") and self:HasSavingThrow() then
+			parts[#parts+1] = string.format("DC: %d", self.fixedSaveDC)
+		end
+
+		if #parts > 0 then
+			classLabel = gui.Label{
+				text = string.format("<b>Cast from an item</b> (%s)", table.concat(parts, ", ")),
+				width = "100%",
+			}
+		end
 	end
 
 	local description = self.description

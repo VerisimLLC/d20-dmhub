@@ -1782,6 +1782,9 @@ CharacterModifier.RegisterType('spell', "Innate Spellcasting")
 -- attribute: id of the attribute to use for casting.
 -- level (optional): the level to force-cast this spell at.
 -- usageLimitOptions (optional): resource cost that can be set directly on a spell.
+-- saveDC (optional): GoblinScript for a save DC of its own, e.g. a wand's "15"
+--   (SRD 5.2.1 p. 206, Spells Cast from Items). Empty = the caster's spell save DC.
+-- attackBonus (optional): GoblinScript for a spell attack bonus of its own. Empty = the caster's.
 CharacterModifier.TypeInfo.spell = {
 	init = function(modifier)
 		local spellsTable = dmhub.GetTable("Spells")
@@ -1814,6 +1817,23 @@ CharacterModifier.TypeInfo.spell = {
 
 			if modifier:has_key("usageLimitOptions") then
 				spellClone.usageLimitOptions = modifier.usageLimitOptions
+			end
+
+			--a save DC and attack bonus of the item's own (creature:SpellSaveDC / SpellAttackModifier).
+			local saveDC = modifier:try_get("saveDC", "")
+			if saveDC ~= "" then
+				local dc = dmhub.EvalGoblinScriptDeterministic(saveDC, creature:LookupSymbol(modifier:try_get("_tmp_symbols", {})), 0, string.format("Calculate save DC of innate spell %s", spellClone.name))
+				if type(dc) == "number" then
+					spellClone.fixedSaveDC = dc
+				end
+			end
+
+			local attackBonus = modifier:try_get("attackBonus", "")
+			if attackBonus ~= "" then
+				local bonus = dmhub.EvalGoblinScriptDeterministic(attackBonus, creature:LookupSymbol(modifier:try_get("_tmp_symbols", {})), 0, string.format("Calculate attack bonus of innate spell %s", spellClone.name))
+				if type(bonus) == "number" then
+					spellClone.fixedAttackBonus = bonus
+				end
 			end
 
 			result[#result+1] = spellClone
@@ -1927,6 +1947,42 @@ CharacterModifier.TypeInfo.spell = {
 					end,
 				},
 			}
+
+			--a save DC / attack bonus of its own, for spells cast from items (SRD 5.2.1 p. 206).
+			local fixedFields = {
+				{ key = "saveDC", label = "Save DC:", help = "A save DC of its own for this spell, e.g. 15 for a wand that casts it at DC 15. Leave empty to use the caster's spell save DC.", example = "15" },
+				{ key = "attackBonus", label = "Attack Bonus:", help = "A spell attack bonus of its own for this spell, e.g. 5 for an item that casts it with a +5 bonus. Leave empty to use the caster's spell attack bonus.", example = "5" },
+			}
+			for _,field in ipairs(fixedFields) do
+				children[#children+1] = gui.Panel{
+					classes = {"formPanel"},
+					gui.Label{
+						classes = {'formLabel'},
+						text = field.label,
+					},
+					gui.GoblinScriptInput{
+						value = modifier:try_get(field.key, ""),
+						change = function(element)
+							modifier[field.key] = element.value
+						end,
+
+						documentation = {
+							domains = modifier:Domains(),
+							help = field.help,
+							output = "number",
+							examples = {
+								{
+									script = field.example,
+									text = string.format("The spell always uses %s.", field.example),
+								},
+							},
+							subject = creature.helpSymbols,
+							subjectDescription = "The creature using the spell.",
+							symbols = modifier:HelpAdditionalSymbols(),
+						},
+					},
+				}
+			end
 
 			element.children = children
 		end

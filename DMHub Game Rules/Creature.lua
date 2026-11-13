@@ -5565,10 +5565,25 @@ function creature:ClearMomentaryOngoingEffects()
 end
 
 function creature:SpellSaveDC(spell)
+	--a spell cast from an item with its own save DC (SRD 5.2.1 p. 206), set by the
+	--innate spellcasting modifier's saveDC. Bonuses to the caster's DC don't apply.
+	if spell ~= nil then
+		local fixed = spell:try_get("fixedSaveDC")
+		if fixed ~= nil then
+			return fixed
+		end
+	end
 	return GameSystem.CalculateSpellSaveDC(self, spell)
 end
 
 function creature:SpellAttackModifier(spell)
+	--a spell cast from an item with its own attack bonus (SRD 5.2.1 p. 206).
+	if spell ~= nil then
+		local fixed = spell:try_get("fixedAttackBonus")
+		if fixed ~= nil then
+			return fixed
+		end
+	end
 	return GameSystem.CalculateSpellAttackModifier(self, spell)
 end
 
