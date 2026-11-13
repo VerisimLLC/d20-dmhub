@@ -1779,7 +1779,8 @@ CharacterModifier.RegisterType('spell', "Innate Spellcasting")
 
 --a 'spell' modifier has the following properties:
 -- spell: id of the spell it allows us to cast.
--- attribute: id of the attribute to use for casting.
+-- attribute: id of the attribute to use for casting; "no_attribute" for +0, or
+--   "spellcasting" for the user's own spellcasting ability (creature:GetAttributeUsedForAbility).
 -- level (optional): the level to force-cast this spell at.
 -- usageLimitOptions (optional): resource cost that can be set directly on a spell.
 -- saveDC (optional): GoblinScript for a save DC of its own, e.g. a wand's "15"
@@ -1940,7 +1941,16 @@ CharacterModifier.TypeInfo.spell = {
 					text = "Attribute:",
 				},
 				gui.Dropdown{
-					options = creature.attributeDropdownOptions,
+					options = (function()
+						local attrOptions = {
+							{ id = "spellcasting", text = "User's Spellcasting Ability" },
+							{ id = "no_attribute", text = "None (+0)" },
+						}
+						for _,option in ipairs(creature.attributeDropdownOptions) do
+							attrOptions[#attrOptions+1] = option
+						end
+						return attrOptions
+					end)(),
 					idChosen = modifier:try_get("attribute", "int"),
 					change = function(element)
 						modifier.attribute = element.idChosen

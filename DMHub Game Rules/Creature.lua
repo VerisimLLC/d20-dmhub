@@ -5593,6 +5593,26 @@ function creature:GetAttributeUsedForAbility(ability)
 			return "none"
 		end
 
+		--the user's own spellcasting ability, e.g. a staff's spells "using your spell save
+		--DC" (SRD 5.2.1 p. 206): with several, the one with the highest modifier (the SRD
+		--lets the user choose); with none, +0 (Proficiency Bonus still applies).
+		if ability.attributeOverride == "spellcasting" then
+			local best = nil
+			local result = "none"
+			for _,feature in ipairs(self:CalculateSpellcastingFeatures()) do
+				local attrid = feature.attr
+				if attrid ~= nil and creature.attributesInfo[attrid] ~= nil then
+					local val = self:GetAttribute(attrid):Modifier()
+					if best == nil or val > best then
+						best = val
+						result = attrid
+					end
+				end
+			end
+
+			return result
+		end
+
 		if ability.attributeOverride == "multiple" then
 			local best = nil
 			local multi = ability:try_get("attributeOverrideMulti", {})
