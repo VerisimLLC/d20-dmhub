@@ -6795,12 +6795,48 @@ function creature:LookupSymbol(symbolTable)
 	return GenerateSymbols(self, symbolTable)
 end
 
+--Recharge X-6: at the start of the creature's turn, roll 1d6 for each spent
+--Recharge ability; on X or more it regains the use (ActivatedAbility:RechargeResourceId).
+--The roll is shown to the GM only.
+function creature:RollRecharges()
+	local token = dmhub.LookupToken(self)
+	if token == nil then
+		return
+	end
+
+	for _,ability in ipairs(self:GetActivatedAbilities{}) do
+		local rechargeid = ability:RechargeResourceId()
+		if rechargeid ~= nil and self:GetResourceUsage(rechargeid, "short") > 0 then
+			local threshold = ability.recharge
+			local abilityName = ability.name
+			dmhub.Roll{
+				roll = "1d6",
+				description = string.format("%s: Recharge %d-6", abilityName, threshold),
+				tokenid = dmhub.LookupTokenId(self),
+				dmonly = true,
+				complete = function(rollInfo)
+					if rollInfo.total >= threshold and token.valid then
+						token:ModifyProperties{
+							description = string.format("Recharge %s", abilityName),
+							execute = function()
+								token.properties:RefreshResource(rechargeid, "short", 1, abilityName)
+							end,
+						}
+					end
+				end,
+			}
+		end
+	end
+end
+
 function creature:BeginTurn()
 
 	--just in case some linger.
 	self:ClearMomentaryOngoingEffects()
 
 	self:DispatchEvent("beginturn", {})
+
+	self:RollRecharges()
 
 	local token = dmhub.LookupToken(self)
 

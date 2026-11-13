@@ -67,6 +67,18 @@ ActivatedAbility.rangeDisadvantage = ""
 ActivatedAbility.selfTarget = true
 ActivatedAbility.recharge = false --roll number for recharging this ability.
 
+--The resource that tracks whether a Recharge ability has been used, or nil if
+--the ability has no recharge. Keyed by the ability's guid so every copy of the
+--ability (the action bar binds copies) shares the one use.
+function ActivatedAbility:RechargeResourceId()
+	local recharge = self.recharge
+	if type(recharge) ~= "number" or recharge < 1 or recharge > 6 then
+		return nil
+	end
+
+	return "recharge:" .. (self:try_get("guid") or self.name)
+end
+
 ActivatedAbility.legendary = false
 
 ActivatedAbility.categorization = "none"
@@ -1088,6 +1100,26 @@ function ActivatedAbility:GetCost(casterToken, options)
 		}
 
 		result.canAfford = result.canAfford and hasResources
+	end
+
+	--Recharge X-6: one use, regained on a 1d6 roll of X or more at the start of the
+	--creature's turn (creature:RollRecharges) or on a Short or Long Rest.
+	local rechargeid = self:RechargeResourceId()
+	if rechargeid ~= nil then
+		local spent = creature:GetResourceUsage(rechargeid, "short") > 0
+		result.details[#result.details+1] = {
+			cost = rechargeid,
+			canAfford = not spent,
+			maxCharges = 1,
+			quantity = 1,
+			availableCharges = cond(spent, 0, 1),
+			description = cond(spent, string.format("Recharge %d-6", self.recharge), "Ready"),
+			refreshType = "short",
+			paymentOptions = cond(spent, {}, {{resourceid = rechargeid, quantity = 1}}),
+			expendedOptions = cond(spent, {{resourceid = rechargeid, quantity = 1}}, {}),
+		}
+
+		result.canAfford = result.canAfford and not spent
 	end
 
 	if self.channeledResource ~= "none" and options.charges > 0 then
