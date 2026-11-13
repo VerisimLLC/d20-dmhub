@@ -451,8 +451,18 @@ Original plan:
 
 **Coverage after the slice:** 1,403 SRD entries; 14 tested, 83 authored, 1,306 todo.
 
+**Batches after the slice (2026-11-12).** The `srd-content` authoring skill is in the repo (`.claude/skills/srd-content/SKILL.md`). Four subagents authored in parallel, each owning separate files, and each batch was reviewed and checked in the authoring game before it was committed:
+- tools, 36 items (`a07706b`, `e3bb881`);
+- weapons, armor and ammunition, plus new ammunition categories (`930f689`). Review found and fixed: Chain Shirt's category, sidebar text in two weapon properties, the missing "Clunky Armor" helper condition, and the top-level weapon fields the code reads (now in the skill);
+- adventuring gear, 76 items with Acid, Alchemist's Fire, Antitoxin, Potion of Healing, Net and the lights automated (`7b1280d`). Review added Holy Water's ability and the Lamp's light;
+- core rules: the 2024 actions, Unarmed Strike and Grapple as global rule mods, and damage type text (`efb7d34`).
+
+**Coverage after these batches:** 1,403 entries; 14 tested, 226 authored, 1,163 todo. Equipment is 157 of 157 authored. Core rules are 32 of 33; the exception, Two-Handed, is a code builtin and cannot be a record.
+
+**Engine fix:** a new table folder now gets its id from `_meta.yaml` or the items' `_table` (`LocalAssetDirectory.ResolveTableIdFromFolder`). Committed in `C:\dev\dmhub` as `4d095a90e`, not pushed; tested in a DMHub dev build from `C:\dev\d20-dmhub`, which has the same change uncommitted.
+
 **Gotchas found** (also in the repo README):
-- **A new table folder can register under its folder name** (`spelllists`, `tbl-gear`) instead of its `_meta.yaml` id when the hot-reload watcher sees the folder before the `_meta`. A game reload fixes it. Worth an engine fix (C#, commit from `C:\dev\dmhub`).
+- **A new table folder could register under its folder name** (fixed by `4d095a90e`) (`spelllists`, `tbl-gear`) instead of its `_meta.yaml` id when the hot-reload watcher sees the folder before the `_meta`. A game reload fixes it. Worth an engine fix (C#, commit from `C:\dev\dmhub`).
 - The 5e Lua seeds the nine standard weapon properties into an empty game, and Local Assets writes them out without a `_meta.yaml`. Their ids (`ammo`, `finesse`, ...) are read by code, so they were kept.
 - `sed -i` strips the CRs from these CRLF files. Use the Python tools.
 - Dice formulas: `(2*Upcast) d8` adds 2d8 per slot level; `2*Upcast d8` doubles a roll instead.
@@ -515,6 +525,26 @@ Out of scope for the YAML-only start. Every one of these must be gated on the D4
 | 7.9 | Preserve Life: **divide** 5 x level HP among Bloodied creatures, max half their HP (p. 40) | No "heal pool split among targets" behavior, no Bloodied target filter or half-max cap. | Heals one target for the full amount (`implementation: 2`) |
 | 7.10 | 2024 wording in code: "Hit Point Dice", "Fixed Hit Points" (p. 23) | The builder's class panel prints "Hit Dice" and "1d8 (or 5)". | Builder |
 | 7.11 | Not 2024-specific, a display bug: the sheet's spell summary evaluates `modifyability` formulas without `ability`/`upcast` symbols | Cure Wounds with Disciple of Life shows "2d8+13 Healing"; the cast itself gets the symbols. The 5e Life Domain has the same formula, so 5e shows it too. | Sheet, Spells list on the Character tab |
+
+**Found while authoring core rules and equipment (2026-11-12).**
+
+| # | Rule (SRD 5.2.1 page) | What the code lacks | Where it shows now |
+|---|---|---|---|
+| 7.12 | Armor Strength requirement: Speed -10 ft below the score (p. 92) | Not applied. | Heavy armor and the other Strength-requirement armor are implementation 2 |
+| 7.13 | Tool proficiency + a related skill proficiency gives Advantage (p. 93) | Not modelled; Utilize DCs and Craft lists are text. | Tool items |
+| 7.14 | "Replace one of your attacks" with an item (Acid, Alchemist's Fire, Holy Water, Net, Oil, p. 94-98) | No way to spend one attack of the Attack action. | Each costs a full action |
+| 7.15 | Area hazards placed by items: Caltrops, Ball Bearings, Hunting Trap (p. 96-98) | The 5e aura pattern has no `objectid`, so `ActivatedAbilityAuraBehavior:Cast` spawns object "none" and fails; "first time on a turn" tracking is missing. | Text only |
+| 7.16 | Stabilizing (Healer's Kit p. 97, Spare the Dying) | No behavior makes a creature Stable. | Text only |
+| 7.17 | Spell Scroll (p. 99): a chosen spell at fixed DC 13 / +5 | No way to attach a chosen spell to an item. | Text only |
+| 7.18 | Spellcasting Focus (holy symbols, arcane and druidic foci) | Foci are not modelled at all. | Items are implementation 1 |
+| 7.19 | Opportunity Attacks (p. 185), so also Disengage (p. 181) | The Lua has no Opportunity Attacks. | Disengage is a marker effect |
+| 7.20 | Escaping a grapple: Athletics or Acrobatics check vs the escape DC (p. 182) | "End with action" only supports saving throws. | Grappled has no escape action |
+| 7.21 | Benefits used up by one roll: Help (p. 182-183) | Per-effect charges aren't consumed by rolls from the roll dialog. | Help lasts until your next turn |
+| 7.22 | Hide records its Stealth total as the DC to find you (p. 183); Influence DC is 15 or the monster's Intelligence (p. 184) | No way to keep a roll's total; the skill-check behavior makes the targets roll, not the caster. | Hide works without the DC; Influence is text |
+| 7.23 | An Unarmed Strike counts as one attack of the Attack action / Extra Attack | Not modelled. | Separate action |
+| 7.24 | Bugs, not 2024 rules (affect 5e too): `WeaponProperty.Get` returns the code builtin before the table record, so property `details` text never shows in tooltips (`Equipment.lua` ~788); the GoblinScript `size` symbol calls `creature:GetBaseCreatureSizeNumber()` on the class instead of `c` (`Creature.lua:6292`), so off-map creatures read size 0; the sheet's DC column ignores a behavior's `dcvalue` (Hide shows DC 10, rolls against 15). | | |
+
+Decision for you: Insight and Investigation keep `hasPassive: true` from SRD 5.1. SRD 5.2.1 defines only Passive Perception (p. 185). Removing the flags changes the sheet, so they were left.
 
 To check, not yet known to need code: whether Thaumaturge's bonus to Arcana/Religion (a d20 roll modifier) is applied when the check is rolled (the sheet's static skill bonus leaves it out), and whether Turn Undead's "ends early if it takes damage" can be expressed on the effect.
 
