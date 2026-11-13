@@ -463,6 +463,8 @@ Original plan:
 
 **Phase 6, round 1 (2026-11-12).** Six agents in parallel, then backgrounds once the feat ids existed; every batch reviewed, spot-checked in the authoring game and committed separately in `dmhub-dnd2024`: spells 4-5 (`347f3bb`), feats and the 2024 ASI/Fighting Style prefabs (`bdc4b13`), species with lineages as subraces (`658425a`), spells 6-9 (`515f2b3`), spells 2-3 (`c00f5d1`), backgrounds (`35b902b`), spells 0-1 (`ec96c57`), spell lists and checker spell references (`c8ba0ba`). All 339 spells, 17 feats, 4 backgrounds and 9 species are authored. Insight and Investigation lost their 5.1 passive scores (`238363d`). **Coverage:** 1,403 entries; 14 tested, 553 authored, 836 todo (remaining: classes 247 entries, magic items 258, monsters 235, animals 95).
 
+**Phase 6, round 2: classes (2026-11-12).** Twelve agents in two waves, one class each (class + its SRD subclass, levels 1-20), each checked in the authoring game with a level 5 test character (HP, slots, resources, key abilities) before its commit: Fighter `7c52948`, Barbarian `8bfb202`, Cleric to 20 `c519402`, Bard `1231f64`, Druid `b463282`, Monk `31c97e0`, Ranger `5d69bc1`, Paladin `da65641`, Rogue `f11f7b4`, Wizard `c369eee`, Sorcerer `dfbec01`, Warlock `97f26c2`. Shared records changed to the 2024 rules on the way: Bardic Inspiration d8-d12, Focus Points and Warlock slots now refresh on a Short Rest. A class added while the game runs needs a game reload before its `<Class> Level` symbol exists (now in the skill). **Known data follow-ups:** the Bard's Superior Inspiration formula reads `Resources.BardicInspirationd12`, which GoblinScript can't parse (confirmed in the app); Foe Slayer needs the Hunter's Mark die to come from an attribute. **Coverage:** 1,403 entries; 14 tested, 800 authored, 589 todo -- the character side is complete; what remains is magic items (258), monsters (235), animals (95) and Two-Handed (a code builtin).
+
 **Gotchas found** (also in the repo README):
 - **A new table folder could register under its folder name** (fixed by `4d095a90e`) (`spelllists`, `tbl-gear`) instead of its `_meta.yaml` id when the hot-reload watcher sees the folder before the `_meta`. A game reload fixes it. Worth an engine fix (C#, commit from `C:\dev\dmhub`).
 - The 5e Lua seeds the nine standard weapon properties into an empty game, and Local Assets writes them out without a `_meta.yaml`. Their ids (`ammo`, `finesse`, ...) are read by code, so they were kept.
@@ -627,6 +629,105 @@ Decided (user, 2026-11-12): Insight and Investigation no longer have passive sco
 #### Data still to add
 - Map objects for placed areas: the 5e module ships aura objects in `objects/`; copying them would let Darkness, Web, Spike Growth, Moonbeam and other placed areas work.
 - Goodberry item (Goodberry p.137); monsters for summons (Find Familiar, Find Steed, Animate Dead, Conjure spells).
+
+**Found in Phase 6, round 2 (classes; 2026-11-12).** Recurring across classes, so highest value: once-per-turn limits (everything uses once per round), adding a die after seeing a failed roll, regaining one use on a Short Rest, Short Rest triggers, Extra Attack (a marker; nothing counts attacks), Weapon Mastery, reactions that change another creature's roll, re-picking choices on a rest, and GoblinScript's letters-only identifiers.
+
+#### Fighter
+- Add to a check after it fails, refund if still failed (Tactical Mind p. 48)
+- Reroll a failed save and have it count (Indomitable p. 48)
+- Move half Speed without provoking OAs (Tactical Shift p. 48, Remarkable Athlete p. 49)
+- One-shot Advantage on next attack vs that creature (Studied Attacks p. 48)
+- Grant Heroic Inspiration from data (Heroic Warrior p. 49; also Human Resourceful)
+- Extra Attack: the `multiattack` modifier is a marker; nothing counts attacks (p. 48)
+- Engine quirk: a class added mid-session has no <Class> Level symbol until reload
+
+#### Barbarian
+- Reaction attack with your own weapon (Retaliation p. 30)
+- DC that rises per use and resets on a rest (Relentless Rage p. 30)
+- Rage lapsing when not extended; Rage blocking spells and Concentration (p. 29)
+- Skill check made with a different ability (Primal Knowledge p. 29)
+- Regain uses on rolling Initiative (Persistent Rage p. 30)
+- Replace a roll total with an ability score (Indomitable Might p. 30)
+- Brutal Strike: forgo Advantage for extra dice and effects (p. 29-30)
+- Movement granted as part of an ability (Instinctive Pounce p. 29)
+
+#### Cleric
+- Maximize healing dice (Supreme Healing p. 40-41)
+- Whom a spell targeted ("cast on others": Blessed Healer p. 40)
+- An ability's source class/spell list (Potent Spellcasting p. 38)
+- Trigger on "a cantrip dealt damage" + choose a creature for THP (Improved Blessed Strikes p. 38)
+- Once on each of your turns (vs per round) (Divine Strike p. 38)
+- Unavailable for 2d4 Long Rests (Greater Divine Intervention p. 38)
+
+#### Bard
+- Add a die after seeing a failed roll (Bardic Inspiration p. 32; same timing gap as Guidance, Peerless Skill p. 35)
+- Reaction to another creature's failed save + reroll with Advantage (Countercharm p. 33)
+- Reaction that subtracts from an enemy's roll (Cutting Words p. 35)
+- "Not expended if the roll still fails" refund (Peerless Skill p. 35)
+- Combined cantrip-or-leveled-spell count (Magical Discoveries p. 35)
+- One Bardic Inspiration die per creature across die sizes (p. 32)
+
+#### Druid
+- Wild Shape: known forms (4/6/8), duration half Druid level hours, ends on Incapacitated, the Beast's senses, worn equipment, THP from the transform (p. 42-43)
+- Beast Spells: costly/consumed Material components (p. 43)
+- Re-pick the land after a Long Rest (p. 46)
+- Recover spell slots up to a total-level budget (Natural Recovery p. 46; Wizard Arcane Recovery too)
+- Movable cube with Half Cover and ally Resistance (Nature's Sanctuary p. 46)
+- DATA: Beasts (Animals chapter) needed for Wild Shape and Find Familiar
+
+#### Monk
+- Swap a weapon's damage die (Martial Arts on Monk weapons p. 50); Dex for Grapple/Shove DC
+- Roll a die into a damage reduction from a reaction (Deflect Attacks p. 51)
+- Reduce falling damage (Slow Fall p. 51)
+- Choose damage type per hit (Empowered Strikes p. 51)
+- Optional triggers fire without asking the player (so paid features are manual abilities)
+- Stunning Strike tied to a hit, once per turn (p. 51)
+
+#### Ranger
+- Exempt one spell from Concentration checks on damage (Relentless Hunter p. 59)
+- DATA follow-up: Foe Slayer (p. 59) needs Hunter's Mark's die from an attribute
+- Extra attack against a nearby target (Horde Breaker p. 61); OA filter (Escape the Horde p. 61); Disadvantage tied to one attacker (Multiattack Defense p. 61)
+- Hunter's Mark damage spilling over (Superior Hunter's Prey p. 61); Reaction granting Resistance before damage (Superior Hunter's Defense p. 61)
+- Decrease Exhaustion on a Short Rest (Tireless p. 59)
+
+#### Paladin
+- Channel Divinity uses per class when multiclassed (shared resource) (p. 54)
+- Only one Paladin aura benefits a creature (p. 55)
+- Effect ending on damage + one-thing-per-turn limit (Abjure Foes p. 55)
+- Imbue one specific weapon; Radiant instead; light; ends if not carried (Sacred Weapon p. 56)
+- "Who forced this save" symbol (Holy Nimbus p. 57)
+
+#### Rogue
+- d20 floor on the die (treat 9 or lower as 10), not the total (Reliable Talent p. 63; 5e's minroll 10 is wrong too)
+- Turn a d20 into a 20 after rolling (Stroke of Luck p. 63)
+- Two Cunning Strike effects per hit (Improved Cunning Strike p. 63)
+- "Once per turn" approximated as once per round everywhere (Sneak Attack p. 62 and many others)
+
+#### Wizard
+- Half damage on a miss or successful save (Potent Cantrip p. 82)
+- Choose creatures that auto-succeed in an area (Sculpt Spells p. 82; Careful Spell)
+- Maximize spell damage dice + escalating backlash (Overchannel p. 82)
+- Short Rest trigger; resource maximum/expended symbol (Arcane Recovery p. 78)
+- Choices limited to spells in the spellbook (Spell Mastery, Signature Spells p. 79); free spellbook entries limited to a school (Evocation Savant p. 82)
+- DATA: no Spellbook item in SRD equipment
+
+#### Sorcerer
+- BUG/limit: GoblinScript identifiers are letters only, so resources with digits (spell slots, "Bardic Inspiration (d12)") can't be read. DATA follow-up: Bard Superior Inspiration formula `Resources.BardicInspirationd12` does not evaluate (confirmed in app).
+- Per-class spell save DC / spell attack bonus (Innate Sorcery p. 66)
+- Metamagic changing dice, duration, components, damage type, level; one option per spell (p. 67)
+- Effect lasting for "saves against this spell" (Heightened p. 67)
+- Created spell slots above the maximum (p. 66)
+- Free cast without Material/Concentration (Dragon Companion p. 70)
+- One damage roll per spell (Elemental Affinity p. 70)
+
+#### Warlock
+- Class-level prerequisites (only character level exists); "has invocation X", "knows a damaging cantrip" (p. 72-74)
+- Formula ranges in Modify Abilities (Eldritch Spear 30 x level p. 73)
+- Modify only a feature's free cast of a spell (maximized False Life, Find Familiar as Magic action, "on yourself" p. 73-74)
+- Restore a per-feature use by spending a slot (Hurl Through Hell p. 76; also Holy Nimbus done as a separate ability)
+- Bonded pact weapon tracking (Pact of the Blade, Thirsting/Devouring Blade, Eldritch Smite, Lifedrinker p. 72-74)
+- Ritual-tag filter; re-pick on each rest (Book of Shadows p. 74; Fiendish Resilience p. 76; Circle of the Land)
+- Repeatable choices (Lessons of the First Ones p. 73; feats)
 
 To check, not yet known to need code: whether Thaumaturge's bonus to Arcana/Religion (a d20 roll modifier) is applied when the check is rolled (the sheet's static skill bonus leaves it out), and whether Turn Undead's "ends early if it takes damage" can be expressed on the effect.
 
