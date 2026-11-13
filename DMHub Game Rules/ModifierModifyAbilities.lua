@@ -237,6 +237,62 @@ CharacterModifier.RegisterAbilityModifier
 		},
 	}
 
+--replaces the base damage roll of a weapon attack (the weapon's die plus the
+--attribute modifier) with a fixed roll. Used by monsters whose stat block gives
+--a weapon different damage than the weapon itself computes (a Large creature's
+--extra dice, or a versatile weapon the stat block uses one-handed). Extra damage
+--added by other modifiers is unaffected. Abilities that are not weapon attacks
+--are left alone.
+CharacterModifier.RegisterAbilityModifier
+	{
+		id = "weapondamage",
+		text = "Weapon Damage Roll",
+		operations = { "Set" },
+		set = function(modifier, creature, ability, operation, value)
+			if not ability:has_key("attackOverride") then
+				return true
+			end
+
+			local instances = ability.attackOverride:try_get("damageInstances")
+			if instances == nil or instances[1] == nil then
+				return true
+			end
+
+			if type(value) == "table" then
+				value = value:ToText()
+			end
+
+			--the attack is shared with the creature's attack list, so replace
+			--the instance rather than writing into it.
+			local instance = DeepCopy(instances[1])
+			instance.damage = tostring(value)
+			local newInstances = DeepCopy(instances)
+			newInstances[1] = instance
+			ability.attackOverride = DeepCopy(ability.attackOverride)
+			ability.attackOverride.damageInstances = newInstances
+			return true
+		end,
+		documentation = {
+			help = "The weapon attack's base damage roll is replaced with this roll (dice and modifier, without a damage type).",
+			output = "roll",
+			examples = {
+				{
+					script = "2d8 + 4",
+					text = "The weapon deals 2d8 + 4 damage of its own type.",
+				},
+			},
+			subject = creature.helpSymbols,
+			subjectDescription = "The creature that is affected by this modifier",
+			symbols = {
+				ability = {
+					name = "Ability",
+					type = "ability",
+					desc = "The ability being modified",
+				},
+			},
+		},
+	}
+
 CharacterModifier.RegisterAbilityModifier
 	{
 		id = "directdamageroll",
