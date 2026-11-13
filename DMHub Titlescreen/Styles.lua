@@ -15,7 +15,7 @@ local mod = dmhub.GetModLoading()
 -- =============================================================================
 
 local g_d20DefaultScheme = {
-    description = "The classic D&D 5e gold-on-dark palette.",
+    description = "The classic 5e gold-on-dark palette.",
     colors = {
         bg            = "#161616",
         bgAlt         = "#222222",

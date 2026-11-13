@@ -352,6 +352,13 @@ Work:
 
 ### Phase 3 -- Choose the ruleset when creating a campaign
 
+**Progress 2026-11-12 (uncommitted, needs a DMHub build to test):**
+- Engine option chosen: `lobby:CreateGame{gameSystem = ...}` writes `GameInfo.gameSystem` before the first save (`Assets/GamesMonitor.cs`, edited in `C:\dev\dmhub`).
+- The New Game panel has a Game System dropdown over `AvailableGameSystems`, with the chosen system's description under it. It is shown to everyone, not only in dev mode.
+- Renamed "D&D 5e" to "5e" (and the theme description in `Styles.lua`).
+- Added `dmhub-dnd2024` as "5.5e" with the SRD 5.2.1 attribution. **Visible to everyone, not dev-only** (David 2026-11-12), although the module is not published yet: a game created with it gets no content until the first publish.
+- Not done: the Campaign Settings lock (D5).
+
 - Add `dmhub-dnd2024` to `AvailableGameSystems`:
   - `codeMod = codeMod5e` (the same Lua for now)
   - the SRD 5.2.1 attribution in `terms`

@@ -61,10 +61,17 @@ local codeMod5e = "b2f58995-4b34-40ab-9dba-5ae0ec387c33"
 local AvailableGameSystems = {
 	{
 		id = "dmhub-legacy",
-		text = "D&D 5e",
+		text = "5e",
         codeMod = codeMod5e,
 		description = "The fifth edition core rules and bestiary.",
 		terms = "This work includes material taken from the System Reference Document 5.1 (\"SRD 5.1\") by Wizards of the Coast LLC and available at https://dnd.wizards.com/resources/systems-reference-document. The SRD 5.1 is licensed under the Creative Commons Attribution 4.0 International License available at https://creativecommons.org/licenses/by/4.0/legalcode.",
+	},
+	{
+		id = "dmhub-dnd2024",
+		text = "5.5e",
+        codeMod = codeMod5e,
+		description = "The 2024 fifth edition rules, from the SRD 5.2.1.",
+		terms = "This work includes material from the System Reference Document 5.2.1 (\"SRD 5.2.1\") by Wizards of the Coast LLC, available at https://www.dndbeyond.com/srd. The SRD 5.2.1 is licensed under the Creative Commons Attribution 4.0 International License, available at https://creativecommons.org/licenses/by/4.0/legalcode.",
 	},
 	{
 		id = "shwayguy-pathfinder2e",
@@ -1136,6 +1143,8 @@ local CreateGameScreen = function(titlescreen)
 
     local m_joinGamePanel
     local m_newGameBackend = "local"
+    --The game system a new game is created with (an AvailableGameSystems id).
+    local m_newGameSystem = AvailableGameSystems[1].id
     m_joinGamePanel = gui.Panel{
         classes = {"collapsed"},
         width = "100%",
@@ -1312,6 +1321,56 @@ local CreateGameScreen = function(titlescreen)
         },
 
         gui.Panel{
+            width = "80%",
+            height = 36,
+            halign = "center",
+            valign = "bottom",
+            flow = "horizontal",
+
+            gui.Label{
+                text = "Game System:",
+                width = "auto",
+                height = "auto",
+                fontSize = 15,
+                valign = "center",
+                rmargin = 8,
+            },
+
+            gui.Dropdown{
+                --Theme scoped here for the open menu, as on the Storage dropdown below.
+                styles = ThemeEngine.GetStyles(),
+                width = 260,
+                height = 28,
+                fontSize = 15,
+                valign = "center",
+                options = AvailableGameSystems,
+                idChosen = m_newGameSystem,
+                change = function(element)
+                    m_newGameSystem = element.idChosen
+                    m_joinGamePanel:FireEventTree("newGameSystemChanged")
+                end,
+            },
+        },
+
+        gui.Label{
+            width = "80%",
+            height = "auto",
+            halign = "center",
+            valign = "bottom",
+            textAlignment = "left",
+            fontSize = 13,
+            opacity = 0.7,
+            bmargin = 4,
+            create = function(element)
+                element:FireEvent("newGameSystemChanged")
+            end,
+            newGameSystemChanged = function(element)
+                local systemInfo = GetGameSystemInfo(m_newGameSystem)
+                element.text = (systemInfo ~= nil and systemInfo.description) or ""
+            end,
+        },
+
+        gui.Panel{
             hidden = not dmhub.GetSettingValue("dev"),
             width = "80%",
             height = 36,
@@ -1372,6 +1431,7 @@ local CreateGameScreen = function(titlescreen)
                 m_gamescreen:FireEventTree("showGameMessage", "Creating Game...")
                 lobby:CreateGame{
                     backend = m_newGameBackend,
+                    gameSystem = m_newGameSystem,
                     error = function(message)
                         m_gamescreen:FireEventTree("error", message or "The game could not be created.")
                     end,
