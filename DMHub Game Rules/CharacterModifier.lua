@@ -3110,6 +3110,14 @@ function CharacterModifier:DescribeResourceAvailability(creature)
 		end
 	end
 
+	if refreshType == 'turn' and self:GetNumberOfCharges(creature) == 1 then
+		if self:HasResourcesAvailable(creature) then
+			return "Once per turn"
+		else
+			return "Already used this turn"
+		end
+	end
+
 	local used = creature:GetResourceUsage(self.guid, refreshType)
 	local available = self:GetNumberOfCharges(creature)
 	return string.format("%d/%d available, refreshes %s", available - used, available, CharacterResource.usageLimitMap[refreshType].refreshDescription)

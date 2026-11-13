@@ -254,6 +254,19 @@ TriggeredAbility.RegisterTrigger{
     }
 }
 
+--fired on each resting creature when the rest is finished (RestDialog), after its
+--resources have refreshed. A Long Rest fires only finishlongrest.
+--e.g. Arcane Recovery, Tireless (SRD 5.2.1 p. 78, 59).
+TriggeredAbility.RegisterTrigger{
+    id = "finishshortrest",
+    text = "Finish a Short Rest",
+}
+
+TriggeredAbility.RegisterTrigger{
+    id = "finishlongrest",
+    text = "Finish a Long Rest",
+}
+
 table.sort(TriggeredAbility.triggers, function(a,b) return a.text < b.text end)
 
 function TriggeredAbility.GetTriggerDropdownOptions(includeNone)

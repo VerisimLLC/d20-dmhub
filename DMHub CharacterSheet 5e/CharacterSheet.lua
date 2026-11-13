@@ -2046,7 +2046,37 @@ function CharSheet.CharacterSheetProficiencesAndLanguagesPanel()
 					items[cat] = itemsList
 				end
 
-				local categories = {"Weapons", "Armor", "Tools", "Other", "Languages"}
+				--5.5e Weapon Mastery: the kinds of weapons mastered.
+				if GameSystem.WeaponMastery then
+					local total = creature:WeaponMasterySlots()
+					if total > 0 then
+						local list = {}
+						for i,itemid in ipairs(creature:try_get("weaponMasteries", {})) do
+							if i > total then
+								break
+							end
+							local item = equipmentTable[itemid]
+							if item ~= nil then
+								local _, propInfo = WeaponMastery.PropertyOfWeapon(item)
+								if propInfo ~= nil then
+									list[#list+1] = {
+										text = string.format("%s (%s)", item.name, WeaponMastery.MasteryName(propInfo)),
+									}
+								end
+							end
+						end
+
+						if #list < total then
+							list[#list+1] = {
+								text = string.format("%d to choose", total - #list),
+							}
+						end
+
+						items["Weapon Mastery"] = list
+					end
+				end
+
+				local categories = {"Weapons", "Weapon Mastery", "Armor", "Tools", "Other", "Languages"}
 
 				for i,cat in ipairs(categories) do
 					local itemsList = items[cat]
@@ -2517,6 +2547,88 @@ function CharSheet.CharacterSheetEditLanguagesPopup(element, info)
 			end
 		end,
 	}
+
+	--5.5e Weapon Mastery (SRD 5.2.1 p. 90): choose the kinds of weapons whose mastery
+	--properties the character can use. One dropdown per slot its Weapon Mastery
+	--features grant.
+	if GameSystem.WeaponMastery and creature:WeaponMasterySlots() > 0 then
+		children[#children+1] = gui.Label{
+			width = "auto",
+			height = "auto",
+			halign = "center",
+			vmargin = 8,
+			fontSize = 18,
+			bold = true,
+			text = "Weapon Mastery",
+		}
+
+		children[#children+1] = gui.Panel{
+			width = "100%",
+			height = "auto",
+			flow = "vertical",
+
+			create = function(element)
+				element:FireEvent("refreshPanel")
+			end,
+
+			refreshPanel = function(element)
+				local total, groups = creature:WeaponMasterySlots()
+				local chosen = creature:try_get("weaponMasteries", {})
+				local rows = {}
+				local slot = 0
+				for _,group in ipairs(groups) do
+					local options = creature:WeaponMasteryOptions(group.weaponKinds)
+					table.insert(options, 1, {
+						id = "none",
+						text = "Choose a weapon...",
+					})
+
+					for n=1,group.num do
+						slot = slot + 1
+						local index = slot
+						--a stored choice that is no longer an option (e.g. the
+						--proficiency was lost) stays visible rather than "(Invalid)".
+						local slotOptions = options
+						local current = chosen[index]
+						if current ~= nil and current ~= "none" then
+							local found = false
+							for _,opt in ipairs(options) do
+								if opt.id == current then
+									found = true
+									break
+								end
+							end
+							if not found then
+								local item = (dmhub.GetTable("tbl_Gear") or {})[current]
+								slotOptions = DeepCopy(options)
+								slotOptions[#slotOptions+1] = {
+									id = current,
+									text = string.format("%s (not proficient)", item ~= nil and item.name or "Unknown weapon"),
+								}
+							end
+						end
+
+						rows[#rows+1] = gui.Dropdown{
+							vmargin = 2,
+							hasSearch = true,
+							options = slotOptions,
+							idChosen = chosen[index] or "none",
+							change = function(element)
+								local list = creature:get_or_add("weaponMasteries", {})
+								for i=#list+1,index-1 do
+									list[i] = "none"
+								end
+								list[index] = element.idChosen
+								CharacterSheet.instance:FireEvent('refreshAll')
+							end,
+						}
+					end
+				end
+
+				element.children = rows
+			end,
+		}
+	end
 
 
 	element.popupPositioning = "panel"
@@ -3169,6 +3281,7 @@ function CharSheet.CharacterSheetConditions()
 									else
 										local cond = activeOngoingEffects[index]
 										cond.stacks = num
+										creature:CheckOngoingEffectDeath(cond.ongoingEffectid)
 									end
 								end
 

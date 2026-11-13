@@ -692,6 +692,10 @@ function GameHud:CreateRestingDialog(requestid, request)
 								end
 							end
 						}
+
+						if token.properties ~= nil then
+							token.properties:DispatchEvent(cond(request.info.type == 'short', "finishshortrest", "finishlongrest"), {})
+						end
 					end
 					
 				end

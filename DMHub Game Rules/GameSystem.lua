@@ -27,6 +27,14 @@ GameSystem.CRName = "CR"
 GameSystem.ChallengeName = "Challenge"
 GameSystem.ChallengeRatingName = "Challenge Rating"
 
+--Rules switches where 5e (SRD 5.1) and 5.5e (SRD 5.2.1) differ. The defaults here
+--are 5e's; a game system's root code mod sets its own values when it loads
+--(d20 System 5.5e/Main.lua). See RULESETS_PLAN.md, phase 7.
+
+--Weapon Mastery (SRD 5.2.1 p. 90): a creature can use the mastery property of
+--the kinds of weapons it has mastered (the "Weapon Mastery" modifier).
+GameSystem.WeaponMastery = false
+
 GameSystem.UseAttackRolls = true
 
 GameSystem.BaseAttackRoll = "1d20"

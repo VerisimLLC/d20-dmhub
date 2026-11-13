@@ -147,6 +147,11 @@ Attack.lookupSymbols = {
 	finesse = function(attack)
 		return attack:has_key("weapon") and attack.weapon:HasProperty("finesse")
 	end,
+
+	--5.5e Weapon Mastery: the attacker has mastered this weapon, so its mastery property applies.
+	mastery = function(attack)
+		return attack:try_get("mastery") ~= nil
+	end,
 	
 	meleerange = function(attack)
 		if attack:has_key("meleeRange") then
@@ -256,6 +261,11 @@ Attack.helpSymbols = {
 		name = "Finesse",
 		type = "boolean",
 		desc = "True if this attack is being made with a finesse weapon.",
+	},
+	mastery = {
+		name = "Mastery",
+		type = "boolean",
+		desc = "True if the attacker has mastered the weapon this attack is made with, so its mastery property applies (Weapon Mastery, 2024 rules).",
 	},
 	meleerange = {
 		name = "Melee Range",

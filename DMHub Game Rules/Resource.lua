@@ -73,6 +73,10 @@ CharacterResource.useQuantity = false
 CharacterResource.largeQuantity = false
 CharacterResource.textColor = "light"
 CharacterResource.usageLimit = 'long'
+
+--for a resource that refreshes on a Long Rest: how many expended uses a Short Rest
+--restores, e.g. 2024 Channel Divinity: 1 (SRD 5.2.1 p. 37). 0 = none.
+CharacterResource.shortRestRecovery = 0
 CharacterResource.diceType = 'none'
 CharacterResource.spellSlot = 'none'
 CharacterResource.levelsFrom = 'none'
@@ -345,6 +349,13 @@ CharacterResource.RegisterRefreshOptions{
 		refreshDescription = 'each round',
 	},
 	{
+		--"once per turn" (any creature's turn, not only yours), e.g. Sneak Attack.
+		--'round' refreshes at the start of your own turn, i.e. "once on each of your turns".
+		id = 'turn',
+		text = 'Per Turn',
+		refreshDescription = 'each turn',
+	},
+	{
 		id = 'encounter',
 		text = 'Per Encounter',
 		refreshDescription = 'each encounter',
@@ -414,6 +425,13 @@ function creature:GetResourceRefreshId(refreshType)
 		else
 			return dmhub.GenerateGuid()
 		end
+	elseif refreshType == 'turn' then
+		--outside of combat there are no turns, so a per turn resource is never used up.
+		local turnid = nil
+		if dmhub.initiativeQueue then
+			turnid = dmhub.initiativeQueue:GetTurnId()
+		end
+		return turnid or dmhub.GenerateGuid()
 	elseif refreshType == 'short' then
 		return self.shortRestId
 	elseif refreshType == 'long' then

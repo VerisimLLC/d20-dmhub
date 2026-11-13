@@ -18,6 +18,14 @@ CharacterOngoingEffect.durationUntilEndOfTurn = false
 CharacterOngoingEffect.effectsByName = {}
 CharacterOngoingEffect.endTrigger = "none"
 
+--a stackable effect that loses this many stacks on each Long Rest instead of lasting
+--or ending outright, e.g. 2024 Exhaustion: 1 (SRD 5.2.1 p. 181). 0 = not used.
+CharacterOngoingEffect.longRestRemovesStacks = 0
+
+--the creature dies when the effect reaches this many stacks, e.g. 2024 Exhaustion: 6
+--(SRD 5.2.1 p. 181). 0 = never.
+CharacterOngoingEffect.deathAtStacks = 0
+
 CharacterOngoingEffect.durationOptions = {
 	{
 		id = 'turn',

@@ -608,6 +608,55 @@ function CharacterOngoingEffect.CreateEditor(condid)
 			},
 		}
 
+		--stack rules (for stackable effects), e.g. 2024 Exhaustion.
+		children[#children+1] = gui.Panel{
+			classes = {"formPanel"},
+			gui.Label{
+				text = "Long Rest Removes Stacks:",
+				valign = "center",
+				minWidth = 200,
+				width = "auto",
+				height = "auto",
+			},
+			gui.Input{
+				classes = {"formInput"},
+				width = 60,
+				text = tostring(ongoingEffect.longRestRemovesStacks),
+				change = function(element)
+					local n = tonumber(element.text)
+					if n ~= nil and n >= 0 then
+						ongoingEffect.longRestRemovesStacks = math.floor(n)
+						UploadOngoingEffect()
+					end
+					element.text = tostring(ongoingEffect.longRestRemovesStacks)
+				end,
+			},
+		}
+
+		children[#children+1] = gui.Panel{
+			classes = {"formPanel"},
+			gui.Label{
+				text = "Dies at Stacks:",
+				valign = "center",
+				minWidth = 200,
+				width = "auto",
+				height = "auto",
+			},
+			gui.Input{
+				classes = {"formInput"},
+				width = 60,
+				text = tostring(ongoingEffect.deathAtStacks),
+				change = function(element)
+					local n = tonumber(element.text)
+					if n ~= nil and n >= 0 then
+						ongoingEffect.deathAtStacks = math.floor(n)
+						UploadOngoingEffect()
+					end
+					element.text = tostring(ongoingEffect.deathAtStacks)
+				end,
+			},
+		}
+
 		children[#children+1] = gui.Panel{
 			classes = {"formPanel"},
 			gui.Label{

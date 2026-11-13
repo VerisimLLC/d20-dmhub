@@ -11,3 +11,6 @@ local mod = dmhub.GetModLoading()
 --
 --This root loads after the shared UI, so a difference the shared code needs
 --while it loads must instead branch on dmhub.gameSystem at load time.
+
+--Weapon Mastery (SRD 5.2.1 p. 90).
+GameSystem.WeaponMastery = true

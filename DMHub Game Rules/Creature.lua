@@ -1194,7 +1194,25 @@ function creature.GetAttackFromWeapon(self, weapon, options)
 
 	local proficiencyBonus = GameSystem.CalculateWeaponProficiencyBonus(self, weapon)
 
+	--Weapon Mastery (5.5e): the mastery property we can use with this weapon, if any.
+	local mastery = self:GetWeaponMasteryProperty(weapon)
+	local usageLimitOptions = nil
+	if mastery == "mastery-nick" and actionType == "bonusAction" then
+		--Nick: the extra attack of the Light property is part of the Attack action
+		--instead of a Bonus Action, once per turn (SRD 5.2.1 p. 90).
+		actionType = "none"
+		usageLimitOptions = {
+			charges = 1,
+			resourceRefreshType = "turn",
+			resourceid = WeaponMastery.nickResourceId,
+		}
+	end
+
 	return Attack.new{
+		mastery = mastery,
+		usageLimitOptions = usageLimitOptions,
+		baseDamage = damage,
+		damageAttrBonus = damageAttrBonus,
 		iconid = weapon.iconid,
 		name = weapon.name,
 		range = weapon:Range(),
@@ -2534,6 +2552,11 @@ function creature.RollAttackHit(self, attack, target, options)
 			rollInfo.properties:UpdateOutcomesAfterEvents(self, targetCreature)
 			matchingOutcome = rollInfo.properties:GetOutcome(rollInfo)
 
+			--5.5e Weapon Mastery: this attack roll uses up any Vex against the target.
+			if GameSystem.WeaponMastery then
+				WeaponMastery.ConsumeVex(self, targetCreature)
+			end
+
 			if options.completeAttackRoll ~= nil then
 				options.completeAttackRoll(rollInfo)
 				options.completeAttackRoll = nil
@@ -3415,6 +3438,7 @@ function creature:GetActivatedAbilities(options)
 			range = attack:RangeNormal(),
 			rangeDisadvantage = attack:RangeDisadvantage(),
 			actionResourceId = attack:try_get("actionType"),
+			usageLimitOptions = attack:try_get("usageLimitOptions"),
 			behaviors = {
 				ActivatedAbilityAttackBehavior.new{
 					roll = "",
@@ -3433,6 +3457,15 @@ function creature:GetActivatedAbilities(options)
         if ability.categorization == nil then
             print("Invalid spell: SPELL C INVALID")
         end
+	end
+
+	if GameSystem.WeaponMastery then
+		--Cleave readied by a melee hit this turn (5.5e Weapon Mastery).
+		local count = #result
+		WeaponMastery.FillCleaveAbilities(self, attacks, result)
+		for i=count+1,#result do
+			result[i]._tmp_boundCaster = boundCaster
+		end
 	end
 
 	for i,mod in ipairs(modifiers) do
@@ -5079,6 +5112,19 @@ function creature:GetModifiersForD20Roll(rollType, options)
 		end
 	end
 
+	--5.5e Weapon Mastery: Vex gives Advantage on the next attack roll against its target.
+	if rollType == "attack" and options.target ~= nil and GameSystem.WeaponMastery then
+		local vex = WeaponMastery.VexModifier(self, options.target)
+		if vex ~= nil then
+			local mod = {mod = vex}
+			local m = vex:DescribeModifyD20Roll(mod, self, rollType, options)
+			if m ~= nil then
+				m.hint = m.modifier:ShouldApplyD20Modifier(mod, self, rollType, options)
+				result[#result+1] = m
+			end
+		end
+	end
+
 	return result
 end
 
@@ -5397,6 +5443,8 @@ function creature:ApplyOngoingEffect(ongoingEffectid, duration, casterInfo, opti
 
 	--use this as an opportunity to clean up any ongoingEffects that are no longer active.
 	self.ongoingEffects = self:ActiveOngoingEffects(true)
+
+	self:CheckOngoingEffectDeath(ongoingEffectid)
 
 	return result
 end
@@ -7158,14 +7206,39 @@ function creature:Rest(restType)
 		end
 
 		self.longRestId = restid
+	else
+		self:RecoverResourcesOnShortRest()
 	end
 
 	self.shortRestId = restid
 
 	if self:has_key("ongoingEffects") then
+		local ongoingEffectsTable = dmhub.GetTable(CharacterOngoingEffect.tableName) or {}
+
+		--effects that lose some stacks on a Long Rest instead of ending, e.g. 2024 Exhaustion
+		--(SRD 5.2.1 p. 181). Maps ongoing effect id -> stacks still to remove.
+		local stacksToRemove = {}
+
 		local newOngoingEffects = {}
 		for _,effectInstance in ipairs(self.ongoingEffects) do
 			local remove = effectInstance.removeOnShortRest or (effectInstance.removeOnLongRest and restType == 'long')
+			local ongoingEffect = ongoingEffectsTable[effectInstance.ongoingEffectid]
+			if (not remove) and restType == 'long' and ongoingEffect ~= nil and ongoingEffect.longRestRemovesStacks > 0 then
+				local id = effectInstance.ongoingEffectid
+				local toRemove = stacksToRemove[id]
+				if toRemove == nil then
+					toRemove = ongoingEffect.longRestRemovesStacks
+				end
+
+				local removed = math.min(toRemove, effectInstance.stacks)
+				effectInstance.stacks = effectInstance.stacks - removed
+				stacksToRemove[id] = toRemove - removed
+
+				if effectInstance.stacks <= 0 then
+					remove = true
+				end
+			end
+
 			if not remove then
 				newOngoingEffects[#newOngoingEffects+1] = effectInstance
 			end
@@ -7174,6 +7247,67 @@ function creature:Rest(restType)
 		self.ongoingEffects = newOngoingEffects
 	end
 
+end
+
+--A Short Rest restores the uses of resources that refresh on a Long Rest but
+--regain some uses on a Short Rest (CharacterResource.shortRestRecovery), e.g.
+--2024 Channel Divinity (SRD 5.2.1 p. 37).
+function creature:RecoverResourcesOnShortRest()
+	local usage = self:try_get("resources")
+	if usage == nil then
+		return
+	end
+
+	local resourcesTable = dmhub.GetTable(CharacterResource.tableName) or {}
+
+	local keys = {}
+	for key,_ in pairs(usage) do
+		keys[#keys+1] = key
+	end
+
+	for _,key in ipairs(keys) do
+		local resourceInfo = resourcesTable[key]
+		if resourceInfo ~= nil and resourceInfo.usageLimit == "long" and resourceInfo.shortRestRecovery > 0 then
+			self:RefreshResource(key, "long", resourceInfo.shortRestRecovery, "Short Rest")
+		end
+	end
+end
+
+--total stacks of an ongoing effect on this creature, across all of its instances.
+function creature:CountOngoingEffectStacks(ongoingEffectid)
+	local result = 0
+	for _,effectInstance in ipairs(self:try_get("ongoingEffects", {})) do
+		if effectInstance.ongoingEffectid == ongoingEffectid then
+			result = result + effectInstance.stacks
+		end
+	end
+	return result
+end
+
+--An ongoing effect may kill the creature once it has enough stacks
+--(CharacterOngoingEffect.deathAtStacks), e.g. 2024 Exhaustion level 6 (SRD 5.2.1 p. 181).
+--Call after changing an effect's stacks; returns true if the creature died.
+function creature:CheckOngoingEffectDeath(ongoingEffectid)
+	local ongoingEffect = (dmhub.GetTable(CharacterOngoingEffect.tableName) or {})[ongoingEffectid]
+	if ongoingEffect == nil or ongoingEffect.deathAtStacks <= 0 then
+		return false
+	end
+
+	if self:CountOngoingEffectStacks(ongoingEffectid) < ongoingEffect.deathAtStacks then
+		return false
+	end
+
+	local note = string.format("Died from %s", ongoingEffect.name)
+	if self:CurrentHitpoints() > 0 then
+		self:SetCurrentHitpoints(0, note)
+	end
+
+	local failures = self:GetNumDeathSavingThrowFailures()
+	if failures < 3 then
+		self:AddDeathSavingThrowFailure(3 - failures)
+	end
+
+	return true
 end
 
 function creature:HasConcentration()

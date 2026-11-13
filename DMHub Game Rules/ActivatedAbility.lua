@@ -810,6 +810,12 @@ function ActivatedAbility:TargetPassesFilter(casterToken, targetToken)
 		return false
 	end
 
+	--a target rule from code, on abilities built at runtime (e.g. Weapon Mastery's Cleave).
+	local targetFilterFn = self:try_get("_tmp_targetFilterFn")
+	if targetFilterFn ~= nil and not targetFilterFn(casterToken, targetToken) then
+		return false
+	end
+
 	if self.targetFilter == '' then
 		return true
 	end
@@ -2800,6 +2806,7 @@ function ActivatedAbilityAttackBehavior:Cast(ability, casterToken, targets, opti
 		local canceled = false
 		local completed = false
 		local attackHit = false
+		local attackDamageDealt = 0
 
 		casterToken.properties:RollAttackHit(attack, target.token, {
 			ability = ability,
@@ -2845,6 +2852,7 @@ function ActivatedAbilityAttackBehavior:Cast(ability, casterToken, targets, opti
 				completed = true
 				attackHit = hit
 				if attackHit then
+					attackDamageDealt = completeAttackOptions.damageDealt or 0
 					options.symbols.cast.damagedealt = options.symbols.cast.damagedealt + completeAttackOptions.damageDealt
 					options.symbols.cast.damageraw = options.symbols.cast.damageraw + completeAttackOptions.damageRaw
 					self:RecordHitTarget(target.token, options)
@@ -2861,6 +2869,19 @@ function ActivatedAbilityAttackBehavior:Cast(ability, casterToken, targets, opti
 
 		if canceled then
 			return
+		end
+
+		--5.5e Weapon Mastery: the mastery property of a mastered weapon.
+		if GameSystem.WeaponMastery and attack:try_get("mastery") ~= nil then
+			WeaponMastery.AfterAttack{
+				ability = ability,
+				attack = attack,
+				casterToken = casterToken,
+				targetToken = target.token,
+				hit = attackHit,
+				damageDealt = attackDamageDealt,
+				keywords = ability.keywords,
+			}
 		end
 
 		if attackHit and self:has_key("attackTriggeredAbility") then

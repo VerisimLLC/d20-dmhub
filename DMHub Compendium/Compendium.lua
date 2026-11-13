@@ -1542,6 +1542,34 @@ local ShowResourcesPanel = function(parentPanel)
             }
         end
 
+		--uses a Short Rest restores to a resource that refreshes on a Long Rest.
+		if resource.usageLimit == "long" then
+			children[#children+1] = gui.Panel{
+				classes = {'formPanel'},
+				gui.Label{
+					text = 'Short Rest Recovers:',
+					valign = "center",
+					minWidth = 200,
+					width = 'auto',
+					height = 'auto',
+				},
+				gui.Input{
+					width = 60,
+					height = 30,
+					fontSize = 18,
+					text = tostring(resource.shortRestRecovery),
+					change = function(element)
+						local n = tonumber(element.text)
+						if n ~= nil and n >= 0 then
+							resource.shortRestRecovery = math.floor(n)
+							UploadResource()
+						end
+						element.text = tostring(resource.shortRestRecovery)
+					end,
+				},
+			}
+		end
+
 
 		--the resource's dice type.
 		children[#children+1] = gui.Panel{
