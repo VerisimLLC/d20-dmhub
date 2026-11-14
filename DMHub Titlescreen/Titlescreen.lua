@@ -70,6 +70,10 @@ local AvailableGameSystems = {
 		id = "dmhub-dnd2024",
 		text = "5.5e",
         codeMod = codeMod5e,
+        --installed into each new game on the Director's first entry: the
+        --Pregens party's characters (a game-system module's characters never
+        --reach a game; a starting module's do).
+        startingModule = "dmhub-dnd2024starter",
 		description = "The 2024 fifth edition rules, from the SRD 5.2.1.",
 		terms = "This work includes material from the System Reference Document 5.2.1 (\"SRD 5.2.1\") by Wizards of the Coast LLC, available at https://www.dndbeyond.com/srd. The SRD 5.2.1 is licensed under the Creative Commons Attribution 4.0 International License, available at https://creativecommons.org/licenses/by/4.0/legalcode.",
 	},
@@ -1433,9 +1437,11 @@ local CreateGameScreen = function(titlescreen)
 
             click = function(element)
                 m_gamescreen:FireEventTree("showGameMessage", "Creating Game...")
+                local systemInfo = GetGameSystemInfo(m_newGameSystem)
                 lobby:CreateGame{
                     backend = m_newGameBackend,
                     gameSystem = m_newGameSystem,
+                    startingModule = systemInfo and systemInfo.startingModule,
                     error = function(message)
                         m_gamescreen:FireEventTree("error", message or "The game could not be created.")
                     end,
