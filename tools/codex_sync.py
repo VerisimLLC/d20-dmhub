@@ -143,6 +143,12 @@ PATCHES = {
         # as a grey slab. Without an image the screen is its plain dark band.
         ('{id = "vasloria", image = "e83e6ea1-6212-4baf-8f26-a11bf7b85c6e", width = 2000, height = 633, left = 0, tint = "#ffffffff", veil = "#16171bf2"},',
          '{id = "plain", width = 2000, height = 633, left = 0, veil = "#16171bf2"}, --d20 patch: no Codex cover art', 1),
+        # A new table (no saved layout) starts with the screen shut, not open
+        # at DEFAULT_FRACTION (David, 2026-11-14). The first click on the tab
+        # still opens it to DEFAULT_FRACTION; saved layouts keep their size.
+        ("    g.fraction = DEFAULT_FRACTION\n    g.lastFraction = DEFAULT_FRACTION\n    if type(saved) == \"table\" then",
+         "    g.fraction = 0 --d20 patch: a new table starts with the screen shut (the tab opens it to DEFAULT_FRACTION)\n"
+         "    g.lastFraction = DEFAULT_FRACTION\n    if type(saved) == \"table\" then", 1),
     ],
     "DMHub Game Hud/Tabletop.lua": [
         ("Close this to return to being the Director.", "Close this to return to being the DM.", 1),

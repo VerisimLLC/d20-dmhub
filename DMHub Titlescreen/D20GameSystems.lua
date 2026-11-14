@@ -33,4 +33,15 @@ if type(systems) == "table" then
             table.remove(systems, i)
         end
     end
+
+    --5.5e is the default for new games: the New Game panel preselects the
+    --first entry. (A game record with no gameSystem still reads as
+    --dmhub-legacy in the engine, so existing games stay 5e.)
+    for j,system in ipairs(systems) do
+        if system.id == "dmhub-dnd2024" then
+            table.remove(systems, j)
+            table.insert(systems, 1, system)
+            break
+        end
+    end
 end

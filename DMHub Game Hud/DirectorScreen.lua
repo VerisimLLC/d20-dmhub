@@ -1760,7 +1760,7 @@ function DirectorScreen.Load(saved)
     g.drag = nil
     g.resize = nil
     g.slide = nil
-    g.fraction = DEFAULT_FRACTION
+    g.fraction = 0 --d20 patch: a new table starts with the screen shut (the tab opens it to DEFAULT_FRACTION)
     g.lastFraction = DEFAULT_FRACTION
     if type(saved) == "table" then
         g.fraction = math.max(0, math.min(MAX_FRACTION, tonumber(saved.fraction) or DEFAULT_FRACTION))
