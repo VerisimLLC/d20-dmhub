@@ -17,6 +17,13 @@ Per game it checks:
   - every registered dockable panel (DockablePanel.GetMenuItems) opens and
     closes without an error
   - the DM's Screen opens and closes, and a /roll in chat resolves
+  - a second map window opens and closes on the table
+  - a journal document and a character card open, when the game has one
+    (reported as skipped otherwise: give the test games a document and a
+    token on their current map to cover them)
+
+The runs change the test games a little (a chat roll, window and panel
+layout), so use games kept for testing.
 
 The test games are local to this machine, so their ids live in
 tools/smoke_games.local.json (not checked in):
@@ -148,6 +155,10 @@ class Result:
     def ok(self, what):
         print(f"    ok   {what}")
 
+    def skip(self, what, why):
+        self.notes.append(f"{what} skipped: {why}")
+        print(f"    skip {what}: {why}")
+
 
 def report_errors(res, what, entries):
     """Records a check's console errors; returns True if there were real ones."""
@@ -264,6 +275,69 @@ def check_extras(res):
     except Exception as exc:
         res.fail("chat /roll", str(exc)[:600])
 
+    #A second map window on the table (Game Hud/Tabletop.lua), then closed.
+    seq = checkpoint()
+    try:
+        mapid = lua("""
+if Tabletop == nil or not Tabletop.IsActive() then return "absent" end
+for _, m in ipairs(game.maps) do
+  if m.id ~= game.currentMapId and not Tabletop.HasMapWindow(m.id) then
+    Tabletop.OpenMap(m.id, {newWindow = true})
+    return m.id
+  end
+end
+return "none"
+""")
+        if mapid == "absent":
+            res.fail("map window", "the Tabletop is not active")
+        elif mapid == "none":
+            res.skip("map window", "the game has only one map")
+        else:
+            time.sleep(PANEL_SETTLE)
+            lua("Tabletop.CloseMapWindow(%s); return 'ok'" % json.dumps(mapid))
+            time.sleep(0.5)
+            report_errors(res, "map window", errors_since(seq)[0])
+    except Exception as exc:
+        res.fail("map window", str(exc)[:600])
+
+    #A journal document, if the game has one (DocumentSystem).
+    seq = checkpoint()
+    try:
+        r = lua("""
+for id, doc in unhidden_pairs(dmhub.GetTable(CustomDocument.tableName) or {}) do
+  doc:ShowDocument()
+  return tostring(doc.typeName)
+end
+return "none"
+""")
+        if r == "none":
+            res.skip("document", "the game has no journal documents")
+        else:
+            time.sleep(PANEL_SETTLE)
+            report_errors(res, f"document ({r})", errors_since(seq)[0])
+    except Exception as exc:
+        res.fail("document", str(exc)[:600])
+
+    #A character card on the table, if the current map has a token.
+    seq = checkpoint()
+    try:
+        r = lua("""
+for _, tok in pairs(dmhub.GetTokens() or {}) do
+  if tok.charid ~= nil then
+    Tabletop.OpenCard(tok.charid)
+    return tostring(tok.name)
+  end
+end
+return "none"
+""")
+        if r == "none":
+            res.skip("character card", "the current map has no tokens")
+        else:
+            time.sleep(PANEL_SETTLE)
+            report_errors(res, f"character card ({r})", errors_since(seq)[0])
+    except Exception as exc:
+        res.fail("character card", str(exc)[:600])
+
 
 def run_game(spec, system_key, gameid, no_launch):
     res = Result(system_key)
@@ -340,6 +414,8 @@ def main():
         print(f"  {r.system:6s} {'PASS' if not r.failures else 'FAIL (%d)' % len(r.failures)}")
         for what, detail in r.failures:
             print(f"         {what}: {detail[:200]}")
+        for note in r.notes:
+            print(f"         ({note})")
         failed = failed or bool(r.failures)
     sys.exit(1 if failed else 0)
 

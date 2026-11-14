@@ -61,9 +61,7 @@
       "only": [
         "CharacterPanel",
         "AIPanel",
-        "Devtools",
-        "DicePanel",
-        "GoblinScriptDebugger"
+        "DicePanel"
       ],
       "_name": "d20 Panels"
     },
@@ -177,6 +175,18 @@
       "root": "codex",
       "folder": "ChatPanel",
       "_name": "Chat Panel"
+    },
+    {
+      "guid": "19768887-9273-4208-a683-6550e2e5ba3b",
+      "root": "codex",
+      "folder": "Development Utilities",
+      "exclude": [
+        "RandomTestPanel",
+        "StatsDebugger",
+        "TriggerDebugger",
+        "GameRecorderPanel"
+      ],
+      "_name": "Development Utilities"
     },
     {
       "guid": "3d12f7c0-bbe1-4e3f-a1c8-a8a71d96a963",

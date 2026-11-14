@@ -312,6 +312,18 @@ if Missing("ActivatedAbilityPowerRollBehavior") then
 end
 
 -----------------------------------------------------------------------
+--Draw Steel Core Rules: ActivatedAbility.TabBGImage, the image of the
+--ability card's bookmark tab. Development Utilities' Control Zoo builds
+--its floating-tab demo with it when the zoo opens. The image ships with
+--the engine, so it is the same one the Codex uses.
+
+if rawget(_G, "ActivatedAbility") ~= nil and MissingField(ActivatedAbility, "TabBGImage") then
+    function ActivatedAbility.TabBGImage()
+        return "drawsteel/power_roll_tab.png"
+    end
+end
+
+-----------------------------------------------------------------------
 --Chat Enhancements: SendTitledChatMessage. The synced code uses it for
 --developer notices (deprecated gui calls) and the /safetheme reply. DMHub
 --has no titled chat message, so it goes to the log, never to the players.

@@ -190,18 +190,14 @@
       "only": [
         "CharacterPanel",
         "AIPanel",
-        "Devtools",
-        "DicePanel",
-        "GoblinScriptDebugger"
+        "DicePanel"
       ],
       "deps": [
         "corepanels"
       ],
       "order": [
-        "GoblinScriptDebugger",
         "CharacterPanel",
         "DicePanel",
-        "Devtools",
         "AIPanel"
       ],
       "guid": "c38dfa2f-6d85-4c5f-a296-7d978403cbd8"
@@ -493,6 +489,43 @@
         "InCharacterChat"
       ],
       "guid": "be8e656d-b94f-4712-9c9f-9064bc1207bd"
+    },
+    {
+      "key": "devutils",
+      "name": "Development Utilities",
+      "root": "codex",
+      "folder": "Development Utilities",
+      "deps": [
+        "corepanels",
+        "rules",
+        "docs"
+      ],
+      "exclude": [
+        "RandomTestPanel",
+        "StatsDebugger",
+        "TriggerDebugger",
+        "GameRecorderPanel"
+      ],
+      "order": [
+        "GoblinScriptDebugger",
+        "TriggerDebugger",
+        "Macros",
+        "CharacterInspector",
+        "Example",
+        "RegexMatcher",
+        "DevTools",
+        "AudioDev",
+        "FontMap",
+        "ControlZoo",
+        "RandomTestPanel",
+        "Blur",
+        "AbilityDebugBehavior",
+        "GameRecorderPanel",
+        "TextureBrowser",
+        "StatsDebugger",
+        "DevImages"
+      ],
+      "guid": "19768887-9273-4208-a683-6550e2e5ba3b"
     },
     {
       "key": "monsterai",
