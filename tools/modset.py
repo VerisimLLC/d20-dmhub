@@ -6,7 +6,7 @@ live from the Draw Steel Codex checkout; its d20 mods take theirs from this
 repo, several of them from folders the legacy mods also use (an "only" list).
 
 Every command talks to a running DMHub (DMHub white label, dev build) through
-its MCP bridge (default port 19876; --port to change).
+its MCP bridge (default port 19877, DMHub's; --port to change).
 
   python tools/modset.py legacy       read the legacy mods (guids, file orders,
                                       dependencies) from the running app into
@@ -43,7 +43,8 @@ MANIFEST_PATH = os.path.join(D20, "codemods.json")
 #The legacy DMHub root mods (CodeMod.BaseMod / OfficialMod before the new set).
 LEGACY_ROOTS = ["cd79da1c-4faa-4811-81c6-8da029136089", "b2f58995-4b34-40ab-9dba-5ae0ec387c33"]
 
-PORT = 19876
+#McpBridge.DefaultPort for the DMHub white label (the Codex's is 19876).
+PORT = 19877
 
 
 def load_spec():
@@ -372,7 +373,13 @@ return dmhub.ToJson(out)
 def cmd_deps(spec, args):
     require_dmhub()
     by_key = mod_by_key(spec)
+    keys = args.only.split(",") if args.only else None
+    #a session only has the records its own game's roots reach; the other
+    #system roots must be downloaded before they can be changed.
+    ensure_synced([m["guid"] for m in spec["mods"] if keys is None or m["key"] in keys])
     for m in spec["mods"]:
+        if keys and m["key"] not in keys:
+            continue
         deps = [by_key[k]["guid"] for k in dep_keys(spec, m) if k != m["key"]]
         lua("""
 local m = code.GetMod(%s)

@@ -45,3 +45,6 @@ status.json
 
 # Engine-generated stub version marker
 Definitions/version.txt
+
+# per-machine tool config (tools/smoke_games.local.json)
+*.local.json
