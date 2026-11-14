@@ -375,7 +375,10 @@ Work:
     - **d20** (`DMHub Titlescreen/Titlescreen.lua`): the 5.5e `AvailableGameSystems` entry has `startingModule = "dmhub-dnd2024starter"`, passed to `lobby:CreateGame`. Harmless on engines without the hook (the field is stored and ignored).
     - **Checked:** `module.DownloadModuleSnapshot` lists exactly the 12; a manual install into 5.5e test game `ImpracticalMisterFearlessAntagonist` wrote 12 characters (no maps) and each resolves with the right class, AC, HP and owner `PARTY`. The create-game -> first-entry path itself needs an engine build with the hook.
     - Only **new** 5.5e games get them; an existing game installs "5.5e Starter" by hand from the module browser. Updating the pregens: edit them in `ImmortalObnoxiousIckyIQ` and publish a new version of `dmhub-dnd2024starter` with the same 12 ids (`UpdateStartingModule` updates characters a Director has not touched).
-  - Gaps: default portraits (the builder does not set token art from species either); the Wizard's starting equipment has no Spellbook item (no SRD 5.2.1 gear record).
+  - **Portraits (2026-11-14), starter version 2 `47bb86dd-cb81-42bf-8d37-f3e2c6242b67`:** each pregen's token portrait is its class's `portraitid` (the class picker art), offset 0 and zoom 1, except Kavra (Barbarian; tall 400x498 art, `portraitOffset.y = 0.18` to frame the face). Checked rendered in token frames and in the published snapshot.
+    - **The Bard's class art is missing:** image `038b328d-860c-409d-9a84-99f4ae37c2dc` is not in the cloud ("valid image not found in cloud"), so Mirela keeps the default portrait and the class picker shows a blank Bard. `dmhub-dnd5e`'s Bard uses the same id, so the legacy game has the same hole. Needs new Bard art in both repos, then Mirela's portrait and a starter version 3.
+    - The class art is one fixed figure per class, so it does not match each pregen's species (e.g. the Barbarian art is a human, Kavra a goliath).
+  - Gaps: the Wizard's starting equipment has no Spellbook item (no SRD 5.2.1 gear record).
 
 - Add `dmhub-dnd2024` to `AvailableGameSystems`:
   - `codeMod = codeMod5e` (the same Lua for now)
