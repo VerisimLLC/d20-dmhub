@@ -27,7 +27,7 @@ layout), so use games kept for testing.
 
 The test games are local to this machine, so their ids live in
 tools/smoke_games.local.json (not checked in):
-  {"5e": "<gameid>", "5.5e": "<gameid>", "none": "<gameid>"}
+  {"5e": "<gameid>", "5.5e": "<gameid>", "none": "<gameid>", "pf2e": "<gameid>"}
 
 A launch kills any running DMHub.exe first (never Codex.exe). The engine repo's
 build-output.json names the player.
@@ -55,6 +55,8 @@ SYSTEMS = {
     "5e": ("dmhub-legacy", "sys5e"),
     "5.5e": ("dmhub-dnd2024", "sys55"),
     "none": ("dmhub-tabularasa", "sysnone"),
+    #Pathfinder 2e: its root lives in the dmhub-pf2e repo (gitroots.pf2e).
+    "pf2e": ("shwayguy-pathfinder2e", "syspf2e"),
 }
 
 #Console errors that are not the code's fault. Each is still printed, marked
@@ -190,6 +192,8 @@ def check_mods(spec, res, system_key):
     root = by_key[root_key]["guid"]
     others = [by_key[k]["guid"] for _, k in SYSTEMS.values() if k != root_key]
     legacy = {lm["guid"]: lm["name"] for lm in spec["legacy"]["mods"]}
+    #frozen records a new mod replaces (the community Pathfinder 2e mod).
+    legacy.update({m["legacy"]: m["name"] + " (legacy record)" for m in spec["mods"] if m.get("legacy")})
     if root not in loaded:
         res.fail("system root loaded", f"{by_key[root_key]['name']} ({root}) is not loaded")
     else:
@@ -395,7 +399,7 @@ def main():
         results.append(run_game(spec, key, "", True))
     else:
         if not os.path.exists(GAMES_PATH):
-            sys.exit(f"No {GAMES_PATH}. Write it as {{\"5e\": id, \"5.5e\": id, \"none\": id}}; "
+            sys.exit(f"No {GAMES_PATH}. Write it as {{\"5e\": id, \"5.5e\": id, \"none\": id, \"pf2e\": id}}; "
                      "--list-games (with DMHub running) shows the candidates.")
         with open(GAMES_PATH, encoding="utf-8") as f:
             games = json.load(f)
