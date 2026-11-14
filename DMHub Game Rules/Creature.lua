@@ -177,6 +177,162 @@ RegisterGameType("monster", "creature")
 
 creature._tmp_aicontrol = 0
 
+-----------------------------------------------------------------------
+--Monster AI hooks (the d20 Monster AI mod drives these; with no AI running
+--they answer "not AI-controlled" and change nothing).
+--
+--Which tokens the AI is acting with, keyed by charid. Kept in a file-level
+--table, never on the token: the engine nils every _tmp_ field on every token
+--whenever it rebuilds the aura index, which can land in the middle of an action.
+local g_aiControl = {}
+local g_aiActivity = {}
+local g_aiActivityInProgress = nil
+
+--- Mark a token as driven by the AI. Nests: each call needs an EndAIControl.
+--- @param charid string
+--- @param promptCallback nil|fun(casterToken: CharacterToken, ability: ActivatedAbility, symbols: table, options: table): nil|"skip"|table
+function creature.BeginAIControl(charid, promptCallback)
+	local entry = g_aiControl[charid]
+	if entry == nil then
+		entry = {count = 0}
+		g_aiControl[charid] = entry
+	end
+	entry.count = entry.count + 1
+	entry.promptCallbacks = entry.promptCallbacks or {}
+	entry.promptCallbacks[#entry.promptCallbacks+1] = promptCallback or false
+end
+
+--- @param charid string
+function creature.EndAIControl(charid)
+	local entry = g_aiControl[charid]
+	if entry == nil then
+		return
+	end
+	entry.count = entry.count - 1
+	entry.promptCallbacks[#entry.promptCallbacks] = nil
+	if entry.count <= 0 then
+		g_aiControl[charid] = nil
+	end
+end
+
+--- @param charid string
+--- @return boolean
+function creature.IsTokenAIControlled(charid)
+	return charid ~= nil and g_aiControl[charid] ~= nil
+end
+
+--- The prompt handler of the innermost AI control of a token, or nil.
+--- @param charid string
+--- @return nil|function
+function creature.GetTokenAIPromptCallback(charid)
+	local entry = charid ~= nil and g_aiControl[charid] or nil
+	if entry == nil then
+		return nil
+	end
+	for i=#entry.promptCallbacks,1,-1 do
+		if entry.promptCallbacks[i] then
+			return entry.promptCallbacks[i]
+		end
+	end
+	return nil
+end
+
+--- Forget every AI control (the AI calls this when it starts and stops).
+function creature.ClearAIControl()
+	g_aiControl = {}
+	g_aiActivity = {}
+	g_aiActivityInProgress = nil
+end
+
+--- @return boolean
+function creature:IsAIControlled()
+	local token = dmhub.LookupToken(self)
+	return token ~= nil and creature.IsTokenAIControlled(token.charid)
+end
+
+--- The AI activity a token's own movement and casts belong to.
+function creature.GetTokenAIActivity(charid)
+	return charid ~= nil and g_aiActivity[charid] or nil
+end
+function creature.SetTokenAIActivity(charid, activityId)
+	if charid ~= nil then
+		g_aiActivity[charid] = activityId
+	end
+end
+function creature.GetAIActivityInProgress()
+	return g_aiActivityInProgress
+end
+function creature.SetAIActivityInProgress(activityId)
+	g_aiActivityInProgress = activityId
+end
+
+--- True when the Monster AI makes this creature's rolls on this client. The
+--- AI mod replaces this; the default answers only for tokens it is acting with.
+--- @param c creature
+--- @return boolean
+function creature.AIRollsForCreature(c)
+	if c == nil then
+		return false
+	end
+	local token = dmhub.LookupToken(c)
+	return token ~= nil and creature.IsTokenAIControlled(token.charid)
+end
+
+--- How a cast driven by the AI waits for rolls it requested of others. The AI
+--- mod sets it to a function(casterToken, actionid, resultTable); nil = no AI.
+creature.AIAwaitRollRequest = nil
+
+--- The prompt handler for a creature the AI plays but is not acting with at the
+--- moment (its reactions and triggers). The AI mod sets it to function(token); nil = no AI.
+creature.AIPromptCallbackForToken = nil
+
+-----------------------------------------------------------------------
+--Character speech: a line shown as a bubble over the token on every client
+--(drawn by TokenUI's "speech" event). Copied from the Codex.
+
+--- @param params {text: string, langid: nil|string}
+function creature:CharacterSpeech(params)
+	params.guid = dmhub.GenerateGuid()
+	params.timestamp = ServerTimestamp()
+	local speech = self:try_get("speech", {})
+	local newSpeech = {}
+	for _,entry in ipairs(speech) do
+		if TimestampAgeInSeconds(entry.timestamp) < 10 then
+			newSpeech[#newSpeech+1] = entry
+		end
+	end
+
+	newSpeech[#newSpeech+1] = params
+	self.speech = newSpeech
+end
+
+local g_seenSpeech = {}
+--- The speech entries this client has not shown yet.
+--- @return nil|{guid: string, text: string, langid: nil|string, timestamp: any}[]
+function creature:GetAndRemoveSpeech()
+	local speech = self:try_get("speech")
+	if speech == nil then
+		return nil
+	end
+
+	local result = nil
+
+	for _,entry in ipairs(speech) do
+		if not g_seenSpeech[entry.guid] and TimestampAgeInSeconds(entry.timestamp) < 10 then
+			g_seenSpeech[entry.guid] = true
+			result = result or {}
+			result[#result+1] = entry
+		end
+	end
+
+	return result
+end
+
+--all the languages that creatures controlled by the local player know
+--(filled in by RefreshToken; read by speech bubbles and in-character chat).
+creature.g_languagesKnownLocally = {}
+local g_languagesKnownRefresh = nil
+
 creature.max_hitpoints = 1
 
 --these will be populated by the game system.
@@ -2609,6 +2765,7 @@ function creature.RollAttackHit(self, attack, target, options)
 				local rollid
 				rollid = GameHud.instance.rollDialog.data.ShowDialog{
 					title = 'Roll for Damage',
+					ability = options.ability,
 					roll = attack:DescribeDamageRoll(),
 					description = target:DescribeRollAgainst(string.format("%s Damage Roll", attackName)),
 					creature = self,
@@ -2753,6 +2910,7 @@ function creature.RollAttackHit(self, attack, target, options)
 
 	GameHud.instance.rollDialog.data.ShowDialog{
 		title = 'Attack With ' .. attack.name,
+		ability = options.ability,
 		description = rollDescription,
 		roll = rollStr,
 		creature = self,
@@ -4150,6 +4308,19 @@ end
 --called by dmhub whenever tokens are refreshed with a new game state.
 function creature:RefreshToken(token)
 	self:ValidateAndRepair()
+
+	if token.canControl then
+		--this token is controlled by the local player, so it contributes toward
+		--the languages known by the player.
+		if g_languagesKnownRefresh ~= dmhub.ngameupdate then
+			g_languagesKnownRefresh = dmhub.ngameupdate
+			creature.g_languagesKnownLocally = {}
+		end
+
+		for k,_ in pairs(self:LanguagesKnown()) do
+			creature.g_languagesKnownLocally[k] = true
+		end
+	end
 
 	local builtinEffects = {}
 

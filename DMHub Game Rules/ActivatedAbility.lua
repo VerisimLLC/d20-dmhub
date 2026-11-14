@@ -1509,6 +1509,7 @@ function ActivatedAbility.CastCoroutine(self, casterToken, targets, options)
 		
 		gamehud.rollDialog.data.ShowDialog{
 			title = 'Roll for Affected Creatures',
+			ability = self,
 			roll = dmhub.EvalGoblinScript(self.maxhpaffected, casterToken.properties:LookupSymbol(options.symbols), string.format("Roll for creatures affected by %s", self.name)),
 			creature = casterToken.properties,
 			description = string.format("%s Hitpoints Affected", self.name),
@@ -1587,11 +1588,59 @@ function ActivatedAbility.CastCoroutine(self, casterToken, targets, options)
 			end
 		end
 		
-		gamehud.actionBarPanel:FireEventTree("invokeAbility", casterToken, self, options.symbols)
-		return
+		if ActivatedAbility.PromptTargets(casterToken, self, options.symbols, options) then
+			return
+		end
 	end
 
 	self:FinishCast(casterToken, options)
+end
+
+--How a cast waits for the rolls it requested of other creatures: for a caster
+--the Monster AI drives, the AI's own wait (it accepts once everyone has rolled);
+--otherwise silently, or with the caster's roll summary dialog.
+function ActivatedAbility.AwaitCastRollRequest(casterToken, actionid, dcresult, silent)
+	if creature.AIAwaitRollRequest ~= nil and casterToken ~= nil and creature.AIRollsForCreature(casterToken.properties) then
+		creature.AIAwaitRollRequest(casterToken, actionid, dcresult)
+	elseif silent then
+		AwaitRequestedActionCoroutine(actionid, dcresult)
+	else
+		gamehud:ShowRollSummaryDialog(actionid, dcresult)
+	end
+end
+
+--Ask for an ability's targets mid-cast (an invoked ability, the next target of
+--sequential targeting). A caster the Monster AI drives is answered by its prompt
+--callback: a list of targets casts at once, "skip" casts nothing. Otherwise the
+--action bar asks the user. Returns false when nothing was cast and nothing will be.
+--- @return boolean
+function ActivatedAbility.PromptTargets(casterToken, ability, symbols, options)
+	local callback = casterToken ~= nil and creature.GetTokenAIPromptCallback(casterToken.charid) or nil
+	if callback == nil and casterToken ~= nil and creature.AIPromptCallbackForToken ~= nil then
+		--a creature the AI plays but is not acting with right now (a reaction, a trigger).
+		callback = creature.AIPromptCallbackForToken(casterToken)
+	end
+	if callback ~= nil then
+		local ok, result = pcall(callback, casterToken, ability, symbols, options or {})
+		if not ok then
+			print("AI:: PROMPT ERROR", ability.name, result)
+			result = nil
+		end
+		if result == "skip" then
+			return false
+		end
+		if type(result) == "table" and result.targets ~= nil then
+			local castOptions = {symbols = symbols}
+			if options ~= nil and options.alreadyPaid then
+				castOptions.alreadyPaid = true
+				castOptions.costOverride = options.costOverride
+			end
+			ability:Cast(casterToken, result.targets, castOptions)
+			return true
+		end
+	end
+	gamehud.actionBarPanel:FireEventTree("invokeAbility", casterToken, ability, symbols)
+	return true
 end
 
 function ActivatedAbility.GetTokenIds(targets)
@@ -1662,11 +1711,7 @@ function ActivatedAbility:RequireSavingThrowsCo(behavior, casterToken, tokenids,
 
 	local dcresult = {}
 
-	if self.silent then
-		AwaitRequestedActionCoroutine(actionid, dcresult)
-	else
-		gamehud:ShowRollSummaryDialog(actionid, dcresult)
-	end
+	ActivatedAbility.AwaitCastRollRequest(casterToken, actionid, dcresult, self.silent)
 
 	while dcresult.result == nil do
 		coroutine.yield(0.1)
@@ -2312,6 +2357,7 @@ function ActivatedAbilityDamageBehavior:Cast(ability, casterToken, targets, opti
 		local rollid = nil
 		rollid = gamehud.rollDialog.data.ShowDialog{
 			title = 'Roll for Damage',
+			ability = ability,
 			description = string.format("%s Damage Roll", ability.name),
 			roll = dmhub.EvalGoblinScript(targetGroup.roll, casterToken.properties:LookupSymbol(symbols), string.format("Damage roll for %s", ability.name)),
 			modifiers = modifiers,
@@ -2520,6 +2566,7 @@ function ActivatedAbilityHealBehavior:Cast(ability, casterToken, targets, option
 
 	gamehud.rollDialog.data.ShowDialog{
 		title = 'Roll for Healing',
+		ability = ability,
 		description = string.format("%s Healing", ability.name),
 		roll = dmhub.EvalGoblinScript(self.roll, casterToken.properties:LookupSymbol(symbols), string.format("Healing roll for %s", ability.name)),
 
@@ -2975,6 +3022,7 @@ function ActivatedAbilityApplyOngoingEffectBehavior:Cast(ability, casterToken, t
 
 				gamehud.rollDialog.data.ShowDialog{
 					title = 'Roll for Temporary Hitpoints',
+					ability = ability,
 					description = string.format("%s Temporary Hitpoints", ability.name),
 					roll = dmhub.EvalGoblinScript(self.temporaryHitpoints, casterToken.properties:LookupSymbol(options.symbols), string.format("Roll for temporary hitpoints for %s", ability.name)),
 					creature = casterToken.properties,
@@ -3078,6 +3126,7 @@ function ActivatedAbilityApplyOngoingEffectBehavior:Cast(ability, casterToken, t
 
 				gamehud.rollDialog.data.ShowDialog{
 					title = string.format("Roll for Stacks of %s Effect", ongoingEffectInfo.name),
+					ability = ability,
 					description = string.format("%s Stacks", ability.name),
 					roll = dmhub.EvalGoblinScript(self.stacks, casterToken.properties:LookupSymbol(options.symbols), string.format("Number of stacks for %s", ability.name)),
 					creature = casterToken.properties,
@@ -3340,11 +3389,7 @@ function ActivatedAbilityContestedAttackBehavior:Cast(ability, casterToken, targ
 
 	local dcresult = {}
 
-	if self.silent then
-		AwaitRequestedActionCoroutine(actionid, dcresult)
-	else
-		gamehud:ShowRollSummaryDialog(actionid, dcresult)
-	end
+	ActivatedAbility.AwaitCastRollRequest(casterToken, actionid, dcresult, self.silent)
 
 	while dcresult.result == nil do
 		coroutine.yield(0.1)

@@ -1024,6 +1024,10 @@ local CreateGameScreen = function(titlescreen)
 
                                 m_gamescreen:FireEventTree("showGameMessage", "Game Deleted")
 
+                                --Delete() marks the game deleted locally, so lobby.games
+                                --already omits it, but lobby.gamesRevision does not change.
+                                --Rebuild the list now so its tab is removed.
+                                RefreshGames()
                                 titlescreen:RefreshLobby()
                             end
                             modal:DestroySelf()

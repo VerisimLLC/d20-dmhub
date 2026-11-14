@@ -470,6 +470,15 @@ if MissingField(creature, "IsMonster") then
     end
 end
 
+--ChatPanel.lua's CurrentlySpokenLanguage (chat, and the lines Monster AI
+--monsters speak) prefers the language of a monster's Draw Steel monster
+--group. 5e monsters have none.
+if MissingField(creature, "MonsterGroup") then
+    function creature:MonsterGroup()
+        return nil
+    end
+end
+
 --GameHud.lua's light-source tutorial step. 5e has no equipped-light slot.
 if MissingField(creature, "GetEquippedLightSource") then
     function creature:GetEquippedLightSource()
@@ -498,6 +507,14 @@ end
 --The Codex has optional "plain" language names and per-language scripts;
 --5e languages have neither, so these return the name and the default font.
 if rawget(_G, "Language") ~= nil then
+    --CurrentlySpokenLanguage picks the most common language a creature
+    --knows. 5e languages have no commonality ranking, so they tie.
+    if MissingField(Language, "commonality") then
+        Language.commonality = 1
+    end
+    if MissingField(Language, "speakers") then
+        Language.speakers = ""
+    end
     if MissingField(Language, "DisplayName") then
         function Language:DisplayName()
             return self.name

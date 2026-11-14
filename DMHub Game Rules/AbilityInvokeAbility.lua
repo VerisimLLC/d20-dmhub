@@ -187,7 +187,10 @@ function ActivatedAbilityInvokeAbilityBehavior.ExecuteInvoke(invokerToken, abili
 	end
 
 	if targeting == "prompt" then
-		gamehud.actionBarPanel:FireEventTree("invokeAbility", casterToken, abilityClone, symbols)
+		--a caster the Monster AI drives answers through its prompt callback.
+		if not ActivatedAbility.PromptTargets(casterToken, abilityClone, symbols, nil) then
+			casting = false
+		end
 	else
 		local targets = { { token = casterToken } }
 		abilityClone:Cast(casterToken, targets, {

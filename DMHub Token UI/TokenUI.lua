@@ -2005,12 +2005,123 @@ function CreateTokenHud(token)
 				)
 			end,
 
+			--a line the creature says (creature:CharacterSpeech), as a balloon
+			--over the token. Copied from the Codex's TokenUI.
+			speech = function(element, entry)
+				if element.data.lastSpeechTime ~= nil and dmhub.Time() - element.data.lastSpeechTime < 3 then
+					--limit speech to one per three seconds.
+					element:ScheduleEvent("speech", 3 - (dmhub.Time() - element.data.lastSpeechTime), entry)
+					return
+				end
+				element.data.lastSpeechTime = dmhub.Time()
+
+				local fontFace = nil
+				if (not dmhub.isDM) and (not token.canControl) and entry.langid ~= nil and (not creature.g_languagesKnownLocally[entry.langid]) then
+					fontFace = Language.UnreadableFontForId(entry.langid)
+				end
+
+				local text = entry.text
+				local nchars = 0
+				local ndelay = 0
+
+				local speechBalloon = gui.Label{
+					styles = {
+						{
+							opacity = 0,
+							y = -10,
+							scale = 0.5,
+							color = "#ffffff00",
+						},
+
+						{
+							selectors = {"fade"},
+							transitionTime = 0.2,
+							opacity = 0,
+							color = "#ffffff00",
+						},
+						{
+							selectors = {"fadein"},
+							transitionTime = 0.4,
+							opacity = 1,
+							y = -50,
+							x = 30,
+							scale = 1,
+							color = "#ffffffff",
+						},
+					},
+					beveledcorners = true,
+					bgimage = true,
+					borderWidth = 4,
+					borderColor = "black",
+					cornerRadius = {x1 = 14, y1 = 8, x2 = 14, y2 = 8},
+					bgcolor = "#000000cc",
+					floating = true,
+					text = string.format("<alpha=#00>%s", text),
+					fontFace = fontFace,
+					width = "auto",
+					height = "auto",
+					maxWidth = 180,
+					fontSize = 20,
+					halign = "center",
+					pad = 8,
+					create = function(element)
+						element:SetClass("fadein", true)
+						element:ScheduleEvent("beginAnimating", 0.3)
+					end,
+					beginAnimating = function(element)
+						element.thinkTime = 0.03
+					end,
+					think = function(element)
+						if ndelay > 0 then
+							ndelay = ndelay - 1
+							return
+						end
+
+						if nchars < #text then
+							local c = string.sub(text, nchars, nchars)
+							nchars = nchars + 1
+							local prefix = string.sub(text, 1, nchars)
+							local suffix = string.sub(text, nchars+1)
+							element.text = string.format("%s<alpha=#00>%s", prefix, suffix)
+
+							if c == '.' or c == '!' or c == '?' then
+								ndelay = 4
+							elseif c == ',' then
+								ndelay = 2
+							end
+						else
+							element.thinkTime = nil
+						end
+					end,
+					fade = function(element)
+						element:SetClass("fade", true)
+						element:ScheduleEvent("die", 0.5)
+					end,
+					die = function(element)
+						element:DestroySelf()
+					end,
+				}
+
+				speechBalloon:ScheduleEvent("fade", 3 + #text * 0.03)
+
+				element:AddChild(speechBalloon)
+			end,
+
 			think = function(element)
 				element:FireEvent("refresh")
 			end,
 
 			refresh = function(element)
 				local _ = g_profileMain.Begin
+
+				if token.properties ~= nil then
+					local speech = token.properties:GetAndRemoveSpeech()
+					if speech ~= nil then
+						for _,entry in ipairs(speech) do
+							element:FireEvent("speech", entry)
+						end
+					end
+				end
 
 				if token.properties ~= nil and current_damage_entry.id ~= token.properties.damage_entry.id then
 					current_damage_entry = dmhub.DeepCopy(token.properties.damage_entry)

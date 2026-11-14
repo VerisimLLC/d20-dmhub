@@ -495,6 +495,30 @@
       "guid": "be8e656d-b94f-4712-9c9f-9064bc1207bd"
     },
     {
+      "key": "monsterai",
+      "name": "d20 Monster AI",
+      "root": "",
+      "folder": "d20 Monster AI",
+      "deps": [
+        "hud",
+        "tokenui",
+        "chatpanel",
+        "charsheet"
+      ],
+      "order": [
+        "MonsterAI",
+        "MonsterAIRules",
+        "MonsterAIGeneric",
+        "MonsterAIPreview",
+        "MonsterAIPanel",
+        "MonsterAIPrompts",
+        "MonsterAITactics",
+        "MonsterAISupport",
+        "MonsterAIBands"
+      ],
+      "guid": "3d12f7c0-bbe1-4e3f-a1c8-a8a71d96a963"
+    },
+    {
       "key": "sys5e",
       "name": "d20 System 5e",
       "root": "",
