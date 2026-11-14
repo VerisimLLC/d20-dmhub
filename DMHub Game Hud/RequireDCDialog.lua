@@ -1268,10 +1268,1000 @@ function ShowRequireRollDialog(args)
 	return g_requireRollDialog
 end
 
+--Group roll board -----------------------------------------------------------
+--
+--The d20 port of the Codex's group roll board (Draw Steel UI\DSRequestRollsDialog.lua).
+--While a group of creatures rolls -- Roll Initiative, the DM's Request Rolls, or
+--the saving throws an ability asks for -- every client shows ONE shared board,
+--parked on the left beside the icon rail, with each creature's portrait landing
+--as its roll comes in. It is drawn entirely from the RollRequest, which every
+--client already sees under /actionRequests.
+--
+--Draw Steel drops portraits onto power-roll tiers. d20 has no tiers, so:
+--  * a check with a DC gets a Success row and a Failure row, each showing what
+--    that outcome means (the consequences of a saving throw, else the DC);
+--  * a check with no DC (initiative, a plain check) gets one strip, ranked by
+--    total, highest first.
+--
+--Rolling is unchanged: whoever controls a creature still rolls it in the roll
+--dialog (the RequireRollListenerPanel above). On the requester's client the
+--board replaces the old summary view: Proceed / Cancel, and right-click a
+--portrait for Re-roll / Take Roll / Remove.
+--
+--A request goes on the board only when its requester showed it there
+--(ShowRollSummaryDialog sets info.groupRollBoard), so the silent requests
+--(AwaitRequestedActionCoroutine) and Monster AI waits stay off it, as they
+--stayed out of the old summary.
+
+RollRequest.groupRollBoard = false
+
+--After the last roll is in and the request closes, the board stays up this
+--long so the final result can be read.
+local GROUP_ROLL_LINGER_SECONDS = 4
+
+--actionid -> resultTable for the requests this client is waiting on (it is
+--the requester). Read by the board to show the requester's controls.
+local g_groupRollAwaiting = {}
+
+--actionid -> true for boards this client closed or cancelled.
+local g_groupRollDismissed = {}
+
+--- @type Panel?
+local g_groupRollLayer = nil
+
+--The board's check for a request, or nil if the request does not go on it.
+--- @param info table|nil the request's info (a RollRequest)
+--- @return RollCheck|nil
+local function GroupRollCheck(info)
+	if info == nil or info.typeName ~= "RollRequest" or info.groupRollBoard ~= true then
+		return nil
+	end
+	local check = info.checks ~= nil and info.checks[1] or nil
+	return check
+end
+
+--Same presence rule as RequireRollListenerPanel.
+local function GroupRollHavePlayersOnline()
+	if #dmhub.users <= 1 then
+		return false
+	end
+	for _,userid in ipairs(dmhub.users) do
+		local session = dmhub.GetSessionInfo(userid)
+		if session ~= nil and session.dm == false and session.loggedOut == false then
+			return true
+		end
+	end
+	return false
+end
+
+--Whether this client is the one prompted to roll for the token: the same rule
+--as RequireRollListenerPanel.
+local function GroupRollPromptsHere(tok, info, havePlayersOnline)
+	if tok == nil or tok.properties == nil then
+		return false
+	end
+	if info.forceuserid ~= nil then
+		return info.forceuserid == dmhub.loginUserid
+	end
+	return tok.canControl and (dmhub.isDM == false or tok.playerControlled == false or not havePlayersOnline)
+end
+
+--" with advantage", " with disadvantage", or "" for a straight roll.
+local function DescribeAdvantage(boons, banes)
+	local net = (boons or 0) - (banes or 0)
+	if net > 0 then
+		return " with advantage"
+	elseif net < 0 then
+		return " with disadvantage"
+	end
+	return ""
+end
+
+--"success" or "failure" for a finished roll against a DC, read the way
+--RollRequest:GetTokenResult reads it.
+local function GroupRollOutcomeRow(info, dc)
+	if info.outcome ~= nil then
+		if info.outcome.success then
+			return "success"
+		elseif info.outcome.failure then
+			return "failure"
+		end
+	end
+	if info.forcedResult ~= nil then
+		return cond(info.forcedResult, "success", "failure")
+	end
+	return cond(info.result >= dc, "success", "failure")
+end
+
+--What each outcome row says: the saving throw's consequences when the check
+--has them, else the DC (for the DM; players are not shown the DC).
+--- @param check RollCheck
+--- @return string successText, string failureText
+local function GroupRollOutcomeTexts(check)
+	local consequences = check.consequences
+	if type(consequences) == "table" then
+		local failed = {}
+		for _,damage in ipairs(consequences.damage or {}) do
+			failed[#failed+1] = string.format("%s %s damage", damage.amount, damage.damageType)
+		end
+		local ongoingEffects = dmhub.GetTable("characterOngoingEffects") or {}
+		for _,entry in ipairs(consequences.conditions or {}) do
+			local ongoingEffect = ongoingEffects[entry.conditionid]
+			if ongoingEffect ~= nil then
+				failed[#failed+1] = ongoingEffect.name
+			end
+		end
+		for _,entry in ipairs(consequences.text or {}) do
+			failed[#failed+1] = entry.text
+		end
+
+		local successText = "Avoids the effect"
+		local firstDamage = consequences.damage ~= nil and consequences.damage[1] or nil
+		if firstDamage ~= nil then
+			successText = cond(firstDamage.success == "half", "Half damage", "No damage")
+		end
+
+		if #failed > 0 then
+			return successText, table.concat(failed, ", ")
+		end
+	end
+
+	if dmhub.isDM and check:has_key("dc") then
+		return string.format("DC %d or higher", check.dc), string.format("Below DC %d", check.dc)
+	end
+	return "", ""
+end
+
+--Snapshot of a request for drawing. Plain data, so the board can keep drawing
+--it after the request has closed.
+--- @param actionid string
+--- @param request LuaPlayerActionRequest
+--- @param check RollCheck
+--- @return table
+local function BuildGroupRollModel(actionid, request, check)
+	local hasDC = check:has_key("dc")
+	local title = check:Describe(not dmhub.isDM)
+	local subtitle = ""
+	if check.explanation ~= nil and check.explanation ~= "" then
+		subtitle = check.explanation
+	end
+
+	local model = {
+		actionid = actionid,
+		title = title,
+		subtitle = subtitle,
+		hasDC = hasDC,
+		entries = {},
+		total = 0,
+		rolled = 0,
+		localCount = 0,
+		allRolled = true,
+	}
+
+	if hasDC then
+		model.successText, model.failureText = GroupRollOutcomeTexts(check)
+	end
+
+	local havePlayersOnline = GroupRollHavePlayersOnline()
+
+	for tokid,info in pairs(request.info.tokens) do
+		local tok = dmhub.GetCharacterById(tokid)
+		model.total = model.total + 1
+		local rolled = info.status == 'complete' and info.result ~= nil
+		if rolled then
+			model.rolled = model.rolled + 1
+		else
+			model.allRolled = false
+		end
+		if GroupRollPromptsHere(tok, info, havePlayersOnline) then
+			model.localCount = model.localCount + 1
+		end
+
+		--A creature the DM has hidden stays off the players' boards.
+		if tok ~= nil and (dmhub.isDM or not tok.invisibleToPlayers) then
+			local name = "A creature"
+			if dmhub.isDM or tok.canLocalPlayerSeeName then
+				name = creature.GetTokenDescription(tok)
+			end
+			local row = nil
+			if rolled then
+				row = cond(hasDC, GroupRollOutcomeRow(info, check:try_get("dc", 0)), "ranked")
+			end
+			model.entries[#model.entries+1] = {
+				tokid = tokid,
+				token = tok,
+				name = name,
+				status = info.status,
+				userid = info.userid,
+				forceuserid = info.forceuserid,
+				row = row,
+				result = info.result,
+				boons = info.boons,
+				banes = info.banes,
+			}
+		end
+	end
+
+	--Stable order: by name, so portraits do not shuffle as rolls come in.
+	table.sort(model.entries, function(a,b)
+		if a.name ~= b.name then
+			return a.name < b.name
+		end
+		return a.tokid < b.tokid
+	end)
+
+	return model
+end
+
+local function BuildGroupRollStyles()
+	return {
+		{
+			selectors = {"groupRollBoard"},
+			width = "100%",
+			height = "auto",
+			flow = "vertical",
+			pad = 12,
+			borderBox = true,
+		},
+		{
+			selectors = {"groupRollTitle"},
+			width = 400,
+			height = "auto",
+			fontSize = 18,
+			bold = true,
+			color = "@fgStrong",
+			textAlignment = "left",
+			halign = "left",
+		},
+		{
+			selectors = {"groupRollSubtitle"},
+			width = 400,
+			height = "auto",
+			fontSize = 13,
+			color = "@fgMuted",
+			textAlignment = "left",
+			halign = "left",
+		},
+		{
+			selectors = {"groupRollRows"},
+			width = "100%",
+			height = "auto",
+			flow = "vertical",
+			tmargin = 8,
+		},
+		{
+			selectors = {"groupRollRow"},
+			width = "100%",
+			height = "auto",
+			minHeight = 48,
+			flow = "horizontal",
+			hpad = 6,
+			vpad = 4,
+			borderBox = true,
+			bgcolor = "clear",
+		},
+		{
+			--A row someone landed in: the style guide's "current row" fill and edge.
+			selectors = {"groupRollRow", "occupied"},
+			bgcolor = "@bgAlt",
+			borderColor = "@accent",
+			--Every side must be given: a side left out draws a frame.
+			border = {x1 = 3, x2 = 0, y1 = 0, y2 = 0},
+		},
+		{
+			selectors = {"groupRollRow", "flash"},
+			brightness = 2,
+			transitionTime = 1,
+		},
+		{
+			selectors = {"groupRollSeam"},
+			width = "100%",
+			height = 1,
+			bgcolor = "@border",
+			opacity = 0.2,
+		},
+		{
+			selectors = {"groupRollOutcome"},
+			width = 70,
+			height = "auto",
+			rmargin = 8,
+			fontSize = 15,
+			bold = true,
+			color = "@fg",
+			textAlignment = "left",
+			halign = "left",
+			valign = "center",
+		},
+		{
+			selectors = {"groupRollOutcome", "success"},
+			color = "#6fcf6f",
+		},
+		{
+			selectors = {"groupRollOutcome", "failure"},
+			color = "#e06060",
+		},
+		{
+			selectors = {"groupRollRowText"},
+			width = 186,
+			height = "auto",
+			fontSize = 14,
+			color = "@fg",
+			textAlignment = "left",
+			halign = "left",
+			valign = "center",
+		},
+		{
+			--Fixed size: one line of cells (placed by x in BuildStrip), so a
+			--row is as tall empty as full.
+			selectors = {"groupRollIcons"},
+			width = 190,
+			height = 66,
+			halign = "right",
+			valign = "center",
+		},
+		{
+			--The no-DC strip, ranked by total. It wraps rather than overlapping,
+			--so every total stays readable however many creatures roll.
+			selectors = {"groupRollRanked"},
+			width = "100%",
+			height = "auto",
+			minHeight = 66,
+			flow = "horizontal",
+			wrap = true,
+			halign = "left",
+		},
+		{
+			--vpad leaves room for pop-out portraits, which draw past their frame.
+			selectors = {"groupRollIconCell"},
+			width = 42,
+			height = "auto",
+			flow = "vertical",
+			vpad = 7,
+			bgcolor = "clear",
+		},
+		{
+			--Wide enough for a status caption ("Preparing") under the portrait.
+			selectors = {"groupRollIconCell", "waiting"},
+			width = 64,
+		},
+		{
+			selectors = {"groupRollIconCell", "hover"},
+			brightness = 1.4,
+		},
+		{
+			selectors = {"groupRollIconCell", "landed"},
+			brightness = 2.5,
+			transitionTime = 0.8,
+		},
+		{
+			selectors = {"groupRollIconCaption"},
+			width = "auto",
+			height = "auto",
+			fontSize = 11,
+			color = "@fgMuted",
+			halign = "center",
+			textAlignment = "center",
+		},
+		{
+			selectors = {"groupRollIconCaption", "total"},
+			fontSize = 13,
+			bold = true,
+			color = "@fg",
+		},
+		{
+			selectors = {"groupRollWaiting"},
+			width = "100%",
+			height = "auto",
+			flow = "vertical",
+			tmargin = 10,
+		},
+		{
+			selectors = {"groupRollSectionLabel"},
+			width = "auto",
+			height = "auto",
+			fontSize = 12,
+			bold = true,
+			color = "@fgMuted",
+			halign = "left",
+			bmargin = 2,
+		},
+		{
+			selectors = {"groupRollWaitingIcons"},
+			width = "100%",
+			height = 66,
+			halign = "left",
+		},
+		{
+			selectors = {"groupRollWaitingEmpty"},
+			width = "auto",
+			height = "auto",
+			fontSize = 13,
+			color = "@fgMuted",
+			halign = "left",
+			valign = "center",
+		},
+		{
+			--Fixed height, so the requester's buttons coming and going (they
+			--drop when the board lingers) do not resize the board.
+			selectors = {"groupRollFooter"},
+			width = "100%",
+			height = 30,
+			flow = "horizontal",
+			tmargin = 10,
+		},
+		{
+			selectors = {"groupRollStatus"},
+			width = 200,
+			height = "auto",
+			fontSize = 13,
+			color = "@fgMuted",
+			textAlignment = "left",
+			halign = "left",
+			valign = "center",
+		},
+		{
+			selectors = {"groupRollButton"},
+			halign = "right",
+			valign = "center",
+			lmargin = 6,
+		},
+	}
+end
+
+--The outcome rows a board with a DC draws, best first.
+local g_groupRollOutcomeRows = {
+	{ id = "success", text = "Success", textField = "successText" },
+	{ id = "failure", text = "Failure", textField = "failureText" },
+}
+
+--The layer holding the board. Mounted once in the HUD (GameHud.lua, which
+--carries a stub of this), beside the roll hosts, so it draws over floating
+--windows and under modals, and parked on the left beside the icon rail.
+function GameHud:CreateGroupRollBoardLayer()
+	--The request on the board, and the snapshot drawn for it. The snapshot
+	--outlives the request while the board lingers.
+	local m_actionid = nil
+	local m_model = nil
+	--Bumped whenever the board is shown or hidden, so a stale linger timer
+	--cannot hide a board that has moved on.
+	local m_serial = 0
+	--tokid -> row drawn last time, to flash newly landed portraits.
+	local m_landed = {}
+	--Built per request: row id -> {row, icons}.
+	local m_rows = {}
+	local m_rowsFor = nil
+
+	local layer
+	local board
+
+	local titleLabel = gui.Label{ classes = {"groupRollTitle"}, text = "" }
+	local subtitleLabel = gui.Label{ classes = {"groupRollSubtitle"}, text = "" }
+	local rowTable = gui.Panel{ classes = {"groupRollRows"} }
+	local waitingEmptyLabel = gui.Label{ classes = {"groupRollWaitingEmpty"}, text = "Everyone has rolled." }
+	local waitingIcons = gui.Panel{ classes = {"groupRollWaitingIcons"}, children = { waitingEmptyLabel } }
+	local waitingPanel = gui.Panel{
+		classes = {"groupRollWaiting"},
+		children = {
+			gui.Label{ classes = {"groupRollSectionLabel"}, text = "Still to roll" },
+			waitingIcons,
+		},
+	}
+	local statusLabel = gui.Label{ classes = {"groupRollStatus"}, text = "" }
+
+	--Strip geometry. Cells are sized for their caption: a total under a
+	--landed portrait, a status word ("Preparing") under a waiting one.
+	local GROUP_ROLL_ROW_CELL_WIDTH = 42
+	local GROUP_ROLL_ROW_STRIP_WIDTH = 190
+	local GROUP_ROLL_WAITING_CELL_WIDTH = 64
+	local GROUP_ROLL_WAITING_STRIP_WIDTH = 476
+
+	local function Hide()
+		m_serial = m_serial + 1
+		m_actionid = nil
+		m_model = nil
+		m_landed = {}
+		board:SetClass("collapsed", true)
+	end
+
+	--The requester's answer: accepted (Proceed) or not (Cancel). Closing the
+	--request clears it from every client's board.
+	local function Finish(accepted)
+		local actionid = m_actionid
+		local resultTable = actionid ~= nil and g_groupRollAwaiting[actionid] or nil
+		if resultTable == nil then
+			return
+		end
+		---@cast actionid string
+		g_groupRollAwaiting[actionid] = nil
+		resultTable.action = dmhub.GetPlayerActionRequest(actionid)
+		resultTable.result = accepted and resultTable.action ~= nil
+		if not accepted then
+			--Our own Cancel closes our board at once; others still linger.
+			g_groupRollDismissed[actionid] = true
+		end
+		dmhub.CancelActionRequest(actionid)
+	end
+
+	--Rewrite one creature's entry in the request (the old summary's per-row buttons).
+	local function EditEntry(actionid, tokid, description, newEntry)
+		local action = dmhub.GetPlayerActionRequest(actionid)
+		if action == nil or action.info.tokens[tokid] == nil then
+			return
+		end
+		action:BeginChanges()
+		action.info.tokens[tokid] = newEntry
+		action:CompleteChanges(description)
+	end
+
+	--Right-click menu on a portrait, for the requester only.
+	local function EntryMenu(entry)
+		local actionid = m_actionid
+		if actionid == nil or g_groupRollAwaiting[actionid] == nil then
+			return nil
+		end
+		local entries = {}
+		if dmhub.isDM and (entry.status == nil or entry.status == 'dialog') and entry.forceuserid ~= dmhub.loginUserid then
+			entries[#entries+1] = {
+				text = "Take Roll",
+				click = function()
+					EditEntry(actionid, entry.tokid, "Request roll again", { forceuserid = dmhub.loginUserid })
+				end,
+			}
+		end
+		if dmhub.isDM and (entry.status == 'complete' or entry.status == 'cancel') then
+			entries[#entries+1] = {
+				text = "Re-roll",
+				click = function()
+					EditEntry(actionid, entry.tokid, "Request roll again", {})
+				end,
+			}
+		end
+		if entry.status == 'cancel' then
+			entries[#entries+1] = {
+				text = "Remove",
+				click = function()
+					EditEntry(actionid, entry.tokid, "Removed roll", nil)
+				end,
+			}
+		end
+		if #entries == 0 then
+			return nil
+		end
+		return entries
+	end
+
+	local function EntryStatusText(entry)
+		if entry.status == 'dialog' then
+			if entry.userid ~= nil then
+				return string.format("%s is preparing to roll", dmhub.GetDisplayName(entry.userid)), "Preparing"
+			end
+			return "Preparing to roll", "Preparing"
+		elseif entry.status == 'rolling' then
+			return "Rolling", "Rolling"
+		elseif entry.status == 'cancel' then
+			return "Declined to roll", "Declined"
+		elseif entry.forceuserid == dmhub.loginUserid then
+			return "Waiting for you to roll", "Waiting"
+		end
+		return "Waiting to roll", "Waiting"
+	end
+
+	--One portrait. x places it within an overlapping strip; nil leaves it to
+	--the parent's flow (the wrapping ranked strip). Landed ones show the total
+	--under the portrait; waiting ones show their status.
+	local function CreateEntryCell(entry, x)
+		local tooltip
+		local caption
+		local captionClasses = {"groupRollIconCaption"}
+		if entry.row ~= nil then
+			tooltip = string.format("%s rolled %d%s", entry.name, entry.result, DescribeAdvantage(entry.boons, entry.banes))
+			caption = tostring(entry.result)
+			captionClasses[#captionClasses+1] = "total"
+		else
+			local statusText
+			statusText, caption = EntryStatusText(entry)
+			tooltip = string.format("%s: %s", entry.name, statusText)
+		end
+
+		local menu = EntryMenu(entry)
+		if menu ~= nil then
+			tooltip = tooltip .. "\nRight-click for options."
+		end
+
+		return gui.Panel{
+			classes = {"groupRollIconCell", cond(entry.row == nil, "waiting", nil)},
+			bgimage = "panels/square.png",
+			floating = x ~= nil,
+			halign = "left",
+			valign = "top",
+			x = x or 0,
+			hover = gui.Tooltip(tooltip),
+			rightClick = function(element)
+				local items = EntryMenu(entry)
+				if items == nil then
+					return
+				end
+				for _,item in ipairs(items) do
+					local click = item.click
+					item.click = function()
+						element.popup = nil
+						click()
+					end
+				end
+				element.popup = gui.ContextMenu{ entries = items }
+			end,
+			children = {
+				gui.CreateTokenImage(entry.token, {
+					width = 34,
+					height = 34,
+					halign = "center",
+					valign = "top",
+				}),
+				gui.Label{ classes = captionClasses, text = caption },
+			},
+		}
+	end
+
+	--A strip of portraits that is always one line, so the board keeps its
+	--size as rolls come in: past what fits side by side, the portraits overlap.
+	local function BuildStrip(entries, cellWidth, stripWidth)
+		local step = cellWidth
+		if #entries > 1 and #entries * cellWidth > stripWidth then
+			step = (stripWidth - cellWidth) / (#entries - 1)
+		end
+		local cells = {}
+		for i,entry in ipairs(entries) do
+			cells[i] = CreateEntryCell(entry, (i - 1) * step)
+		end
+		return cells
+	end
+
+	--The rows depend only on whether the request has a DC, so they are built
+	--once per request; each render just refills their portraits.
+	local function EnsureRows(model)
+		if m_rowsFor == model.actionid then
+			return
+		end
+		m_rowsFor = model.actionid
+		m_rows = {}
+
+		local children = {}
+		if model.hasDC then
+			for i,rowInfo in ipairs(g_groupRollOutcomeRows) do
+				if i > 1 then
+					children[#children+1] = gui.Panel{ classes = {"groupRollSeam"}, bgimage = true }
+				end
+				local icons = gui.Panel{ classes = {"groupRollIcons"} }
+				local row = gui.Panel{
+					classes = {"groupRollRow"},
+					bgimage = "panels/square.png",
+					children = {
+						gui.Label{ classes = {"groupRollOutcome", rowInfo.id}, text = rowInfo.text },
+						gui.Label{ classes = {"groupRollRowText"}, text = model[rowInfo.textField] or "" },
+						icons,
+					},
+				}
+				children[#children+1] = row
+				m_rows[rowInfo.id] = { row = row, icons = icons }
+			end
+		else
+			local icons = gui.Panel{ classes = {"groupRollRanked"} }
+			local row = gui.Panel{
+				classes = {"groupRollRow"},
+				bgimage = "panels/square.png",
+				children = { icons },
+			}
+			children[#children+1] = row
+			m_rows.ranked = { row = row, icons = icons, ranked = true }
+		end
+		rowTable.children = children
+	end
+
+	local cancelButton = gui.Button{
+		classes = {"sizeS", "groupRollButton"},
+		text = "Cancel",
+		click = function(element)
+			Finish(false)
+		end,
+	}
+
+	local proceedButton = gui.Button{
+		classes = {"sizeS", "groupRollButton"},
+		text = "Proceed",
+		click = function(element)
+			if m_model ~= nil and m_model.allRolled then
+				Finish(true)
+			end
+		end,
+	}
+
+	local closeButton = gui.Button{
+		classes = {"closeButton"},
+		floating = true,
+		halign = "right",
+		valign = "top",
+		click = function(element)
+			if m_actionid ~= nil then
+				g_groupRollDismissed[m_actionid] = true
+			end
+			Hide()
+		end,
+	}
+
+	--finished: the request has closed and this is its last snapshot.
+	local function Render(model, finished)
+		local newRequest = m_rowsFor ~= model.actionid
+		EnsureRows(model)
+
+		titleLabel.text = model.title
+		subtitleLabel.text = model.subtitle
+		subtitleLabel:SetClass("collapsed", model.subtitle == "")
+
+		local perRow = {}
+		local waiting = {}
+		local landedNow = {}
+		for _,entry in ipairs(model.entries) do
+			if entry.row ~= nil then
+				perRow[entry.row] = perRow[entry.row] or {}
+				table.insert(perRow[entry.row], entry)
+				landedNow[entry.tokid] = entry.row
+			elseif not finished then
+				waiting[#waiting+1] = entry
+			end
+		end
+
+		--Portraits that just landed; flashed once they are in their rows.
+		local justLanded = {}
+		for rowid,rowInfo in pairs(m_rows) do
+			local entries = perRow[rowid] or {}
+			local cells
+			if rowInfo.ranked then
+				--Highest total first; ties keep the name order.
+				local order = {}
+				for i,entry in ipairs(entries) do
+					order[entry.tokid] = i
+				end
+				table.sort(entries, function(a,b)
+					if a.result ~= b.result then
+						return a.result > b.result
+					end
+					return order[a.tokid] < order[b.tokid]
+				end)
+				cells = {}
+				for i,entry in ipairs(entries) do
+					cells[i] = CreateEntryCell(entry, nil)
+				end
+			else
+				cells = BuildStrip(entries, GROUP_ROLL_ROW_CELL_WIDTH, GROUP_ROLL_ROW_STRIP_WIDTH)
+			end
+			for n,entry in ipairs(entries) do
+				if (not newRequest) and m_landed[entry.tokid] ~= entry.row then
+					justLanded[#justLanded+1] = { cell = cells[n], row = rowInfo.row }
+				end
+			end
+			rowInfo.icons.children = cells
+			rowInfo.row:SetClass("occupied", #cells > 0)
+		end
+		m_landed = landedNow
+
+		for _,landed in ipairs(justLanded) do
+			landed.cell:PulseClass("landed")
+			landed.row:PulseClass("flash")
+		end
+
+		--The strip keeps its space when empty, so the board does not shrink
+		--as the last creature rolls.
+		--The label stays a child throughout; a label first parented into an
+		--already laid-out panel is never laid out.
+		local waitingChildren = BuildStrip(waiting, GROUP_ROLL_WAITING_CELL_WIDTH, GROUP_ROLL_WAITING_STRIP_WIDTH)
+		table.insert(waitingChildren, 1, waitingEmptyLabel)
+		waitingEmptyLabel:SetClass("hidden", #waiting > 0)
+		waitingIcons.children = waitingChildren
+
+		--The footer has a fixed height, so showing or dropping the buttons
+		--does not resize the board.
+		local isRequester = (not finished) and g_groupRollAwaiting[model.actionid] ~= nil
+		cancelButton:SetClass("collapsed", not isRequester)
+		proceedButton:SetClass("collapsed", not isRequester)
+		proceedButton:SetClass("disabled", not model.allRolled)
+		closeButton:SetClass("collapsed", isRequester)
+
+		statusLabel.text = string.format("%d of %d rolled", model.rolled, model.total)
+	end
+
+	--Pick the request to show: one this client is waiting on first, then the
+	--one already on the board, then any other.
+	local function ChooseRequest()
+		local best = nil
+		local bestRank = nil
+		for k,request in pairs(dmhub.GetPlayerActionRequests() or {}) do
+			if not g_groupRollDismissed[k] and GroupRollCheck(request.info) ~= nil then
+				local rank = 3
+				if g_groupRollAwaiting[k] ~= nil then
+					rank = 1
+				elseif k == m_actionid then
+					rank = 2
+				end
+				if best == nil or rank < bestRank or (rank == bestRank and k < best) then
+					best = k
+					bestRank = rank
+				end
+			end
+		end
+		if best == nil then
+			return nil, nil
+		end
+		return best, dmhub.GetPlayerActionRequest(best)
+	end
+
+	local function Refresh()
+		--A request we were waiting on that closed without our answer (someone
+		--else cancelled it): the requester reads that as cancelled, as it did
+		--with the summary view.
+		for actionid,resultTable in pairs(g_groupRollAwaiting) do
+			if dmhub.GetPlayerActionRequest(actionid) == nil then
+				g_groupRollAwaiting[actionid] = nil
+				if resultTable.result == nil then
+					resultTable.result = false
+				end
+			end
+		end
+
+		local actionid, request = ChooseRequest()
+		if request == nil then
+			if m_actionid ~= nil and m_model ~= nil and m_model.allRolled and not g_groupRollDismissed[m_actionid] then
+				--The request closed with every roll in. Keep the final board up
+				--for a moment.
+				local model = m_model
+				m_actionid = nil
+				m_serial = m_serial + 1
+				local serial = m_serial
+				Render(model, true)
+				dmhub.Schedule(GROUP_ROLL_LINGER_SECONDS, function()
+					if mod.unloaded or serial ~= m_serial or board == nil or not board.valid then
+						return
+					end
+					Hide()
+				end)
+			elseif m_actionid ~= nil then
+				Hide()
+			end
+			return
+		end
+		---@cast actionid string
+
+		local check = GroupRollCheck(request.info)
+		---@cast check -nil
+		local model = BuildGroupRollModel(actionid, request, check)
+
+		if actionid ~= m_actionid then
+			m_serial = m_serial + 1
+		end
+		m_actionid = actionid
+		m_model = model
+		Render(model, false)
+		board:SetClass("collapsed", false)
+
+		--One creature, rolled right here: nothing for the requester to review,
+		--so answer as soon as it is rolled or declined.
+		if g_groupRollAwaiting[actionid] ~= nil and model.total == 1 and model.localCount == 1 then
+			local entry = request.info.tokens[next(request.info.tokens)]
+			if entry ~= nil and entry.status == 'complete' then
+				Finish(true)
+			elseif entry ~= nil and entry.status == 'cancel' then
+				Finish(false)
+			end
+		end
+	end
+
+	board = gui.Panel{
+		classes = {"framedPanel", "groupRollBoard", "collapsed"},
+		bgimage = true,
+		children = {
+			titleLabel,
+			subtitleLabel,
+			rowTable,
+			waitingPanel,
+			gui.Panel{
+				classes = {"groupRollFooter"},
+				children = {
+					statusLabel,
+					cancelButton,
+					proceedButton,
+				},
+			},
+			closeButton,
+		},
+	}
+
+	layer = gui.Panel{
+		styles = ThemeEngine.MergeStyles(BuildGroupRollStyles()),
+		width = 500,
+		height = "auto",
+		halign = "left",
+		--Anchored by its top edge: the board grows and shrinks as rolls come
+		--in, and a centred board would jump each time.
+		valign = "top",
+		tmargin = 200,
+		lmargin = 76,
+		interactable = false,
+		children = { board },
+
+		monitorGame = "/actionRequests",
+		refreshGame = function(element)
+			Refresh()
+		end,
+
+		--A request already open when the HUD is built (a rebuild mid-roll).
+		create = function(element)
+			Refresh()
+		end,
+
+		destroy = function(element)
+			--A HUD rebuild mid-wait: the requester reads it as cancelled, as it
+			--did when the summary view was torn down.
+			for _,resultTable in pairs(g_groupRollAwaiting) do
+				if resultTable.result == nil then
+					resultTable.result = false
+				end
+			end
+			g_groupRollAwaiting = {}
+			if g_groupRollLayer == element then
+				g_groupRollLayer = nil
+			end
+		end,
+	}
+
+	ThemeEngine.OnThemeChanged(mod, function()
+		if layer ~= nil and layer.valid then
+			layer.styles = ThemeEngine.MergeStyles(BuildGroupRollStyles())
+		end
+	end)
+
+	g_groupRollLayer = layer
+	return layer
+end
+
+--Wait for a request's rolls on the group roll board. Marks the request so every
+--client shows it there. Returns false (and does nothing) when the board is not
+--mounted, so the caller shows the summary view instead.
+--- @param actionid string
+--- @param resultTable table
+--- @return boolean
+local function AwaitOnGroupRollBoard(actionid, resultTable)
+	local action = dmhub.GetPlayerActionRequest(actionid)
+	if action == nil or action.info.typeName ~= "RollRequest" then
+		return false
+	end
+	if g_groupRollLayer == nil or not g_groupRollLayer.valid then
+		return false
+	end
+
+	if action.info.groupRollBoard ~= true then
+		action:BeginChanges()
+		action.info.groupRollBoard = true
+		action:CompleteChanges("Show on group roll board")
+	end
+
+	g_groupRollAwaiting[actionid] = resultTable
+	g_groupRollDismissed[actionid] = nil
+
+	--The board replaces the summary that used to take over the Request Rolls
+	--dialog, so that dialog has nothing left to show.
+	CloseRequireRollDialog()
+
+	g_groupRollLayer:FireEvent("refreshGame")
+	return true
+end
+
 --resultTable gets marked with a 'result' = true/false for completion or cancel.
 function GameHud:ShowRollSummaryDialog(actionid, resultTable)
 	if resultTable == nil then
 		resultTable = {}
+	end
+
+	if AwaitOnGroupRollBoard(actionid, resultTable) then
+		return
 	end
 
 	local iscomplete = false
