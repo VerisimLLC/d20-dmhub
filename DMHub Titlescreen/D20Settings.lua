@@ -604,6 +604,71 @@ if accountSections ~= nil then
 	g_dmhubPatreonAccountSection = CreatePatreonAccountSection
 end
 
+--Theme styles for the engine's settings screen (settings-screen.txt). The
+--setting rows come from the synced SettingsGui.lua, which styles them through
+--ThemeEngine classes ("form", "sizeL", ...). The Codex replaces the whole
+--screen with its own CreateSettingsScreen rooted in ThemeEngine.MergeStyles;
+--d20 keeps the engine's screen, whose root only carries the old Styles.Panel
+--and Styles.Default, so the rows rendered unstyled: huge labels, check-box
+--labels clipped to a sliver, rows misaligned. This wraps the engine's
+--function and gives the dialog the theme cascade instead.
+--
+--The engine defines CreateSettingsScreen before any mod loads. A Lua reload
+--reruns this file but not the engine script, so the engine's function is
+--kept in a global and never replaced by this wrapper.
+local function D20CreateSettingsScreen(dialog, args)
+	local engineCreate = rawget(_G, "g_engineCreateSettingsScreen")
+	engineCreate(dialog, args)
+
+	local root = dialog.sheet
+	local settingsDialog = root ~= nil and root.children[1] or nil
+	if settingsDialog == nil or rawget(_G, "ThemeEngine") == nil then
+		return
+	end
+
+	settingsDialog.styles = ThemeEngine.MergeStyles({
+		{
+			selectors = {"~dm", "dmonly"},
+			collapsed = 1,
+		},
+	})
+
+	--Two engine panels set their look with `style`, which the theme's rules
+	--outrank: the "Settings" title would drop to the theme's small label size,
+	--and the dice preview would take the theme's panel tint (@bg) and render
+	--almost black. selfStyle restores them.
+	for _,child in ipairs(settingsDialog.children) do
+		if child.text == "Settings" then
+			child.selfStyle.fontSize = 32
+		end
+	end
+
+	local function FixDicePreview(panel)
+		if panel.bgimage == "#DicePreview" then
+			panel.selfStyle.bgcolor = "white"
+			return true
+		end
+		for _,child in ipairs(panel.children) do
+			if FixDicePreview(child) then
+				return true
+			end
+		end
+		return false
+	end
+	FixDicePreview(settingsDialog)
+end
+
+do
+	local current = rawget(_G, "CreateSettingsScreen")
+	if current ~= nil and current ~= rawget(_G, "g_d20CreateSettingsScreen") then
+		rawset(_G, "g_engineCreateSettingsScreen", current)
+	end
+	if rawget(_G, "g_engineCreateSettingsScreen") ~= nil then
+		rawset(_G, "g_d20CreateSettingsScreen", D20CreateSettingsScreen)
+		rawset(_G, "CreateSettingsScreen", D20CreateSettingsScreen)
+	end
+end
+
 --Local Assets (dev only). The Codex defines these in its own DMHub
 --Titlescreen/Settings.lua and edits them through a custom section of its
 --settings screen, neither of which d20 syncs. The engine reads them in
