@@ -17,6 +17,33 @@ local mod = dmhub.GetModLoading()
 RegisterGameType("InitiativeQueue")
 RegisterGameType("InitiativeQueueEntry")
 
+--Game modes. The shared UI synced from the Codex (the Audio panel's game-mode music)
+--reads queue.gameMode and InitiativeQueue.GameModes / GameModesById; the field must
+--have a default or the strict game-type index errors. Mirrors the Codex's
+--MCDMInitiativeQueue.lua registry. d20 does not switch modes yet, so only
+--"exploration" is registered and every queue reports it.
+InitiativeQueue.GameModes = {}
+InitiativeQueue.GameModesById = {}
+InitiativeQueue.gameMode = "exploration"
+
+function InitiativeQueue.RegisterGameMode(info)
+	local targetIndex = #InitiativeQueue.GameModes + 1
+	for i,mode in ipairs(InitiativeQueue.GameModes) do
+		if mode.id == info.id then
+			targetIndex = i
+			break
+		end
+	end
+
+	InitiativeQueue.GameModes[targetIndex] = info
+	InitiativeQueue.GameModesById[info.id] = info
+end
+
+InitiativeQueue.RegisterGameMode{
+	id = "exploration",
+	text = "Exploration",
+}
+
 --just some default InitiativeQueueEntry values.
 InitiativeQueueEntry.round = 0
 InitiativeQueueEntry.initiative = 0
