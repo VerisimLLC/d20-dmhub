@@ -1846,6 +1846,32 @@ local function CreateTitleBarMenuItem(args)
     local menuItems = args.menuItems
     args.menuItems = nil
 
+    --optional: returns true when the menu should show the new-content marker
+    --dot beside its name (Feedback: a developer replied to a ticket). The dot
+    --re-checks on the bar's calculateVisibility tick (every 0.2s), so it does
+    --not care whether the module behind the check loaded before or after this
+    --one. Shown/hidden with the "collapsed" class: selfStyle writes from an
+    --async callback do not repaint reliably.
+    local newContentCheck = args.newContentCheck
+    args.newContentCheck = nil
+    local alertPanel = nil
+    if newContentCheck ~= nil and rawget(gui, "NewContentAlert") ~= nil then
+        local shown = newContentCheck()
+        alertPanel = gui.NewContentAlert{
+            x = 8,
+            y = 2,
+            valign = "top",
+            classes = {cond(shown, nil, "collapsed")},
+            calculateVisibility = function(element)
+                local wanted = newContentCheck() == true
+                if wanted ~= shown then
+                    shown = wanted
+                    element:SetClass("collapsed", not shown)
+                end
+            end,
+        }
+    end
+
     if args.icon then
         iconPanel = gui.Panel{
             classes = {"menuItemIcon"},
@@ -1902,6 +1928,9 @@ local function CreateTitleBarMenuItem(args)
                 element.text = newname
             end,
             interactable = false,
+
+            --floating marker dot pinned to the label's top-right corner.
+            alertPanel,
         },
 
         --appends this menu's entries (submenus flattened) to result. A
@@ -2688,6 +2717,29 @@ local function CreateTopBar(container)
                     end
                 end
                 return menuItems
+            end,
+        },
+
+        --Feedback: bug reports, feature requests, general feedback and the
+        --user's tickets (D20Feedback.lua), on the main menu and in-game.
+        --D20Feedback is only registered by the new mod set; under the legacy
+        --set the menu stays collapsed.
+        CreateTitleBarMenuItem{
+            name = "Feedback",
+            mainmenu = "always",
+            calculateVisibility = function(element)
+                element.selfStyle.collapsed = cond(rawget(_G, "D20Feedback") ~= nil, 0, 1)
+            end,
+            newContentCheck = function()
+                local feedback = rawget(_G, "D20Feedback")
+                return feedback ~= nil and feedback.HasUnseen()
+            end,
+            menuItems = function()
+                local feedback = rawget(_G, "D20Feedback")
+                if feedback == nil then
+                    return {}
+                end
+                return feedback.MenuItems()
             end,
         },
 

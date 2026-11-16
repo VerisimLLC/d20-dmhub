@@ -86,6 +86,7 @@ on top lives in d20-only files:
 | `DMHub Core UI/D20LoadOrder.lua` | First in Core UI. d20 loads DMHub Utils after Core UI and Core Panels (the Codex loads it first), but synced files register chat macros while they load. Holds verbatim copies of `Commands.RegisterMacro` and `Commands.RegisterBuiltinDoc` from `DMHub Utils/Utils.lua`; the sync checks they still match. |
 | `DMHub Titlescreen/D20Settings.lua` | Settings the shared code reads that the Codex defines in its own `DMHub Titlescreen/Settings.lua` (not synced) or that d20 used to define in the old `SettingsGui.lua`. |
 | `DMHub Titlescreen/Styles.lua` (d20's own) | The 5e gold-on-dark palette, merged over the Codex's `"default"` color scheme as it registers (so new Codex tokens still resolve); the "Default Rounded" theme; the Codex's MCDM-branded scheme left out; the `Styles` fields the synced code uses; the title bar's **Windows** menu (every window on the table). |
+| `DMHub Titlescreen/D20Feedback.lua` (d20's own) | The title bar's **Feedback** menu (Bug Report, Feature Request, General Feedback, Your Tickets), ported from the Codex's `CodexTitleBar.lua` with DMHub wording and the DMHub Discord. New mod set only. Reports go to DMHub's own backend (`dmtool-cad62` `/BugReports` and `/Tickets`, rules in the engine repo's `cloud-functions/database.rules.dmhub.json`). |
 
 ### Recorded patches to synced files
 

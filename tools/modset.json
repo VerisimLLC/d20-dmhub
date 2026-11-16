@@ -90,6 +90,7 @@
       "root": "",
       "folder": "DMHub Titlescreen",
       "only": [
+        "D20Feedback",
         "Styles",
         "Titlescreen",
         "D20GameSystems"
@@ -102,7 +103,8 @@
       "order": [
         "Styles",
         "Titlescreen",
-        "D20GameSystems"
+        "D20GameSystems",
+        "D20Feedback"
       ],
       "guid": "2a2b6013-92f3-47cd-a9f3-5a025506bccb"
     },

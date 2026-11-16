@@ -31,6 +31,7 @@
       "root": "",
       "folder": "DMHub Titlescreen",
       "only": [
+        "D20Feedback",
         "Styles",
         "Titlescreen",
         "D20GameSystems"
@@ -224,6 +225,7 @@
       "folder": "DMHub Titlescreen",
       "_name": "DMHub Titlescreen (legacy)",
       "exclude": [
+        "D20Feedback",
         "D20GameSystems"
       ]
     },
