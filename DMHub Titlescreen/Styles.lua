@@ -919,6 +919,59 @@ Styles = {
 			color = "#777777ff",
 		},
 
+		--The synced Core UI gui.Check uses camelCase classes (checkMark,
+		--checkBackground, checkboxLabel); the kebab-case ones above are the
+		--engine's built-in gui.Check. Panels that only see Styles.Default
+		--(the title screen's login form) need both, or the label gets no
+		--width and wraps a letter or two per line.
+		gui.Style{
+			classes = {'checkMark'},
+			bgimage = 'panels/square.png',
+			bgcolor = textColor,
+			halign = 'center',
+			valign = 'center',
+			width = '50%',
+			height = '50%',
+		},
+		gui.Style{
+			classes = {'checkBackground'},
+			bgimage = 'panels/square.png',
+			bgcolor = backgroundColor,
+			halign = 'left',
+			valign = 'center',
+			height = '70%',
+			width = '100% height',
+			rmargin = 6,
+			borderColor = textColor,
+			borderWidth = 2,
+		},
+		gui.Style{
+			classes = {'checkboxLabel'},
+			halign = 'left',
+			valign = 'center',
+			textAlignment = 'left',
+			borderWidth = 0,
+			fontSize = 18,
+			width = 'auto',
+			height = 'auto',
+		},
+		gui.Style{
+			classes = {'checkboxLabel', "rightAlign"},
+			rmargin = 8,
+		},
+		gui.Style{
+			classes = {'checkBackground', 'disabled'},
+			saturation = 0,
+		},
+		gui.Style{
+			classes = {'checkMark', 'disabled'},
+			saturation = 0,
+		},
+		gui.Style{
+			classes = {'checkboxLabel', 'disabled'},
+			color = "#777777ff",
+		},
+
 		gui.Style{
 			classes = {'hidden-unless-parent-hover'},
 			hidden = 1,
